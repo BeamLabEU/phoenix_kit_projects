@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 26
+  @current_version 29
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -123,6 +123,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v24_key_grants(p, prefix)
     v25_key_usage(p)
     v26_deadlines_and_times(p)
+    v27_task_files(p, prefix)
+    v28_repeating_tasks(p)
+    v29_assignment_assignees(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -1045,6 +1048,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # V19–V21 each added columns to the assignments table (and V20 the link
   # table); newest first.
   defp down_task_columns(p, target) do
+    if target < 29, do: down_v29(p)
+    if target < 28, do: down_v28(p)
+    if target < 27, do: down_v27(p)
     if target < 26, do: down_v26(p)
     if target < 25, do: down_v25(p)
     if target < 24, do: down_v24(p)
@@ -1109,6 +1115,146 @@ defmodule PhoenixKitProjects.Migrations.Schema do
           ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
     end
+  end
+
+  # V29 — several people on one task (the boss, via Max, 2026-10-31:
+  # "assign multiple people and mix departments and teams and specific
+  # person"). A task's assignees are rows here, each exactly one person,
+  # team or department (three real foreign keys, so a deleted person drops
+  # out of every task and leaves the others), `position` their order on
+  # the chips. One status for all of them; there is no main assignee.
+  #
+  # The task's own three `assigned_*` columns stay for one version, as a
+  # mirror: they hold the one assignee while a task has exactly one, and
+  # are all empty while it has none or several (so nothing that still
+  # reads them can mistake one of several for the owner). A later version
+  # drops them. The backfill copies each task's one column into a row,
+  # only where the task has no rows yet — so a replay of the chain never
+  # brings back an assignee removed since.
+  #
+  # The task reference is DEFERRABLE INITIALLY DEFERRED: a new task's
+  # assignees are written in the same transaction as the task, just before
+  # its row (`Assignment.changeset/2` names them in `prepare_changes`). Its
+  # ON DELETE CASCADE still runs at once — actions are never deferred.
+  defp v29_assignment_assignees(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_assignment_assignees (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      assignment_uuid UUID NOT NULL
+        REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE
+        DEFERRABLE INITIALLY DEFERRED,
+      person_uuid UUID REFERENCES #{p}phoenix_kit_staff_people(uuid) ON DELETE CASCADE,
+      team_uuid UUID REFERENCES #{p}phoenix_kit_staff_teams(uuid) ON DELETE CASCADE,
+      department_uuid UUID REFERENCES #{p}phoenix_kit_staff_departments(uuid) ON DELETE CASCADE,
+      position INTEGER NOT NULL DEFAULT 0,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT phoenix_kit_project_assignment_assignees_one_subject
+        CHECK (num_nonnulls(person_uuid, team_uuid, department_uuid) = 1)
+    )
+    """)
+
+    for col <- ~w(person team department) do
+      execute("""
+      CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_#{col}_pair_index
+      ON #{p}phoenix_kit_project_assignment_assignees (assignment_uuid, #{col}_uuid)
+      WHERE #{col}_uuid IS NOT NULL
+      """)
+
+      execute("""
+      CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_#{col}_index
+      ON #{p}phoenix_kit_project_assignment_assignees (#{col}_uuid)
+      WHERE #{col}_uuid IS NOT NULL
+      """)
+    end
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_assignment_index
+    ON #{p}phoenix_kit_project_assignment_assignees (assignment_uuid, position)
+    """)
+
+    execute("""
+    INSERT INTO #{p}phoenix_kit_project_assignment_assignees
+      (assignment_uuid, person_uuid, team_uuid, department_uuid, position)
+    SELECT a.uuid, a.assigned_person_uuid, a.assigned_team_uuid, a.assigned_department_uuid, 0
+    FROM #{p}phoenix_kit_project_assignments a
+    WHERE num_nonnulls(a.assigned_person_uuid, a.assigned_team_uuid, a.assigned_department_uuid) = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM #{p}phoenix_kit_project_assignment_assignees x
+        WHERE x.assignment_uuid = a.uuid
+      )
+    """)
+  end
+
+  # Down refuses while any task has several assignees: the old shape holds
+  # one, and dropping the rest silently would lose who the work is for.
+  # A task with one keeps it in its own columns (the mirror above).
+  defp down_v29(p) do
+    execute("""
+    DO $$
+    BEGIN
+      IF to_regclass('#{p}phoenix_kit_project_assignment_assignees') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM #{p}phoenix_kit_project_assignment_assignees
+        GROUP BY assignment_uuid HAVING count(*) > 1
+      ) THEN
+        RAISE EXCEPTION 'phoenix_kit_projects V29 down: some tasks have several assignees; reduce them to one first';
+      END IF;
+    END $$;
+    """)
+
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignment_assignees")
+  end
+
+  # V28 — tasks that repeat (the boss, via Max, 2026-10-31: "checking in on
+  # the client … you have to do it every week"; the panel chose one new
+  # task per occurrence). `repeat_rule` is how the task comes back once it
+  # is done — `{"every": n, "unit": "day" | "week" | "month"}` — NULL for a
+  # task that does not repeat. The occurrence that was done stays done; the
+  # next one is a task of its own (`PhoenixKitProjects.Repeats`).
+  defp v28_repeating_tasks(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS repeat_rule JSONB
+    """)
+  end
+
+  defp down_v28(p) do
+    execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS repeat_rule")
+  end
+
+  # V27 — a task's own files and images (the boss, via Max, 2026-10-30:
+  # "tasks should be able to hold their own images as well, and files";
+  # a picture pasted into the description "should also kind of work
+  # upload-wise the same way"). The bytes are core Storage files kept in a
+  # folder per task under the project's folder (`Attachments`); this row
+  # says which task holds which file, so a task lists its files without
+  # reading folders, a file moved in Media stays the task's, and deleting
+  # the task (or the file) drops the row. `inline` marks an image placed
+  # in the description rather than added as a file of the task.
+  defp v27_task_files(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_assignment_files (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      assignment_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE,
+      file_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_files(uuid) ON DELETE CASCADE,
+      inline BOOLEAN NOT NULL DEFAULT false,
+      added_by_uuid UUID,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_assignment_files_pair_index
+    ON #{p}phoenix_kit_project_assignment_files (assignment_uuid, file_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_files_file_index
+    ON #{p}phoenix_kit_project_assignment_files (file_uuid)
+    """)
+  end
+
+  defp down_v27(p) do
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignment_files")
   end
 
   # V26 — when a task is due, and when it really happened (the boss, via

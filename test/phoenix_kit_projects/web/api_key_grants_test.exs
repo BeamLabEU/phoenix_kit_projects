@@ -487,8 +487,8 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
 
       assert has_element?(view, "#api-key-#{key.uuid}")
       refute has_element?(view, "#api-key-new")
-      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='rotate']")
-      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='revoke']")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-value-event='rotate']")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-value-event='revoke']")
       assert has_element?(view, "#preset-#{key.uuid}-#{other.uuid} select[disabled]")
 
       render_change(view, "set_preset", %{
@@ -520,11 +520,14 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
         )
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys")
-      assert has_element?(view, "#api-key-#{key.uuid} button[phx-click='rotate']")
-      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='revoke']")
+      assert has_element?(view, "#api-key-#{key.uuid} button[phx-value-event='rotate']")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-value-event='revoke']")
       refute has_element?(view, "#api-key-new")
 
-      view |> element("#api-key-#{key.uuid} button[phx-click='rotate']") |> render_click()
+      view |> element("#api-key-#{key.uuid} button[phx-value-event='rotate']") |> render_click()
+      # It asks first; nothing changes until the person confirms.
+      assert ApiKeys.get(key.uuid).secret_hash == old_hash
+      render_click(view, "confirm_action_ok", %{})
       refute ApiKeys.get(key.uuid).secret_hash == old_hash
     end
 
@@ -650,7 +653,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       # the owner's project, not Ada's other one; no rotate or revoke
       assert has_element?(view, "#grant-#{key.uuid}-#{other.uuid}")
       refute has_element?(view, "#grant-#{key.uuid}-#{stranger.uuid}")
-      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='revoke']")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-value-event='revoke']")
 
       view
       |> form("#preset-#{key.uuid}-#{other.uuid}", preset: "read")
@@ -727,8 +730,10 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       refute "tasks:write" in scopes
 
       view
-      |> element("button[phx-click='remove_grant'][phx-value-project='#{other.uuid}']")
+      |> element("button[phx-value-event='remove_grant'][phx-value-project='#{other.uuid}']")
       |> render_click()
+
+      render_click(view, "confirm_action_ok", %{})
 
       assert {:error, _} = ApiKeys.access_for(key, other.uuid)
     end

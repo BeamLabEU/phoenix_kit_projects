@@ -726,6 +726,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     token_b: token_b,
     key_b: key_b
   } do
+    {:ok, _} = Features.set_flags(project, %{"project_time" => true})
     a = api(conn, token)
     b = api(conn, token_b)
 

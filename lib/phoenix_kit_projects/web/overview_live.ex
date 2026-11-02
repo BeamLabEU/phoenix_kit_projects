@@ -261,21 +261,16 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # count (over ALL items — it's a triage signal, not a filtered view), and
   # the viewer's own assignee scope (once per mount).
   defp load_task_calendar(socket, active, upcoming, completed, offset) do
+    # Every task with a chip of its own, and every task with a deadline to
+    # mark (a subtask's deadline included — its chip is its parent's).
     items_with_spans =
       (active ++ upcoming ++ completed)
       |> Enum.uniq_by(& &1.uuid)
       |> ScheduleLayout.trees()
-      |> Enum.flat_map(fn {items, layout} ->
-        items
-        |> Enum.reject(&Assignment.subproject?(&1.assignment))
-        # A subtask has a chip of its own only with a date of its own.
-        |> Enum.filter(
-          &(is_nil(&1.assignment.parent_uuid) or ScheduleLayout.dated?(&1.assignment))
-        )
-        |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
-      end)
+      |> CalendarDisplay.calendar_items()
 
     now = DateTime.utc_now() |> DateTime.to_naive()
+    bars = Enum.filter(items_with_spans, fn {it, _} -> CalendarDisplay.bar_item?(it) end)
 
     socket
     |> AssigneeFilter.resolve_me()
@@ -283,11 +278,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       task_calendar_items: items_with_spans,
       task_calendar_loaded?: true,
       tz_offset: offset,
-      unassigned_count:
-        Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end),
+      unassigned_count: Enum.count(bars, fn {it, _} -> Assignees.unassigned?(it.assignment) end),
       overdue_count:
         Enum.count(items_with_spans, fn {it, span} ->
-          CalendarDisplay.task_late?(it.assignment, span, now)
+          (CalendarDisplay.bar_item?(it) and CalendarDisplay.task_late?(it.assignment, span, now)) or
+            CalendarDisplay.deadline_missed?(it.assignment, DateTime.utc_now())
         end)
     )
     |> apply_task_filter()
@@ -336,8 +331,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     # Provenance ("via <team>") rides the meta so popup rows can show WHY a
     # task is in a person's view without implying personal ownership.
     meta =
-      Map.new(meta, fn {uuid, entry} ->
-        {uuid, Map.put(entry, :via, Map.get(provenance, uuid))}
+      Map.new(meta, fn {id, entry} ->
+        {id, Map.put(entry, :via, Map.get(provenance, entry.assignment_uuid))}
       end)
 
     {events, meta} =
@@ -645,9 +640,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       days == 1 -> gettext("tomorrow")
       days == -1 -> gettext("yesterday")
       days > 1 and days < 14 -> ngettext("in %{count} day", "in %{count} days", days)
-      days > 1 -> gettext("in %{n} weeks", n: Float.round(days / 7, 1))
+      days > 1 -> gettext("in %{n} weeks", n: L10n.format_decimal(days / 7))
       days < 0 and days > -14 -> ngettext("%{count} day ago", "%{count} days ago", abs(days))
-      true -> gettext("%{n} weeks ago", n: Float.round(abs(days) / 7, 1))
+      true -> gettext("%{n} weeks ago", n: L10n.format_decimal(abs(days) / 7))
     end
   end
 
@@ -823,9 +818,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   >
                     <.live_component
                       module={PhoenixLiveCalendar.CalendarComponent}
+                      translations={CalendarDisplay.translations()}
                       id={"overview-tasks-calendar-#{@sfx}"}
                       events={@task_calendar_events}
                       views={[:month, :agenda]}
+                      time_format={CalendarDisplay.time_format()}
                       date={@today}
                       today={@today}
                       week_start={@overdue_anim.week_start}
@@ -896,9 +893,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                     <div id={"overview-calendar-sync-#{@sfx}"} phx-hook="SyncAnimations">
                       <.live_component
                         module={PhoenixLiveCalendar.CalendarComponent}
+                        translations={CalendarDisplay.translations()}
                         id={"projects-overview-calendar-#{@sfx}"}
                         events={@calendar_events}
                         views={[:month]}
+                        time_format={CalendarDisplay.time_format()}
                         date={@today}
                         today={@today}
                         week_start={@overdue_anim.week_start}
@@ -981,9 +980,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
               </h2>
 
               <%= if @my_assignments == [] do %>
-                <p class="text-sm text-base-content/50 py-2">
-                  {gettext("Nothing assigned to you right now.")}
-                </p>
+                <.empty_state
+                  icon="hero-check-circle"
+                  title={gettext("Nothing assigned to you right now.")}
+                  class="py-4"
+                />
               <% else %>
                 <div class="flex flex-col gap-2 mt-2">
                   <.smart_link

@@ -46,15 +46,19 @@ defmodule PhoenixKitProjects.AssigneeSearchMembersTest do
 
     members = Enum.drop(rows, dept_at + 1) |> Enum.take_while(&(&1.kind == "person"))
 
+    # Where they come from, after their email on the row's second line.
     assert {"person", "Kadri", "Finance #{ctx.tag}"} in Enum.map(
              members,
-             &{&1.kind, &1.label, &1.sublabel}
+             &{&1.kind, &1.label, &1.place}
            )
 
     assert {"person", "Priit", "Finance #{ctx.tag} › Payroll #{ctx.tag}"} in Enum.map(
              members,
-             &{&1.kind, &1.label, &1.sublabel}
+             &{&1.kind, &1.label, &1.place}
            )
+
+    kadri = Enum.find(members, &(&1.uuid == ctx.kadri.uuid))
+    assert kadri.sublabel == "#{kadri.email} · Finance #{ctx.tag}"
 
     refute Enum.any?(labels, fn {_, label, _} -> label == "Gone" end)
   end

@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.Schemas.ApiKeyGrant do
 
   use Ecto.Schema
   use PhoenixKit.SchemaPrefix
+  use Gettext, backend: PhoenixKitProjects.Gettext
   import Ecto.Changeset
 
   alias PhoenixKitProjects.Schemas.ApiKey
@@ -46,7 +47,7 @@ defmodule PhoenixKitProjects.Schemas.ApiKeyGrant do
     end)
     |> unique_constraint([:api_key_uuid, :project_uuid],
       name: :phoenix_kit_project_api_key_grants_key_project_index,
-      message: "this key already has access set for that project"
+      message: gettext("this key already has access set for that project")
     )
     |> foreign_key_constraint(:project_uuid)
   end

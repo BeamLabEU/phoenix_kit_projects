@@ -140,7 +140,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
 
     html = render_click(view, "confirm_action_ok", %{})
 
-    assert html =~ "Task removed."
+    assert html =~ "Task deleted."
     refute html =~ "Doomed"
     assert is_nil(Projects.get_project(child.uuid))
   end

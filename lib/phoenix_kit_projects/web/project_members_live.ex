@@ -16,6 +16,8 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
+
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Roles
@@ -31,6 +33,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
   alias PhoenixKitProjects.Web.Components.ConfirmAction
+  alias PhoenixKitProjects.Web.Components.PersonDisplay
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -73,8 +76,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
          page_title: gettext("Members"),
          project: project,
          add_email: "",
+         add_user: nil,
          add_role: "member"
        )
+       # Opened as a popup, the browser tab keeps its page's title (LiveView
+       # applies every LV's page_title, nested ones too).
+       |> WebHelpers.keep_host_title()
        |> load_members()}
     else
       :not_found -> bounce(socket, gettext("Project not found."))
@@ -98,6 +105,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
        project: nil,
        members: [],
        add_email: "",
+       add_user: nil,
        add_role: "member",
        wrapper_class: socket.assigns[:wrapper_class] || @default_wrapper_class
      )
@@ -126,8 +134,13 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
 
     project = socket.assigns.project
 
+    members = Members.list_members(project_uuid)
+
     assign(socket,
-      members: Members.list_members(project_uuid),
+      members: members,
+      # Each member by name (the account's, else the staff person's), the
+      # email only for someone with no name — as every person is shown.
+      member_names: People.user_display_names(Enum.map(members, & &1.user_uuid)),
       grants: decorate_grants(Grants.list_grants(project_uuid)),
       subject_options: subject_options(),
       visibility: Authz.visibility_of(project),
@@ -241,36 +254,44 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
      )}
   end
 
-  def handle_event("add_member", %{"email" => email} = params, socket) do
-    with_authz(socket, fn ->
-      role = valid_role(Map.get(params, "role"))
+  # The person to add, searched by name or email as it is typed (core's
+  # `<.search_picker>`, the rows the API keys page's "Acts for" shows):
+  # accounts only — a member is an account, so the assignee picker, which
+  # also offers teams, departments and staff without an account, does not
+  # fit here. Its rows are offered only to who may manage the members.
+  def handle_event("member_search", %{"q" => q} = params, socket) do
+    rows =
+      if allowed?(socket, socket.assigns.project), do: member_rows(to_string(q)), else: []
 
-      case find_user(email) do
-        nil ->
-          {:noreply, put_flash(socket, :error, gettext("No account with that email address."))}
-
-        user ->
-          case Members.add_member(socket.assigns.project, user.uuid,
-                 role: role,
-                 actor_uuid: Activity.actor_uuid(socket)
-               ) do
-            {:ok, _member} ->
-              {:noreply,
-               socket
-               |> assign(add_email: "", add_role: "member")
-               |> load_members()
-               |> put_flash(:info, gettext("Member added."))}
-
-            {:error, :last_owner} ->
-              {:noreply, put_flash(socket, :error, last_owner_message())}
-
-            {:error, reason} ->
-              Logger.warning("[Projects] add_member failed: #{inspect(reason)}")
-              {:noreply, put_flash(socket, :error, gettext("Could not add the member."))}
-          end
-      end
-    end)
+    {:noreply,
+     push_event(socket, "member_results", %{
+       q: q,
+       results: rows,
+       has_more: false,
+       id: params["id"]
+     })}
   end
+
+  def handle_event("member_pick", %{"uuid" => uuid, "label" => label} = params, socket) do
+    {:noreply,
+     socket
+     |> push_event("member_staged", %{id: params["id"]})
+     |> assign(add_user: %{uuid: uuid, label: label})}
+  end
+
+  def handle_event("member_unpick", _params, socket),
+    do: {:noreply, assign(socket, add_user: nil)}
+
+  def handle_event("add_member", %{"user" => user_uuid} = params, socket)
+      when is_binary(user_uuid) and user_uuid != "" do
+    add_member(socket, find_user_by_uuid(user_uuid), params)
+  end
+
+  def handle_event("add_member", %{"email" => email} = params, socket),
+    do: add_member(socket, find_user(email), params)
+
+  def handle_event("add_member", _params, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("Pick the person to add."))}
 
   def handle_event("change_role", %{"user" => user_uuid, "role" => role}, socket) do
     with_authz(socket, fn ->
@@ -401,6 +422,67 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   defp valid_role(role) when role in ~w(owner manager member viewer), do: role
   defp valid_role(_), do: "member"
 
+  # Adds the account found (by the picked uuid or a typed email) with the
+  # role the form names.
+  defp add_member(socket, user, params) do
+    with_authz(socket, fn ->
+      role = valid_role(Map.get(params, "role"))
+
+      case user do
+        nil ->
+          {:noreply, put_flash(socket, :error, gettext("No account with that email address."))}
+
+        user ->
+          case Members.add_member(socket.assigns.project, user.uuid,
+                 role: role,
+                 actor_uuid: Activity.actor_uuid(socket)
+               ) do
+            {:ok, _member} ->
+              {:noreply,
+               socket
+               |> assign(add_email: "", add_user: nil, add_role: "member")
+               |> load_members()
+               |> put_flash(:info, gettext("Member added."))}
+
+            {:error, :last_owner} ->
+              {:noreply, put_flash(socket, :error, last_owner_message())}
+
+            {:error, reason} ->
+              Logger.warning("[Projects] add_member failed: #{inspect(reason)}")
+              {:noreply, put_flash(socket, :error, gettext("Could not add the member."))}
+          end
+      end
+    end)
+  end
+
+  defp find_user_by_uuid(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, uuid} -> Auth.get_user(uuid)
+      :error -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # The search picker's rows: accounts by name or email, each named as the
+  # module names people, the email beside it.
+  defp member_rows(q) do
+    users = Auth.search_users(q)
+    names = People.user_display_names(Enum.map(users, & &1.uuid))
+
+    Enum.map(users, fn u ->
+      name = Map.get(names, u.uuid) || u.email
+
+      %{
+        kind: "user",
+        uuid: u.uuid,
+        label: name,
+        sublabel: if(name != u.email, do: u.email),
+        icon: "hero-user"
+      }
+    end)
+  end
+
   defp find_user(email) when is_binary(email) do
     Auth.get_user_by_email(String.trim(email))
   rescue
@@ -460,17 +542,29 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
           phx-change="validate_add"
           class="flex flex-wrap items-end gap-2"
         >
-          <label class="fieldset grow max-w-xs">
-            <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Email")}</span>
-            <input
-              type="email"
-              name="email"
-              value={@add_email}
-              placeholder={gettext("person@example.com")}
-              class="input input-sm"
-              required
+          <%!-- Searched by name or email, like every other person picked
+               in the module; the pick posts as `user`. --%>
+          <div class="fieldset grow max-w-xs">
+            <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Person")}</span>
+            <input type="hidden" name="user" value={@add_user && @add_user.uuid} />
+            <.search_picker
+              id="add-member-person"
+              dropdown_id="add-member-person-list"
+              search_event="member_search"
+              results_event="member_results"
+              pick_event="member_pick"
+              staged_event="member_staged"
+              chosen={@add_user && @add_user.label}
+              clear_event="member_unpick"
+              clear_label={gettext("Clear")}
+              close_on_pick
+              row_layout="stacked"
+              placeholder={gettext("Type a name or email…")}
+              class="input input-sm w-full"
+              searching_label={gettext("Searching…")}
+              no_matches_label={gettext("No matches")}
             />
-          </label>
+          </div>
           <label class="fieldset w-36">
             <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Role")}</span>
             <.role_select name="role" value={@add_role} />
@@ -594,8 +688,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                   class="btn-circle text-error"
                   {ConfirmAction.ask("revoke_grant",
                     uuid: grant.uuid,
-                    title: gettext("Remove access"),
-                    message: gettext("Remove this group's access?"),
+                    title: gettext("Remove the access of “%{name}”?", name: grant.subject_label || gettext("(deleted group)")),
                     confirm: gettext("Remove")
                   )}
                   aria-label={gettext("Remove access")}
@@ -617,16 +710,14 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
               class="py-6"
             />
             <div :for={member <- @members} class="flex items-center gap-3 py-2">
-              <div class="avatar placeholder">
-                <div class="bg-base-300 text-base-content rounded-full w-8 h-8 text-xs">
-                  <span>{member.user && String.first(member.user.email || "?")}</span>
-                </div>
-              </div>
-              <div class="min-w-0 grow">
-                <div class="text-sm font-medium truncate">
-                  {(member.user && member.user.email) || gettext("(deleted account)")}
-                </div>
-              </div>
+              <%!-- A face and a name, as everywhere (the boss, 2026-10-30:
+                   people were shown by email in some places). --%>
+              <PersonDisplay.person
+                name={member_label(member, @member_names)}
+                user={member.user}
+                size="sm"
+                class="grow text-sm font-medium"
+              />
               <form id={"member-role-#{member.user_uuid}"} phx-change="change_role" class="shrink-0">
                 <input type="hidden" name="user" value={member.user_uuid} />
                 <.role_select name="role" value={member.role} />
@@ -638,8 +729,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                 class="btn-circle text-error"
                 {ConfirmAction.ask("remove_member",
                   user: member.user_uuid,
-                  title: gettext("Remove member"),
-                  message: gettext("Remove this member from the project?"),
+                  title: gettext("Remove “%{name}” from the project?", name: member_label(member, @member_names)),
                   confirm: gettext("Remove")
                 )}
                 aria-label={gettext("Remove member")}
@@ -681,6 +771,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   end
 
   # A role's label in the viewer's language; the stored value is the key.
+  # How a member is named: by name, the email only without one.
+  defp member_label(%{user: %{email: email}} = member, names) when is_binary(email),
+    do: Map.get(names, member.user_uuid) || email
+
+  defp member_label(_member, _names), do: gettext("(deleted account)")
+
   defp role_label("owner"), do: gettext("Owner")
   defp role_label("manager"), do: gettext("Manager")
   defp role_label("member"), do: gettext("Member")

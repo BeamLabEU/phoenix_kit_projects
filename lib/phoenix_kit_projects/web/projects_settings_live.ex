@@ -23,6 +23,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   alias PhoenixKitProjects.GanttDisplay
   alias PhoenixKitProjects.ListControls
   alias PhoenixKitProjects.Statuses
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -62,6 +63,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        use_status_translations: Statuses.global_use_status_translations?(),
        creation_blocks: PhoenixKitProjects.Features.creation_blocks(),
        creation_top_blocks: PhoenixKitProjects.Features.creation_top_blocks(),
+       site_flags: PhoenixKitProjects.Features.site_flags(),
+       site_flag_values: PhoenixKitProjects.Features.site_default_values(),
        gantt_display: GanttDisplay.read(),
        calendar_anim: CalendarDisplay.read(),
        list_controls: ListControls.read(),
@@ -105,7 +108,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   end
 
   @impl true
-  @settings_tabs ~w(creation statuses list_controls timeline calendar)
+  @settings_tabs ~w(creation features statuses list_controls timeline calendar)
 
   def handle_event("switch_settings_tab", %{"tab" => tab}, socket) when tab in @settings_tabs do
     {:noreply, assign(socket, :active_tab, tab)}
@@ -119,6 +122,27 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   # Expand/collapse the demo sub-project (preview only — not a persisted setting).
   def handle_event("toggle_demo_subproject", %{"event-id" => id}, socket) do
     {:noreply, update(socket, :demo_expanded, &PhoenixLiveGantt.toggle_expanded(&1, id))}
+  end
+
+  # An action that asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do:
+      {:noreply,
+       ConfirmAction.request(
+         socket,
+         params,
+         ~w(reset_list_controls reset_gantt_display reset_calendar_anim)
+       )}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
   end
 
   # Every other event writes a setting: each re-checks `projects.settings`
@@ -194,6 +218,34 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
          put_flash(socket, :error, gettext("Could not update the new-project page layout."))}
     end
   end
+
+  # A project feature's site default (`Features.site_flags/0`): what every
+  # project inherits unless it sets its own on its Modules & Features page.
+  #
+  # The box sends the value it is switched TO, never "flip": a flip reads the
+  # value this page last showed, so with a second tab (or another admin)
+  # having changed it since, a press meant to turn it on turned it off.
+  defp settings_write("toggle_site_flag", %{"key" => key, "enabled" => enabled}, socket)
+       when enabled in ["true", "false"] do
+    new_value = enabled == "true"
+
+    case PhoenixKitProjects.Features.set_site_default(key, new_value) do
+      {:ok, _} ->
+        Activity.log("projects.feature_default_set",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "projects_settings",
+          metadata: %{"flag" => key, "enabled" => new_value}
+        )
+
+        {:noreply,
+         assign(socket, site_flag_values: PhoenixKitProjects.Features.site_default_values())}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not save the settings."))}
+    end
+  end
+
+  defp settings_write("toggle_site_flag", _params, socket), do: {:noreply, socket}
 
   defp settings_write("toggle_status_translations", _params, socket) do
     new_value = not socket.assigns.use_status_translations
@@ -676,6 +728,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         variant={:border}
         tabs={[
           %{id: "creation", label: gettext("New Project Page"), icon: "hero-document-plus"},
+          %{id: "features", label: gettext("Project Features"), icon: "hero-adjustments-horizontal"},
           %{id: "statuses", label: gettext("Workflow Statuses"), icon: "hero-flag"},
           %{id: "list_controls", label: gettext("Task List Controls"), icon: "hero-list-bullet"},
           %{id: "timeline", label: gettext("Timeline Chart"), icon: "hero-chart-bar"},
@@ -696,21 +749,54 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               "By default the creation page shows only the essentials — everything else folds into \"Setup options\". Promote the blocks your team uses on every project to top level."
             )}
           </p>
-          <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+          <%!-- One column, each toggle right before its label (the boss,
+               2026-11-02). --%>
+          <div class="flex flex-col gap-1">
             <label
               :for={block <- @creation_blocks}
-              class="flex cursor-pointer items-center justify-between gap-3 py-1"
+              class="flex cursor-pointer items-center gap-3 py-1"
             >
-              <span class="text-sm">{block.label}</span>
               <input
                 type="checkbox"
-                class="toggle toggle-primary toggle-sm"
+                class="toggle toggle-primary toggle-sm shrink-0"
                 checked={block.key in @creation_top_blocks}
                 phx-click="toggle_creation_block"
                 phx-value-key={block.key}
               />
+              <span class="text-sm">{WebHelpers.translate_catalog(block.label)}</span>
             </label>
           </div>
+      </.form_section>
+
+      <%!-- What every project starts with for the features a site sets
+           (time on the project, billable time, sub-project status, the
+           comment tabs). A project overrides any of them on its own
+           Modules & Features page. --%>
+      <.form_section
+        title={gettext("Project features")}
+        class={if @active_tab != "features", do: "hidden"}
+        body_class="gap-3"
+      >
+        <p class="text-xs text-base-content/60">
+          {gettext("What every project has unless it sets its own on its Modules & Features page.")}
+        </p>
+        <div class="flex flex-col gap-1">
+          <label
+            :for={flag <- @site_flags}
+            class="flex cursor-pointer items-center gap-3 py-1"
+          >
+            <input
+              type="checkbox"
+              id={"site-flag-#{flag.key}"}
+              class="toggle toggle-primary toggle-sm shrink-0"
+              checked={Map.get(@site_flag_values, flag.key, false)}
+              phx-click="toggle_site_flag"
+              phx-value-key={flag.key}
+              phx-value-enabled={to_string(not Map.get(@site_flag_values, flag.key, false))}
+            />
+            <span class="text-sm">{WebHelpers.translate_catalog(flag.label)}</span>
+          </label>
+        </div>
       </.form_section>
 
       <.form_section
@@ -778,9 +864,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             type="button"
             variant="ghost"
             size="xs"
-            phx-click="reset_list_controls"
-            phx-disable-with={gettext("Resetting…")}
-            data-confirm={gettext("Reset the task list controls to their defaults?")}
+            {ConfirmAction.ask("reset_list_controls",
+              title: gettext("Reset the task list controls to their defaults?"),
+              confirm: gettext("Reset")
+            )}
           >
             {gettext("Reset to defaults")}
           </.button>
@@ -834,9 +921,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             type="button"
             variant="ghost"
             size="xs"
-            phx-click="reset_gantt_display"
-            phx-disable-with={gettext("Resetting…")}
-            data-confirm={gettext("Reset all Timeline chart settings to their defaults?")}
+            {ConfirmAction.ask("reset_gantt_display",
+              title: gettext("Reset all Timeline chart settings to their defaults?"),
+              confirm: gettext("Reset")
+            )}
           >
             {gettext("Reset to defaults")}
           </.button>
@@ -1039,9 +1127,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             type="button"
             variant="ghost"
             size="xs"
-            phx-click="reset_calendar_anim"
-            phx-disable-with={gettext("Resetting…")}
-            data-confirm={gettext("Reset the calendar overdue animation to its defaults?")}
+            {ConfirmAction.ask("reset_calendar_anim",
+              title: gettext("Reset the calendar overdue animation to its defaults?"),
+              confirm: gettext("Reset")
+            )}
           >
             {gettext("Reset to defaults")}
           </.button>
@@ -1243,6 +1332,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             >
               <.live_component
                 module={PhoenixLiveCalendar.CalendarComponent}
+                translations={CalendarDisplay.translations()}
                 id="calendar-settings-demo-grid"
                 events={calendar_demo_events(@demo_calendar_today, @calendar_anim)}
                 views={[:month]}
@@ -1260,6 +1350,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             </div>
           </div>
       </.form_section>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

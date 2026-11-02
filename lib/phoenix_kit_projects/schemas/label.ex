@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Schemas.Label do
 
   use Ecto.Schema
   use PhoenixKit.SchemaPrefix
+  use Gettext, backend: PhoenixKitProjects.Gettext
   import Ecto.Changeset
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
@@ -36,7 +37,7 @@ defmodule PhoenixKitProjects.Schemas.Label do
     |> foreign_key_constraint(:project_uuid)
     |> unique_constraint([:project_uuid, :name],
       name: :phoenix_kit_project_labels_name_index,
-      message: "already exists in this project"
+      message: gettext("already exists in this project")
     )
   end
 

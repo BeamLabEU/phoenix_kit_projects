@@ -181,6 +181,8 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_change(:external_url, &http_url/2)
     |> validate_key()
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
+    # Pictures kept by file, served per viewer (`InlineImages`).
+    |> PhoenixKitProjects.InlineImages.put_refs()
     |> validate_inclusion(:start_mode, @start_modes)
     |> validate_translations_shape()
     |> sanitize_settings()
@@ -284,6 +286,9 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # default); "manual" — never on its own, ongoing work a person ends.
     # Copied onto a sub-project at creation (`Projects.create_subproject/2`).
     "completion" => &__MODULE__.completion_mode?/1,
+    # The project's cover picture (a file in its folder), optional and shown
+    # nowhere yet (the boss, 2026-10-31: "it's an option").
+    "cover_file_uuid" => &is_binary/1,
     # What an AI agent on the API may do here (`agent_policy/1` fills the
     # defaults): take over a task someone else started, reword tasks it
     # did not create, delete tasks, amend its own ledger entries.
@@ -292,7 +297,27 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # "auto" | "text" | "cards"; `complete_parent` — false keeps a task
     # open when its last subtask is ticked; `row` — %{feature => false}
     # keeps that feature's value off the rows, in the task's form only.
-    "outline" => &is_map/1
+    "outline" => &is_map/1,
+    # What the project page's header shows (`header/1` fills the defaults):
+    # the link button — when (`show`: auto | always | never; auto hides it
+    # in a host page, which is already where it goes), with which icon and
+    # how it opens — and the quiet items beside the name, all off unless
+    # switched on (the boss, 2026-11-02).
+    "header" => &is_map/1
+  }
+
+  @header_defaults %{
+    "link_show" => "auto",
+    "link_icon" => "external",
+    "link_target" => "new_tab",
+    "ongoing" => false,
+    "since" => false,
+    "open_tasks" => false
+  }
+  @header_choices %{
+    "link_show" => ~w(auto always never),
+    "link_icon" => ~w(external back left none),
+    "link_target" => ~w(new_tab here)
   }
 
   @completion_modes ~w(auto manual)
@@ -310,6 +335,37 @@ defmodule PhoenixKitProjects.Schemas.Project do
   @doc "The completion modes: `auto` (the last task done ends it) and `manual` (ongoing)."
   @spec completion_modes() :: [String.t()]
   def completion_modes, do: @completion_modes
+
+  @doc """
+  The project page header's settings with their defaults filled in:
+  `link_show` (auto | always | never), `link_icon` (external | back | left |
+  none), `link_target` (new_tab | here), and the booleans `ongoing`,
+  `since`, `open_tasks` (all false). An unknown value reads as the default.
+  """
+  @spec header(t() | map() | nil) :: map()
+  def header(%{settings: %{"header" => %{} = stored}}) do
+    Map.new(@header_defaults, fn {key, default} ->
+      value = Map.get(stored, key)
+
+      cond do
+        is_boolean(default) and is_boolean(value) -> {key, value}
+        is_boolean(default) -> {key, default}
+        value in Map.get(@header_choices, key, []) -> {key, value}
+        true -> {key, default}
+      end
+    end)
+  end
+
+  def header(_project), do: @header_defaults
+
+  @doc "The choices of each of `header/1`'s non-boolean keys."
+  @spec header_choices() :: map()
+  def header_choices, do: @header_choices
+
+  @doc "The file uuid of the project's cover picture, or nil."
+  @spec cover_file_uuid(t() | map()) :: String.t() | nil
+  def cover_file_uuid(%{settings: %{"cover_file_uuid" => uuid}}) when is_binary(uuid), do: uuid
+  def cover_file_uuid(_), do: nil
 
   @doc ~S|How this project ends — `"auto"` unless its settings say `"manual"`.|
   @spec completion(t() | map() | nil) :: String.t()
@@ -489,7 +545,8 @@ defmodule PhoenixKitProjects.Schemas.Project do
       made, started or not (Max, 2026-10-13: *"there should be a on going
       status for projects that don't really have an end"*)
     * `:running`   — `started_at` is set and not yet completed
-    * `:overdue`   — scheduled, the scheduled_start_date has passed, not started
+    * `:overdue`   — scheduled, the scheduled_start_date has passed, not
+      started, and not ongoing work (which is never late)
     * `:scheduled` — scheduled, start date still in the future, not started
     * `:setup`     — immediate start mode, not yet started
 
@@ -505,7 +562,9 @@ defmodule PhoenixKitProjects.Schemas.Project do
       p.is_template -> :template
       p.completed_at -> :completed
       p.started_at -> if(ongoing?(p), do: :ongoing, else: :running)
-      scheduled_overdue?(p, now) -> :overdue
+      # Ongoing work is never late (the panel, 2026-10-31): a missed
+      # scheduled start still reads as scheduled.
+      scheduled_overdue?(p, now) and not ongoing?(p) -> :overdue
       p.start_mode == "scheduled" -> :scheduled
       ongoing?(p) -> :ongoing
       true -> :setup

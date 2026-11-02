@@ -12,11 +12,15 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
+
   alias PhoenixKitProjects.{
     ApiKeys,
     Authz,
     Extensions,
     Features,
+    InlineImages,
     Labels,
     Ledger,
     Projects,
@@ -312,6 +316,10 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   @spec put_view(ApiKey.t()) :: :ok
   def put_view(%ApiKey{} = key) do
     Process.put(:pk_api_view, key)
+    # what was read for the key's person (`viewer/0`, `prefetch_images/1`)
+    # is read again: rights are never carried from one request to the next
+    Process.delete(:pk_api_viewer)
+    Process.delete(:pk_api_images)
     :ok
   end
 
@@ -426,6 +434,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       # who it is FOR (a person, a team or a department), apart from who
       # made it and who started it
       assignee: Assignee.to_json(a),
+      assignees: Assignee.list_json(a),
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       words_by: if(a.words_by_key_uuid, do: %{key: a.words_by_key_uuid}, else: %{person: true}),
@@ -464,9 +473,54 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     }
   end
 
-  defp description(%Assignment{description: d}) when is_binary(d) and d != "", do: d
-  defp description(%Assignment{task: %Task{description: d}}), do: d
-  defp description(_), do: nil
+  # The description as the caller may read it: its pictures (`pkfile:`
+  # references, `InlineImages`) turned into addresses the key's person may
+  # open — a private library's a time-window one. One they may not open
+  # keeps its reference, as the editor's text does: an agent writes the
+  # description back, and the picture must survive that (`to_refs/1` turns
+  # the addresses back into references on save).
+  defp description(a) do
+    a
+    |> raw_description()
+    |> InlineImages.resolve(viewer(), urls: images(), keep_missing: true)
+  end
+
+  defp raw_description(%Assignment{description: d}) when is_binary(d) and d != "", do: d
+  defp raw_description(%Assignment{task: %Task{description: d}}), do: d
+  defp raw_description(_), do: nil
+
+  @doc """
+  Reads the pictures of every description in `assignments` in one go, for
+  the `task/5` calls of a list that follow (a read per row otherwise).
+  """
+  @spec prefetch_images([Assignment.t()]) :: :ok
+  def prefetch_images(assignments) when is_list(assignments) do
+    texts = Enum.map(assignments, &raw_description/1)
+    Process.put(:pk_api_images, InlineImages.urls_for(texts, viewer()))
+    :ok
+  end
+
+  defp images, do: Process.get(:pk_api_images, %{})
+
+  # The person the request's key acts as, as a scope the storage checks
+  # read (`ApiKey.accountable_uuid/1`; never narrowed to a session's
+  # active role — a key has no session). Read once per request.
+  defp viewer do
+    with %ApiKey{} = key <- Process.get(:pk_api_view),
+         uuid when is_binary(uuid) <- ApiKey.accountable_uuid(key) do
+      case Process.get(:pk_api_viewer) do
+        {^uuid, scope} ->
+          scope
+
+        _ ->
+          scope = uuid |> Auth.get_user() |> then(&(&1 && Scope.for_user(&1, narrow: false)))
+          Process.put(:pk_api_viewer, {uuid, scope})
+          scope
+      end
+    else
+      _ -> nil
+    end
+  end
 
   defp library_task?(%Assignment{task: %Task{ad_hoc: ad_hoc}}), do: not ad_hoc
   defp library_task?(_), do: false

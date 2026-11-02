@@ -19,6 +19,16 @@ defmodule PhoenixKitProjects.FileReferences do
   @spec pairs() :: [{String.t(), Ecto.Query.dynamic_expr()}]
   def pairs do
     [
+      # A task's files (V27): a file one holds is the task's, however else
+      # it is filed.
+      {"phoenix_kit_project_assignment_files",
+       dynamic(
+         [f],
+         fragment(
+           "NOT EXISTS (SELECT 1 FROM phoenix_kit_project_assignment_files af WHERE af.file_uuid = ?)",
+           f.uuid
+         )
+       )},
       # Portal submissions hold their attachments in a JSONB array rather
       # than an FK column, so the reference is invisible to a plain join —
       # which would make every PUBLISHED issue image look like an orphan

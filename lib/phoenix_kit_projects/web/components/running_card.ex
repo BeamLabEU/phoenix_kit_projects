@@ -22,7 +22,7 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
   import PhoenixKitProjects.Web.Components.TierPill
   import PhoenixKitProjects.Web.Components.SmartLink
 
-  alias PhoenixKitProjects.{Paths, Schemas.Project}
+  alias PhoenixKitProjects.{L10n, Paths, Schemas.Project}
 
   attr(:node, :map, required: true)
   attr(:tier, :atom, required: true, values: [:late, :near_done, :on_track, :empty])
@@ -129,14 +129,16 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
   defp breakdown_line(%{task_total: 0}), do: nil
 
   defp breakdown_line(node) do
+    # Each count is its own plural phrase: a number glued to one word
+    # ("5 ожидает") cannot agree with it.
     [
-      {node.task_done, gettext("done")},
-      {node.task_in_progress, gettext("in progress")},
-      {node.task_todo, gettext("can be started")},
-      {Map.get(node, :task_waiting, 0), gettext("waiting")}
+      {node.task_done, &ngettext("%{count} done", "%{count} done", &1)},
+      {node.task_in_progress, &ngettext("%{count} in progress", "%{count} in progress", &1)},
+      {node.task_todo, &ngettext("%{count} can be started", "%{count} can be started", &1)},
+      {Map.get(node, :task_waiting, 0), &ngettext("%{count} waiting", "%{count} waiting", &1)}
     ]
-    |> Enum.filter(fn {n, _label} -> n > 0 end)
-    |> Enum.map_join(" · ", fn {n, label} -> "#{n} #{label}" end)
+    |> Enum.filter(fn {n, _phrase} -> n > 0 end)
+    |> Enum.map_join(" · ", fn {n, phrase} -> phrase.(n) end)
     |> case do
       "" -> nil
       line -> line
@@ -164,11 +166,11 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
     do: ngettext("in %{count} day", "in %{count} days", days)
 
   defp relative_day(days) when days > 1,
-    do: gettext("in %{n} weeks", n: Float.round(days / 7, 1))
+    do: gettext("in %{n} weeks", n: L10n.format_decimal(days / 7))
 
   defp relative_day(days) when days < 0 and days > -14,
     do: ngettext("%{count} day ago", "%{count} days ago", abs(days))
 
   defp relative_day(days),
-    do: gettext("%{n} weeks ago", n: Float.round(abs(days) / 7, 1))
+    do: gettext("%{n} weeks ago", n: L10n.format_decimal(abs(days) / 7))
 end

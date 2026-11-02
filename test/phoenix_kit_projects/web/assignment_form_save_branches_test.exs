@@ -63,14 +63,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
         |> form("#assignment-form",
           assignment: %{
             status: "todo",
-            description: "",
             estimated_duration: "1",
             estimated_duration_unit: "hours"
           },
           task_mode: "new",
           task: %{title: "   "}
         )
-        |> render_submit()
+        |> render_submit(%{"assignment" => %{"description" => ""}})
 
       assert html =~ "Task title is required"
     end
@@ -127,13 +126,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       # Create new is the default tab; these cases pick from the library.
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+      # A library pick is a tick in the picker (item 27).
+      render_click(view, "library_toggle", %{"uuid" => task.uuid})
 
       render_click(view, "assignee_pick", %{"kind" => "department", "uuid" => dept.uuid})
 
       {:error, {:live_redirect, _}} =
         view
         |> form("#assignment-form",
-          assignment: %{task_uuid: task.uuid, status: "todo"},
+          assignment: %{status: "todo"},
           task_mode: "existing"
         )
         |> render_submit()
@@ -154,11 +155,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       # Create new is the default tab; these cases pick from the library.
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+      # A library pick is a tick in the picker (item 27).
+      render_click(view, "library_toggle", %{"uuid" => task.uuid})
 
       {:error, {:live_redirect, _}} =
         view
         |> form("#assignment-form",
-          assignment: %{task_uuid: task.uuid, status: "todo"},
+          assignment: %{status: "todo"},
           task_mode: "existing"
         )
         |> render_submit()

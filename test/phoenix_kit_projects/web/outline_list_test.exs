@@ -230,6 +230,297 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
     end
   end
 
+  # The page's socket, as the handlers left it.
+  defp page_assigns(view), do: :sys.get_state(view.pid).socket.assigns
+
+  describe "the draft row (Enter on a card)" do
+    test "Enter opens a draft that writes nothing until a title is typed", %{conn: conn} do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [%{"text" => "First"}, %{"text" => "Last"}], [])
+      [first, _last] = Projects.list_assignments(p.uuid)
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      render_hook(view, "outline_add", %{"after" => first.uuid, "text" => ""})
+      assert titles(p) == ["First", "Last"]
+      draft = page_assigns(view).outline_draft
+      assert %{slot: slot, depth: 0, key: key} = draft
+      assert slot == first.uuid
+
+      # Enter with a title: written right below its row, and the next draft opens.
+      render_hook(view, "outline_draft_save", %{"key" => key, "text" => "Second", "next" => true})
+      assert titles(p) == ["First", "Second", "Last"]
+      next = page_assigns(view).outline_draft
+      assert next.key != key
+
+      # The same event again (a blur as the row went) writes nothing more.
+      render_hook(view, "outline_draft_save", %{"key" => key, "text" => "Second", "next" => true})
+      assert titles(p) == ["First", "Second", "Last"]
+
+      # The last Enter of a run, on the empty draft: nothing is left behind.
+      render_hook(view, "outline_draft_save", %{"key" => next.key, "text" => "  ", "next" => true})
+
+      assert titles(p) == ["First", "Second", "Last"]
+      assert page_assigns(view).outline_draft == nil
+    end
+
+    test "Esc or clicking away drops the draft; text after the cursor is a task at once",
+         %{conn: conn} do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [%{"text" => "Only"}], [])
+      [only] = Projects.list_assignments(p.uuid)
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      render_hook(view, "outline_add", %{"after" => only.uuid, "text" => ""})
+      key = page_assigns(view).outline_draft.key
+      render_hook(view, "outline_draft_cancel", %{"key" => key, "refocus" => true})
+      assert page_assigns(view).outline_draft == nil
+      assert page_assigns(view).outline_focus == only.uuid
+      assert titles(p) == ["Only"]
+
+      # Splitting a title: what was after the cursor is typed already.
+      render_hook(view, "outline_add", %{"after" => only.uuid, "text" => "Tail"})
+      assert titles(p) == ["Only", "Tail"]
+      assert page_assigns(view).outline_draft == nil
+    end
+
+    test "Tab nests the draft under the row above, and it is written there", %{conn: conn} do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [%{"text" => "Parent"}], [])
+      [parent] = Projects.list_assignments(p.uuid)
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      render_hook(view, "outline_add", %{"after" => parent.uuid, "text" => ""})
+      key = page_assigns(view).outline_draft.key
+      render_hook(view, "outline_draft_nest", %{"key" => key, "dir" => "in", "text" => "Chi"})
+      draft = page_assigns(view).outline_draft
+      assert %{parent: parent_uuid, depth: 1, text: "Chi"} = draft
+      assert parent_uuid == parent.uuid
+
+      render_hook(view, "outline_draft_save", %{"key" => draft.key, "text" => "Child"})
+      [_, child] = Projects.list_assignments(p.uuid)
+      assert child.task.title == "Child"
+      assert child.parent_uuid == parent.uuid
+
+      # Out again, before anything is typed.
+      render_hook(view, "outline_add", %{"after" => child.uuid, "text" => ""})
+      draft = page_assigns(view).outline_draft
+      assert draft.depth == 1
+      render_hook(view, "outline_draft_nest", %{"key" => draft.key, "dir" => "out", "text" => ""})
+      assert %{parent: nil, depth: 0} = page_assigns(view).outline_draft
+    end
+
+    test "Add a task opens a draft at the foot, and a pasted list lands there",
+         %{conn: conn} do
+      p = project()
+
+      {:ok, _} =
+        Outline.sync(p.uuid, [%{"text" => "One"}, %{"text" => "Under", "depth" => 1}], [])
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      render_hook(view, "outline_add_first", %{})
+      assert %{slot: :end, key: key} = page_assigns(view).outline_draft
+      assert titles(p) == ["One", "Under"]
+
+      render_hook(view, "outline_draft_paste", %{
+        "key" => key,
+        "text" => "Two",
+        "lines" => [%{"text" => "Three", "depth" => 0}, %{"text" => "Four", "depth" => 1}]
+      })
+
+      assert titles(p) == ["One", "Under", "Two", "Three", "Four"]
+      assert page_assigns(view).outline_draft == nil
+      [_, _, two, three, four] = Projects.list_assignments(p.uuid)
+      assert two.parent_uuid == nil
+      assert four.parent_uuid == three.uuid
+    end
+
+    test "a task this list made and left empty is removed; any other is not", %{conn: conn} do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [%{"text" => "Old"}], [])
+      [old] = Projects.list_assignments(p.uuid)
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      render_hook(view, "outline_add", %{"after" => old.uuid, "text" => ""})
+      key = page_assigns(view).outline_draft.key
+      render_hook(view, "outline_draft_save", %{"key" => key, "text" => "Made here"})
+      [_, made] = Projects.list_assignments(p.uuid)
+
+      render_hook(view, "outline_drop", %{"id" => old.uuid})
+      render_hook(view, "outline_drop", %{"id" => made.uuid})
+      assert titles(p) == ["Old"]
+    end
+
+    # The drop is the client's word: a row this list made that was filled
+    # in since (its popup, another tab, the API) is kept.
+    for {what, fill} <- [
+          description: :description,
+          subtask: :subtask,
+          time: :time,
+          file: :file
+        ] do
+      test "a task this list made but given a #{what} since is not removed", %{conn: conn} do
+        p = project()
+        {:ok, _} = Outline.sync(p.uuid, [%{"text" => "Old"}], [])
+        [old] = Projects.list_assignments(p.uuid)
+        {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+        render_hook(view, "outline_add", %{"after" => old.uuid, "text" => ""})
+        key = page_assigns(view).outline_draft.key
+        render_hook(view, "outline_draft_save", %{"key" => key, "text" => "Made here"})
+        [_, made] = Projects.list_assignments(p.uuid)
+
+        case unquote(fill) do
+          :description ->
+            {:ok, _} = Projects.update_assignment_form(made, %{"description" => "Notes"})
+
+          :subtask ->
+            {:ok, %{assignment: sub}} =
+              Projects.create_task_with_assignment(
+                p.uuid,
+                %{"title" => "Sub", "ad_hoc" => true},
+                %{}
+              )
+
+            {:ok, _} = Outline.move(Projects.get_assignment(sub.uuid), made.uuid, :last)
+
+          :time ->
+            {:ok, _} =
+              PhoenixKitProjects.Ledger.log_time(p.uuid, 30,
+                assignment_uuid: made.uuid,
+                actor_uuid: embed_user_uuid!()
+              )
+
+          :file ->
+            path = Path.join(System.tmp_dir!(), "pkp-drop-#{System.unique_integer([:positive])}")
+            File.write!(path, "notes #{System.unique_integer()}")
+
+            {:ok, _} =
+              PhoenixKitProjects.Attachments.store_task_file(
+                made,
+                path,
+                [filename: "n.txt", content_type: "text/plain", size_bytes: 5],
+                embed_user_uuid!()
+              )
+
+            File.rm(path)
+        end
+
+        render_hook(view, "outline_drop", %{"id" => made.uuid})
+        assert made.uuid in Enum.map(Projects.list_assignments(p.uuid), & &1.uuid)
+      end
+    end
+
+    test "a suggestion's hint is the description's words, not its markdown", %{conn: conn} do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [%{"text" => "First"}], [])
+      [first] = Projects.list_assignments(p.uuid)
+      tag = "Vh#{System.unique_integer([:positive])}"
+
+      fixture_task(%{
+        "title" => "#{tag} hang the doors",
+        "description" =>
+          "**Check** the [hinges](https://example.com/h) with @[user:01a1|Ann]\n" <>
+            "![photo](https://example.com/p.png)\n- then `level` them"
+      })
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+      render_hook(view, "outline_add", %{"after" => first.uuid, "text" => ""})
+      key = page_assigns(view).outline_draft.key
+      # No dashed number circle in front of the draft any more.
+      refute render(view) =~ "rounded-full border-2 border-dashed"
+
+      {:reply, %{items: [%{hint: hint}]}, _} =
+        OutlineList.handle_event(
+          "outline_draft_suggest",
+          %{"key" => key, "q" => tag},
+          :sys.get_state(view.pid).socket,
+          & &1
+        )
+
+      assert hint == "Check the hinges with @Ann then level them"
+    end
+
+    test "the library's tasks are offered as a title is typed, and one is taken",
+         %{conn: conn} do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [%{"text" => "First"}, %{"text" => "Last"}], [])
+      [first, _] = Projects.list_assignments(p.uuid)
+      tag = "Vq#{System.unique_integer([:positive])}"
+
+      library =
+        fixture_task(%{
+          "title" => "#{tag} fit the worktop",
+          "description" => "Bring the clamps",
+          "estimated_duration" => 3,
+          "estimated_duration_unit" => "hours"
+        })
+
+      # Someone else's one-off of the same words is never offered.
+      fixture_task(%{"title" => "#{tag} elsewhere", "ad_hoc" => true})
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+      render_hook(view, "outline_add", %{"after" => first.uuid, "text" => ""})
+      key = page_assigns(view).outline_draft.key
+
+      reply =
+        view
+        |> render_hook("outline_draft_suggest", %{"key" => key, "q" => tag})
+
+      assert is_binary(reply)
+
+      # The reply carries the items (read straight from the handler).
+      socket = :sys.get_state(view.pid).socket
+
+      {:reply, %{items: items}, _} =
+        OutlineList.handle_event(
+          "outline_draft_suggest",
+          %{"key" => key, "q" => tag},
+          socket,
+          & &1
+        )
+
+      assert [%{uuid: uuid, title: title, hint: "Bring the clamps"}] = items
+      assert uuid == library.uuid
+      assert title =~ "fit the worktop"
+
+      render_hook(view, "outline_draft_pick", %{
+        "key" => key,
+        "task" => library.uuid,
+        "next" => true
+      })
+
+      [_, picked, _] = Projects.list_assignments(p.uuid)
+      assert picked.task_uuid == library.uuid
+      assert picked.description == "Bring the clamps"
+      assert picked.estimated_duration == 3
+      # The next draft waits below it.
+      assert page_assigns(view).outline_draft.slot == picked.uuid
+
+      # A one-off or a stranger's uuid is not taken.
+      key = page_assigns(view).outline_draft.key
+      render_hook(view, "outline_draft_pick", %{"key" => key, "task" => "not-a-uuid"})
+      assert length(Projects.list_assignments(p.uuid)) == 3
+    end
+
+    test "the draft row is drawn only at its own place" do
+      draft = %{key: "d1", slot: "row-a", depth: 1, text: "Typed"}
+
+      html =
+        render_component(&OutlineList.draft_row/1, draft: draft, slot: "row-a", indent: true)
+
+      assert html =~ ~s(phx-hook="PkpDraft")
+      assert html =~ ~s(data-key="d1")
+      assert html =~ ~s(value="Typed")
+      assert html =~ "margin-left: 2rem"
+
+      assert render_component(&OutlineList.draft_row/1, draft: draft, slot: "row-b") =~
+               ~r/^\s*$/
+
+      assert render_component(&OutlineList.draft_row/1, draft: nil, slot: :end) =~ ~r/^\s*$/
+    end
+  end
+
   describe "the settings" do
     test "a project picks its list style, and keeps a feature off its cards", %{conn: conn} do
       p = project()
@@ -276,7 +567,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       assert html =~ "Sub"
       refute html =~ ~s(name="checklist_text")
 
-      render_submit(element(view, "#assignment-subtask-form"), %{"title" => "Typed here"})
+      render_submit(element(view, "[id^='assignment-subtask-form-']"), %{"title" => "Typed here"})
       assert "Typed here" in titles(p)
 
       view
@@ -308,7 +599,10 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       assert html =~ ~s(name="assignment[description]")
       assert html =~ "Delete this task and its subtask?"
 
+      # Delete asks first (the page's own dialog); the confirmation deletes.
       view |> element("#assignment-delete") |> render_click()
+      assert titles(p) != []
+      render_click(view, "confirm_action_ok", %{})
       assert titles(p) == []
     end
 

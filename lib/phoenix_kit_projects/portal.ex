@@ -37,6 +37,8 @@ defmodule PhoenixKitProjects.Portal do
   never parses forwarded headers itself.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   import Ecto.Query
 
   require Logger
@@ -375,7 +377,7 @@ defmodule PhoenixKitProjects.Portal do
         # does; they need a column, a backfill and a uniqueness story, so
         # they are a later nicety rather than a blocker.
         uuid: a.uuid,
-        title: Assignment.label(a, lang) || "Issue",
+        title: Assignment.label(a, lang) || gettext("Issue"),
         status: a.status,
         status_label: AssignmentStatusBadge.label(a.status),
         inserted_at: a.inserted_at,
@@ -574,7 +576,7 @@ defmodule PhoenixKitProjects.Portal do
     |> Enum.reject(&(is_nil(&1) or &1 == ""))
     |> Enum.join(" ")
     |> case do
-      "" -> Map.get(user, :email) || "User"
+      "" -> Map.get(user, :email) || gettext("User")
       name -> name
     end
   end
@@ -1161,7 +1163,7 @@ defmodule PhoenixKitProjects.Portal do
       {:ok,
        %{
          uuid: assignment.uuid,
-         title: Assignment.label(assignment, lang) || "Issue",
+         title: Assignment.label(assignment, lang) || gettext("Issue"),
          # ONLY on a public board. The portal has never shown a task's
          # description in any mode, and staff wrote them for an audience of
          # themselves; adding them to every existing link portal on deploy
@@ -1290,6 +1292,10 @@ defmodule PhoenixKitProjects.Portal do
 
   defp users_by_uuid([]), do: %{}
 
+  # The portal is public: people are named by core's `User.display_name/1`
+  # (an account with no name shows the part of its email before the @),
+  # never by `People.user_display_names/1`, whose last resort is the whole
+  # email address.
   defp users_by_uuid(uuids) do
     uuids |> Auth.get_users_by_uuids() |> Map.new(&{&1.uuid, User.display_name(&1)})
   rescue

@@ -14,7 +14,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.L10n
-  alias PhoenixKitProjects.Schemas.{Dependency, Project, Task}
+  alias PhoenixKitProjects.Schemas.{AssignmentAssignee, Dependency, Project, Task}
   # SHADOW schemas (staff-optional seam): projects' own read-only
   # mappings over the core-owned staff tables — see PhoenixKitProjects.People.
   alias PhoenixKitProjects.People.{Department, Person, Team}
@@ -61,10 +61,13 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
           completed_at: DateTime.t() | nil,
           started_at: DateTime.t() | nil,
           deadline: DateTime.t() | nil,
+          repeat_rule: map() | nil,
           start_time: Time.t() | nil,
           end_time: Time.t() | nil,
           parent_uuid: UUIDv7.t() | nil,
           translations: translations_map(),
+          assignee_links: [AssignmentAssignee.t()] | Ecto.Association.NotLoaded.t(),
+          assignee_keys: [{String.t(), String.t()}] | nil,
           dependencies: [Dependency.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
@@ -134,6 +137,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:end_time, :time)
     field(:deadline, :utc_datetime)
     field(:started_at, :utc_datetime)
+    # How the task comes back once done (V28, `PhoenixKitProjects.Repeats`):
+    # `%{"every" => n, "unit" => "day" | "week" | "month"}`, nil: it does not.
+    field(:repeat_rule, :map)
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
@@ -166,6 +172,17 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
     belongs_to(:completed_by, User, foreign_key: :completed_by_uuid, references: :uuid)
 
+    # The task's assignees (V29): any number of people, teams and
+    # departments, all equal. The three `assigned_*` columns above mirror
+    # them while there is exactly one. Read through `AssigneeSet.keys/1`.
+    has_many(:assignee_links, AssignmentAssignee,
+      foreign_key: :assignment_uuid,
+      preload_order: [asc: :position, asc: :inserted_at]
+    )
+
+    # The set a changeset writes (`"assignees"`), as `[{kind, uuid}]`.
+    field(:assignee_keys, :any, virtual: true)
+
     has_many(:dependencies, Dependency, foreign_key: :assignment_uuid)
     has_many(:dependents, Dependency, foreign_key: :depends_on_uuid)
 
@@ -179,7 +196,8 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
                estimated_duration_unit counts_weekends progress_pct track_progress priority
                translations assigned_team_uuid assigned_department_uuid assigned_person_uuid
-               waiting_on origin start_date end_date start_time end_time deadline)a
+               waiting_on origin start_date end_date start_time end_time deadline
+               repeat_rule)a
 
   # Server-only fields: set by trusted server code (completion tracking,
   # provenance), never cast from untrusted form params. Use `status_changeset/2`.
@@ -194,6 +212,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   def changeset(assignment, attrs) do
     assignment
     |> cast(attrs, @required ++ @optional)
+    |> put_assignees(attrs)
     |> validate()
   end
 
@@ -206,6 +225,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   def status_changeset(assignment, attrs) do
     assignment
     |> cast(attrs, @required ++ @optional ++ @server_only)
+    |> put_assignees(attrs)
     |> validate()
   end
 
@@ -213,6 +233,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     changeset
     |> stamp_started()
     |> validate_required(@required)
+    |> inline_image_refs()
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
     |> validate_inclusion(:priority, ~w(urgent high normal low))
     |> validate_task_xor_child()
@@ -224,6 +245,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_length(:waiting_on, max: 200)
     |> validate_length(:origin, max: 40)
     |> validate_dates()
+    |> validate_repeat_rule()
     |> check_constraint(:end_date,
       name: :phoenix_kit_project_assignments_dates_check,
       message: dates_message()
@@ -241,6 +263,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
       message: gettext("a task cannot sit under itself")
     )
     |> validate_single_assignee()
+    |> write_assignees()
     |> check_constraint(:assigned_team_uuid,
       name: :phoenix_kit_project_assignments_single_assignee,
       message: single_assignee_message()
@@ -480,6 +503,10 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     )
   end
 
+  # An image the editor wrote by its address is kept by its file
+  # (`InlineImages.put_refs/1`).
+  defp inline_image_refs(changeset), do: PhoenixKitProjects.InlineImages.put_refs(changeset)
+
   # Shape guard for the `translations` JSONB. See `Project` for the
   # rationale; the contract lives on `L10n.valid_translations_shape?/1`.
   defp validate_translations_shape(changeset) do
@@ -512,6 +539,99 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
       add_error(changeset, :assigned_team_uuid, single_assignee_message())
     else
       changeset
+    end
+  end
+
+  # Several assignees (V29). The set comes from `"assignees"` (a list of
+  # `{kind, uuid}`, `%{"kind", "uuid"}` or `"kind:uuid"`), or — the old
+  # single-assignee forms and API — from the three `assigned_*` fields,
+  # which then name the whole set (one, or none). Either way the three
+  # columns end up as the mirror: the one assignee, or all empty when there
+  # are none or several. The rows themselves are written in the save's own
+  # transaction (`write_assignees/1`).
+  @legacy_fields [:assigned_person_uuid, :assigned_team_uuid, :assigned_department_uuid]
+
+  defp put_assignees(changeset, attrs) when is_map(attrs) do
+    case PhoenixKitProjects.AssigneeSet.fetch_param(attrs) do
+      {:ok, keys} ->
+        # The same list again (a form posts it with every change): nothing
+        # to write — unless the single fields beside it changed it.
+        if keys == PhoenixKitProjects.AssigneeSet.keys(changeset.data) do
+          legacy_assignees(changeset)
+        else
+          mirror = PhoenixKitProjects.AssigneeSet.mirror(keys)
+
+          changeset
+          |> then(&Enum.reduce(@legacy_fields, &1, fn f, cs -> put_change(cs, f, mirror[f]) end))
+          |> put_change(:assignee_keys, keys)
+        end
+
+      :error ->
+        add_error(changeset, :assigned_person_uuid, gettext("is not a list of assignees"))
+
+      :none ->
+        legacy_assignees(changeset)
+    end
+  end
+
+  defp put_assignees(changeset, _attrs), do: changeset
+
+  defp legacy_assignees(changeset) do
+    if Enum.any?(@legacy_fields, &Map.has_key?(changeset.changes, &1)) do
+      keys =
+        PhoenixKitProjects.AssigneeSet.legacy_keys(%{
+          assigned_person_uuid: get_field(changeset, :assigned_person_uuid),
+          assigned_team_uuid: get_field(changeset, :assigned_team_uuid),
+          assigned_department_uuid: get_field(changeset, :assigned_department_uuid)
+        })
+
+      put_change(changeset, :assignee_keys, keys)
+    else
+      changeset
+    end
+  end
+
+  # A new task gets its uuid here, so its assignee rows can be written just
+  # before it in the same transaction (their task reference is deferred).
+  defp write_assignees(%Ecto.Changeset{valid?: true} = changeset) do
+    case get_change(changeset, :assignee_keys) do
+      keys when is_list(keys) ->
+        changeset =
+          if is_nil(changeset.data.uuid) and is_nil(get_change(changeset, :uuid)),
+            do: put_change(changeset, :uuid, UUIDv7.generate()),
+            else: changeset
+
+        prepare_changes(changeset, fn cs ->
+          PhoenixKitProjects.AssigneeSet.write_rows(cs.repo, get_field(cs, :uuid), keys)
+          cs
+        end)
+
+      _ ->
+        changeset
+    end
+  end
+
+  defp write_assignees(changeset), do: changeset
+
+  # A rule `Repeats` can read, or none: a rule it could not is refused
+  # rather than stored to be ignored.
+  defp validate_repeat_rule(changeset) do
+    case get_change(changeset, :repeat_rule) do
+      nil ->
+        changeset
+
+      rule ->
+        case PhoenixKitProjects.Repeats.normalize(rule) do
+          nil ->
+            add_error(changeset, :repeat_rule, gettext("is not a way a task can repeat"))
+
+          normal ->
+            put_change(
+              changeset,
+              :repeat_rule,
+              PhoenixKitProjects.Repeats.keep_day(normal, changeset.data.repeat_rule)
+            )
+        end
     end
   end
 

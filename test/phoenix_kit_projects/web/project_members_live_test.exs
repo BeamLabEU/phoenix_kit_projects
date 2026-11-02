@@ -41,6 +41,44 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLiveTest do
     assert Members.role_of(project, user.uuid) == :manager
   end
 
+  test "a person is searched by name, added, and shown by name with a face", %{
+    conn: conn,
+    project: project
+  } do
+    tag = "Zelda#{System.unique_integer([:positive])}"
+
+    {:ok, user} =
+      Auth.register_user(%{
+        email: "#{String.downcase(tag)}@example.com",
+        password: "ValidPassword123!",
+        first_name: tag,
+        last_name: "Kask"
+      })
+
+    {:ok, view, _} = live(conn, path(project))
+    assert has_element?(view, "#add-member-person")
+
+    render_hook(view, "member_search", %{"q" => tag, "id" => "add-member-person"})
+    assert_push_event(view, "member_results", %{results: [row]})
+    assert row.uuid == user.uuid
+    assert row.label == "#{tag} Kask"
+    assert row.sublabel == user.email
+
+    render_hook(view, "member_pick", %{"uuid" => user.uuid, "label" => row.label})
+    html = render_submit(view, "add_member", %{"user" => user.uuid, "role" => "member"})
+
+    assert Members.role_of(project, user.uuid) == :member
+    assert html =~ "#{tag} Kask"
+    # Named, so the email is not what the row shows.
+    refute html =~ ">#{user.email}<"
+  end
+
+  test "nothing picked and no email asks for the person", %{conn: conn, project: project} do
+    {:ok, view, _} = live(conn, path(project))
+    html = render_submit(view, "add_member", %{"user" => "", "role" => "member"})
+    assert html =~ "Pick the person to add."
+  end
+
   test "unknown email flashes without creating anything", %{conn: conn, project: project} do
     {:ok, view, _} = live(conn, path(project))
 

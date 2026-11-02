@@ -373,10 +373,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert_receive {:projects, :closed, %{frame_ref: 9}}, 500
     end
 
-    test "the 'Templates' back link is the way out of the frame (:closed, not :opened)",
+    test "Close is the way out of the frame (:closed, not :opened)",
          %{conn: conn} do
       # A frame must never push the list page as ANOTHER frame — inside a
-      # host's popup or the page's drawer "back" closes the sheet.
+      # host's popup or the page's drawer the way out closes the sheet.
+      # No lone "← Templates" line above the title any more (the
+      # walk-through, 2026-10-31): Close, as in the task popup.
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
@@ -391,9 +393,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
         )
 
       refute html =~ ~s(phx-click="open_embed")
+      refute has_element?(view, "button.link[phx-click=cancel]")
 
       view
-      |> element("button.link[phx-click=cancel]", "Templates")
+      |> element("button.btn[phx-click=cancel]", "Close")
       |> render_click()
 
       assert_receive {:projects, :closed, %{frame_ref: 0}}, 500
@@ -447,7 +450,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           }
         )
 
-      assert html =~ "Edit Existing"
+      # The header names the template, as the task popup's does.
+      assert html =~ "Existing" and html =~ "Editing"
 
       view
       |> form("#template-form", project: %{"name" => "Renamed"})
@@ -641,7 +645,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
         )
 
       view
-      |> form("#project-form",
+      |> form("#project-form-f31",
         project: %{"name" => "Emit Project", "start_mode" => "immediate"}
       )
       |> render_submit()
@@ -693,8 +697,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
             })
         )
 
-      assert html =~ ">Add task<"
-      assert html =~ "Emit Host"
+      assert html =~ "Add task"
+      # The compact header (the boss's second list, item 2) names no
+      # project in a popup: the popup sits on that project's page.
       assert html =~ ~s(phx-click="cancel")
     end
 

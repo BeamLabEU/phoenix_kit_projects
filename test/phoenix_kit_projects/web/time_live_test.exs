@@ -94,7 +94,9 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
     day = Date.add(Date.utc_today(), 2)
 
     view
-    |> form("#time-deadline-#{dom}", %{"deadline" => Date.to_iso8601(day) <> "T16:30"})
+    |> form("#time-deadline-#{dom}", %{
+      "deadline" => %{"date" => Date.to_iso8601(day), "time" => "16:30"}
+    })
     |> render_submit()
 
     # The typed wall clock is the viewer's (the site's zone here, whatever

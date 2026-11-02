@@ -28,7 +28,10 @@ defmodule PhoenixKitProjects.Web.TimeLive do
   alias PhoenixKitProjects.{L10n, Paths, TimeBoard}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.Web.Components.TimeInput
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+
+  import PhoenixKitProjects.Web.Components.TimeInput, only: [datetime_input: 1]
 
   @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
   # Lines shown per row before "+N more".
@@ -253,7 +256,14 @@ defmodule PhoenixKitProjects.Web.TimeLive do
   def handle_event("save_deadline", %{"uuid" => uuid} = params, socket) when is_binary(uuid) do
     scope = socket.assigns[:phoenix_kit_current_scope]
 
-    case TimeBoard.set_deadline(scope, uuid, params["deadline"],
+    # The deadline picker posts its parts (`TimeInput`).
+    deadline =
+      case params["deadline"] do
+        %{} = parts -> TimeInput.fold(parts)
+        other -> other
+      end
+
+    case TimeBoard.set_deadline(scope, uuid, deadline,
            actor_uuid: PhoenixKitProjects.Activity.actor_uuid(socket)
          ) do
       {:ok, _} ->
@@ -402,9 +412,7 @@ defmodule PhoenixKitProjects.Web.TimeLive do
             <.axis_header lanes={@lanes} view={@view} today={@today} />
 
             <%= if @rows == [] and @board.groups == [] do %>
-              <div class="p-6 text-center text-base-content/60">
-                {gettext("Nothing to show for this range.")}
-              </div>
+              <.empty_state title={gettext("Nothing to show for this range.")} class="py-6" />
             <% end %>
 
             <.board_row
@@ -496,7 +504,7 @@ defmodule PhoenixKitProjects.Web.TimeLive do
       </span>
       <span class="inline-flex items-center gap-1.5">
         <span class="inline-block w-6 h-2.5 rounded-sm bg-success"></span>
-        {gettext("Done")}
+        {PhoenixKitProjects.Web.Components.AssignmentStatusBadge.label("done")}
       </span>
       <span class="inline-flex items-center gap-1.5">
         <span class="inline-block w-6 h-2.5 rounded-sm bg-error"></span>
@@ -703,12 +711,12 @@ defmodule PhoenixKitProjects.Web.TimeLive do
           class="flex flex-wrap items-center gap-1 mt-1"
         >
           <input type="hidden" name="uuid" value={@a.uuid} />
-          <input
-            type="datetime-local"
+          <.datetime_input
+            id={"time-deadline-at-#{@dom}"}
             name="deadline"
             value={deadline_value(@line)}
-            class="input input-xs"
-            aria-label={gettext("Deadline")}
+            size="xs"
+            default_hour={17}
           />
           <button
             type="submit"
@@ -817,11 +825,20 @@ defmodule PhoenixKitProjects.Web.TimeLive do
 
     if first < e do
       for m <- first..(e - 1)//step do
-        {:io_lib.format("~2..0B", [div(m, 60)]) |> IO.iodata_to_binary(),
-         Float.round((m - s) / span * 100, 3)}
+        {hour_tick(div(m, 60)), Float.round((m - s) / span * 100, 3)}
       end
     else
       []
+    end
+  end
+
+  # An axis label on the site's clock: "08" on 24 hours, "8 AM" on 12.
+  defp hour_tick(h) do
+    if L10n.twelve_hour?() do
+      {h12, suffix} = L10n.to_twelve_hour(rem(h, 24))
+      "#{h12} #{suffix}"
+    else
+      h |> rem(24) |> Integer.to_string() |> String.pad_leading(2, "0")
     end
   end
 
@@ -948,16 +965,10 @@ defmodule PhoenixKitProjects.Web.TimeLive do
 
   defp logged_minutes(line), do: line.logged |> Enum.map(& &1.minutes) |> Enum.sum()
 
-  defp format_hours(minutes) do
-    h = minutes / 60
+  defp format_hours(minutes), do: L10n.format_decimal(minutes / 60)
 
-    if h == Float.round(h * 1.0, 0),
-      do: Integer.to_string(trunc(h)),
-      else: :erlang.float_to_binary(h * 1.0, decimals: 1)
-  end
-
-  defp hhmm(%NaiveDateTime{hour: h, minute: m}),
-    do: :io_lib.format("~2..0B:~2..0B", [h, m]) |> IO.iodata_to_binary()
+  # On the site's clock (core's `time_format`: 24-hour or AM/PM).
+  defp hhmm(%NaiveDateTime{} = t), do: L10n.format_time(t)
 
   defp deadline_value(%{deadline: %NaiveDateTime{} = d}),
     do: d |> NaiveDateTime.truncate(:second) |> NaiveDateTime.to_iso8601() |> String.slice(0, 16)

@@ -37,6 +37,7 @@ defmodule PhoenixKitProjects.Web.ListUi do
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
   import PhoenixKitWeb.Components.Core.TableDefault, only: [table_default_header_cell: 1]
 
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitWeb.{Actor, TableColumns}
 
   @doc """
@@ -143,9 +144,11 @@ defmodule PhoenixKitProjects.Web.ListUi do
   @doc ~S|A token count as "3.9M tokens" / "13.3k tokens".|
   @spec format_tokens(number()) :: String.t()
   def format_tokens(t) when t >= 1_000_000,
-    do: gettext("%{n}M tokens", n: Float.round(t / 1_000_000, 1))
+    do: gettext("%{n}M tokens", n: L10n.format_decimal(t / 1_000_000, trim: false))
 
-  def format_tokens(t) when t >= 1_000, do: gettext("%{n}k tokens", n: Float.round(t / 1_000, 1))
+  def format_tokens(t) when t >= 1_000,
+    do: gettext("%{n}k tokens", n: L10n.format_decimal(t / 1_000, trim: false))
+
   def format_tokens(t), do: gettext("%{n} tokens", n: round(t))
 
   @doc """
@@ -153,7 +156,7 @@ defmodule PhoenixKitProjects.Web.ListUi do
   display currency is the same v1 simplification the project page makes.
   """
   @spec format_cents(number()) :: String.t()
-  def format_cents(cents), do: "$" <> :erlang.float_to_binary(cents / 100, decimals: 2)
+  def format_cents(cents), do: "$" <> L10n.format_decimal(cents / 100, decimals: 2, trim: false)
 
   @doc """
   Coerces the search event payload to a binary. A forged `search[x]=y`

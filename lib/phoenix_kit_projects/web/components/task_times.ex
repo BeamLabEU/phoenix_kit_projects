@@ -84,8 +84,8 @@ defmodule PhoenixKitProjects.Web.Components.TaskTimes do
     end
   end
 
-  defp hm(%Time{hour: h, minute: m}),
-    do: :io_lib.format("~2..0B:~2..0B", [h, m]) |> IO.iodata_to_binary()
+  # On the site's clock (`L10n.format_time/1`: 24-hour or AM/PM).
+  defp hm(%Time{} = t), do: L10n.format_time(t)
 
   @doc """
   The deadline chip: red once it has passed (and the task is not done),
@@ -101,6 +101,11 @@ defmodule PhoenixKitProjects.Web.Components.TaskTimes do
     doc: "`outline` keeps a board card calm: the colour is in the border and the text"
   )
 
+  attr(:class, :any,
+    default: nil,
+    doc: "extra classes; `max-w-full` lets the label truncate in a narrow card"
+  )
+
   def deadline_chip(%{a: %{deadline: %DateTime{}}} = assigns) do
     now = assigns.now || DateTime.utc_now()
 
@@ -114,18 +119,22 @@ defmodule PhoenixKitProjects.Web.Components.TaskTimes do
     <span
       data-deadline={@state}
       class={[
-        "badge gap-1 whitespace-nowrap",
+        "badge gap-1 whitespace-nowrap min-w-0",
         @size == "xs" && "badge-xs",
         @size == "sm" && "badge-sm",
         @tone == "solid" && @state == :overdue && "badge-error",
         @tone == "solid" && @state == :soon && "badge-warning",
         (@tone == "outline" or @state == :set) && "badge-outline",
         @tone == "outline" && @state == :overdue && "text-error border-error",
-        @tone == "outline" && @state == :soon && "text-warning border-warning"
+        @tone == "outline" && @state == :soon && "text-warning border-warning",
+        @class
       ]}
       title={deadline_title(@state)}
     >
-      <span aria-hidden="true">⏰</span> {@label}
+      <%!-- A line icon in the chip's own colour, not the ⏰ emoji (the
+           boss, 2026-11-02: "an emoji with colors … kind of ugly"). --%>
+      <.icon name="hero-clock" class="w-3.5 h-3.5 shrink-0" />
+      <span class="truncate">{@label}</span>
     </span>
     """
   end

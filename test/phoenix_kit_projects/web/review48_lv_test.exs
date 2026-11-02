@@ -165,7 +165,10 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
                PhoenixKitProjects.TaskNotes.latest(a.uuid)
     end
 
-    test "a new project saved by a member takes no completion, agent policy or settings from the post",
+    # "Has an end | Ongoing" is under the name of every new project since
+    # item 33 (the panel, 2026-10-31): its creator's choice, so a member's
+    # "Ongoing" is kept. The agent policy and a crafted settings map are not.
+    test "a new project saved by a member takes its Ongoing choice, but no agent policy or settings from the post",
          ctx do
       {:ok, view, _} = live(ctx.member, "/en/admin/projects/new")
 
@@ -180,7 +183,7 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
 
       created = Enum.find(Projects.list_projects(), &(&1.name == "Crafted by a member"))
       assert created
-      refute (created.settings || %{})["completion"] == "manual"
+      assert (created.settings || %{})["completion"] == "manual"
       refute get_in(created.settings || %{}, ["agents", "delete_tasks"]) == "any"
     end
   end

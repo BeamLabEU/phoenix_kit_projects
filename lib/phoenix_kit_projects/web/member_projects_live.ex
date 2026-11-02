@@ -32,6 +32,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.LayoutHelpers, only: [dashboard_assigns: 1]
+  import PhoenixKitProjects.Web.Components.PageHeader, only: [page_header: 1]
 
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.L10n
@@ -108,12 +109,10 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
             }
           )}
         <% else %>
-          <div>
-            <h1 class="text-2xl font-bold">{gettext("My Projects")}</h1>
-            <p class="text-base-content/70 mt-1">
-              {gettext("Projects you are a member of.")}
-            </p>
-          </div>
+          <.page_header
+            title={gettext("My Projects")}
+            description={gettext("Projects you are a member of.")}
+          />
 
           <.empty_state
             :if={@memberships == []}

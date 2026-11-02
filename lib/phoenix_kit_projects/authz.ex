@@ -531,16 +531,25 @@ defmodule PhoenixKitProjects.Authz do
   # a core user via `person.user_uuid` (nil-safe at every hop).
   defp relationship_grant?(user_uuid, action, record)
        when action in [:update_status, :log_time] do
-    assignee_user_uuid(record) == user_uuid
+    user_uuid in assignee_user_uuids(record)
   end
 
   defp relationship_grant?(_user_uuid, _action, _record), do: false
 
-  defp assignee_user_uuid(%{assigned_person: %{user_uuid: user_uuid}})
-       when is_binary(user_uuid),
-       do: user_uuid
+  # A task names its people directly (V29: any of several persons; a
+  # team's or department's members are not granted this way).
+  defp assignee_user_uuids(%PhoenixKitProjects.Schemas.Assignment{} = a) do
+    persons =
+      a |> PhoenixKitProjects.AssigneeSet.keys() |> Enum.filter(&match?({"person", _}, &1))
 
-  defp assignee_user_uuid(_), do: nil
+    PhoenixKitProjects.People.user_uuids_for(persons)
+  end
+
+  defp assignee_user_uuids(%{assigned_person: %{user_uuid: user_uuid}})
+       when is_binary(user_uuid),
+       do: [user_uuid]
+
+  defp assignee_user_uuids(_), do: []
 
   defp subject_user_uuid(%Scope{user: %{uuid: uuid}}) when is_binary(uuid), do: uuid
   defp subject_user_uuid(%{uuid: uuid}) when is_binary(uuid), do: uuid

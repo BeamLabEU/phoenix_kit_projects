@@ -71,6 +71,11 @@ defmodule PhoenixKitProjects.ModuleCallbacksTest do
                  app: :phoenix_kit_projects,
                  file: "static/assets/phoenix_kit_projects.js",
                  global: "PhoenixKitProjectsHooks"
+               },
+               %{
+                 app: :phoenix_kit_projects,
+                 file: "static/assets/phoenix_kit_projects_drafts.js",
+                 global: "PhoenixKitProjectsDraftHooks"
                }
              ]
     end

@@ -54,10 +54,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
   defp staff_person_of(user_uuid),
     do: Repo.one(from(p in Person, where: p.user_uuid == ^user_uuid))
 
-  # The edit form saves on a timer; this runs it now.
+  # The edit form saves with Save (the boss, 2026-11-02); Save closes it.
   defp autosave(view) do
-    send(view.pid, :autosave)
-    render(view)
+    view |> form("#assignment-form") |> render_submit()
   end
 
   describe "header" do
@@ -93,15 +92,40 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
     test "the form is in tabs and every tab's fields stay in the one form", ctx do
       {:ok, view, html} = edit(ctx.conn, ctx.project, ctx.a)
 
-      assert html =~ ~s(id="assignment-tab-task")
-      assert html =~ ~s(id="assignment-tab-planning")
+      assert html =~ ~r/id="assignment-[^"]+-tab-task"/
+      assert html =~ ~r/id="assignment-[^"]+-tab-planning"/
       # The planning fields are rendered (hidden), so a save posts them.
-      assert has_element?(view, "#assignment-pane-planning.hidden")
+      assert has_element?(view, "[id^='assignment-'][id$='-pane-planning'].hidden")
       assert has_element?(view, "input[name='assignment[start_date]']")
 
-      view |> element("#assignment-tab-planning") |> render_click()
-      refute has_element?(view, "#assignment-pane-planning.hidden")
-      assert has_element?(view, "#assignment-pane-task.hidden")
+      view |> element("[id^='assignment-'][id$='-tab-planning']") |> render_click()
+      refute has_element?(view, "[id^='assignment-'][id$='-pane-planning'].hidden")
+      assert has_element?(view, "[id^='assignment-'][id$='-pane-task'].hidden")
+    end
+
+    # The form can be stacked (`PopupHostLive`, two frames of a host):
+    # everything another element points at carries the task, so a second
+    # copy never binds to the first one's forms, panes or tab hook.
+    test "the ids other elements point at carry the task", ctx do
+      {:ok, _view, html} = edit(ctx.conn, ctx.project, ctx.a)
+      u = ctx.a.uuid
+
+      for id <- [
+            "assignment-form-tabs-#{u}",
+            "assignment-#{u}-tab-task",
+            "assignment-#{u}-pane-task",
+            "assignment-#{u}-pane-more",
+            "assignment-log-form-#{u}",
+            "assignment-subtask-form-#{u}",
+            "assignment-files-form-#{u}",
+            "assignment-assignee-form-#{u}"
+          ],
+          do: assert(html =~ ~s(id="#{id}"), id)
+
+      refute html =~ ~s(form="assignment-log-form")
+      refute html =~ ~s(form="assignment-files-form")
+      refute html =~ ~s(form="assignment-subtask-form")
+      assert html =~ ~s(aria-controls="assignment-#{u}-pane-planning")
     end
 
     test "a failed save opens the tab holding the error and marks it", ctx do
@@ -114,7 +138,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       )
       |> render_submit()
 
-      refute has_element?(view, "#assignment-pane-planning.hidden")
+      refute has_element?(view, "[id^='assignment-'][id$='-pane-planning'].hidden")
       assert has_element?(view, "[data-pane-error='planning']")
     end
   end
@@ -163,7 +187,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
   end
 
   describe "assignee" do
-    test "the picker finds teams, and picking one sets only the team", ctx do
+    test "the picker finds teams; ticking one beside the person, then the person off", ctx do
       bob = person!("Bob")
 
       {:ok, a} =
@@ -177,22 +201,33 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
           department_uuid: dept.uuid
         })
 
-      {:ok, view, html} = edit(ctx.conn, ctx.project, a)
-      refute html =~ ~s(name="assign_type" value="team")
-      assert has_element?(view, "#assignment-assignee-chosen", "Bob")
+      {:ok, view, _html} = edit(ctx.conn, ctx.project, a)
+      assert has_element?(view, "#assignment-assignee-chip-person-#{bob.uuid}", "Bob")
 
-      render_click(view, "assignee_search", %{"q" => "Crew"})
-      assert_push_event(view, "assignee_results", %{results: rows})
-      assert Enum.any?(rows, &(&1.kind == "team" and &1.uuid == team.uuid))
+      render_change(view, "assignee_query", %{"assignee_q" => "Crew"})
 
-      render_click(view, "assignee_pick", %{
-        "kind" => "team",
-        "uuid" => team.uuid,
-        "label" => team.name
-      })
+      assert has_element?(
+               view,
+               "#assignment-assignee-options [data-assignee='team:#{team.uuid}']"
+             )
 
-      assert has_element?(view, "#assignment-assignee-chosen", team.name)
+      render_click(view, "assignee_toggle", %{"kind" => "team", "uuid" => team.uuid})
+      assert has_element?(view, "#assignment-assignee-chip-team-#{team.uuid}", team.name)
+      autosave(view)
 
+      saved = Projects.get_assignment(a.uuid)
+
+      assert PhoenixKitProjects.AssigneeSet.keys(saved) == [
+               {"person", bob.uuid},
+               {"team", team.uuid}
+             ]
+
+      # Several: the single columns are empty.
+      assert saved.assigned_person_uuid == nil and saved.assigned_team_uuid == nil
+
+      # Save closed the popup: open it again for the next change.
+      {:ok, view, _html} = edit(ctx.conn, ctx.project, saved)
+      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => bob.uuid})
       autosave(view)
       saved = Projects.get_assignment(a.uuid)
       assert saved.assigned_team_uuid == team.uuid
@@ -217,10 +252,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       end
 
       render_hook(view, "assignee_search", %{"q" => %{"nested" => "x"}})
-      autosave(view)
 
       assert Process.alive?(view.pid)
       assert render(view) =~ "Measure the kitchen"
+      autosave(view)
       assert Projects.get_assignment(ctx.a.uuid).assigned_team_uuid == nil
     end
 
@@ -229,11 +264,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
       view |> element("#assignment-assign-me") |> render_click()
+      # Theirs now: the button goes.
+      refute has_element?(view, "#assignment-assign-me")
       autosave(view)
 
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == me.uuid
-      # Theirs now: the button goes.
-      refute has_element?(view, "#assignment-assign-me")
     end
 
     test "Recent offers whom this project's tasks went to, one click each", ctx do
@@ -271,6 +306,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
       render_click(view, "staff_create_confirm", %{})
       refute render(view) =~ "Create a staff record?"
+      refute has_element?(view, "#assignment-assign-me")
       autosave(view)
 
       person = staff_person_of(ctx.me)
@@ -278,7 +314,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       # The email's local part, never the whole address.
       refute person.name =~ "@"
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == person.uuid
-      refute has_element?(view, "#assignment-assign-me")
 
       row =
         assert_activity_logged("projects.staff_person_created",
@@ -480,7 +515,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       {:ok, view, _} = edit(conn, project, a)
 
       view
-      |> form("#assignment-form", assignment: %{deadline: "2027-07-01T10:00"})
+      |> form("#assignment-form",
+        assignment: %{deadline: %{date: "2027-07-01", time: "10:00"}}
+      )
       |> render_submit()
 
       assert Projects.get_assignment(a.uuid).deadline == ~U[2027-07-01 07:00:00Z]
@@ -497,6 +534,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
       {:ok, view, _} = edit(conn, ctx.project, ctx.a)
 
+      # Save closes the popup: each step opens it again.
+      reopen = fn ->
+        {:ok, view, _} = edit(conn, ctx.project, Projects.get_assignment(ctx.a.uuid))
+        view
+      end
+
       render_click(view, "deadline_preset", %{"preset" => "tomorrow"})
       autosave(view)
 
@@ -504,6 +547,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert PhoenixKitProjects.L10n.local_date(deadline) == Date.add(today, 1)
       assert PhoenixKitProjects.L10n.local_time(deadline) == "09:00"
 
+      view = reopen.()
       render_click(view, "deadline_preset", %{"preset" => "today"})
       autosave(view)
 
@@ -512,16 +556,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert PhoenixKitProjects.L10n.local_time(deadline) == "17:00"
 
       # An unknown preset changes nothing.
+      view = reopen.()
       render_click(view, "deadline_preset", %{"preset" => "someday"})
       autosave(view)
       assert Projects.get_assignment(ctx.a.uuid).deadline == deadline
 
+      view = reopen.()
       assert has_element?(view, ~s(button[phx-click="deadline_clear"]))
       render_click(view, "deadline_clear", %{})
+      refute has_element?(view, ~s(button[phx-click="deadline_clear"]))
       autosave(view)
 
       assert Projects.get_assignment(ctx.a.uuid).deadline == nil
-      refute has_element?(view, ~s(button[phx-click="deadline_clear"]))
     end
 
     test "with the project's dates off a forged preset sets no deadline", ctx do
@@ -544,17 +590,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert %DateTime{} = done.completed_at
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, done)
-      assert has_element?(view, "input[name='times[completed_at]']")
+      assert has_element?(view, "input[name='times[completed_at][date]']")
 
       view
-      |> form("#assignment-form", times: %{completed_at: "2026-10-01T15:30"})
+      |> form("#assignment-form",
+        times: %{completed_at: %{date: "2026-10-01", time: "15:30"}}
+      )
       |> render_submit()
 
       assert Projects.get_assignment(ctx.a.uuid).completed_at == ~U[2026-10-01 15:30:00Z]
 
+      # Save closed the popup; open it again.
+      {:ok, view, _} = edit(ctx.conn, ctx.project, Projects.get_assignment(ctx.a.uuid))
+
       html =
         view
-        |> form("#assignment-form", times: %{completed_at: "2099-01-01T09:00"})
+        |> form("#assignment-form",
+          times: %{completed_at: %{date: "2099-01-01", time: "9:00"}}
+        )
         |> render_submit()
 
       assert html =~ "cannot be in the future"
@@ -562,7 +615,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert html =~ "Finished at: cannot be in the future"
       assert Projects.get_assignment(ctx.a.uuid).completed_at == ~U[2026-10-01 15:30:00Z]
       # The error is on the More tab, which is opened.
-      refute has_element?(view, "#assignment-pane-more.hidden")
+      refute has_element?(view, "[id^='assignment-'][id$='-pane-more'].hidden")
     end
   end
 

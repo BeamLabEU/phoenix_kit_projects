@@ -18,6 +18,8 @@ defmodule PhoenixKitProjects.Web.PortalHeaders do
   a confirmed public board — is treated as secret.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   @behaviour Plug
 
   import Plug.Conn
@@ -96,7 +98,7 @@ defmodule PhoenixKitProjects.Web.PortalHeaders do
         desc |> String.slice(0, 200)
 
       _ ->
-        "Public issue board"
+        gettext("Public issue board")
     end
   end
 

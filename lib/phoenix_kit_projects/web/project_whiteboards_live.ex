@@ -365,12 +365,12 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                       type="button"
                       {ConfirmAction.ask("delete_board",
                         uuid: board.uuid,
-                        title: gettext("Remove whiteboard"),
-                        message: gettext("Remove \"%{name}\"? The drawing stays in the project files.", name: board.name),
-                        confirm: gettext("Remove")
+                        title: gettext("Delete whiteboard “%{name}”?", name: board.name),
+                        message: gettext("The drawing stays in the project files."),
+                        confirm: gettext("Delete")
                       )}
                       class="btn btn-ghost btn-xs text-error ml-auto"
-                      title={gettext("Remove whiteboard")}
+                      title={gettext("Delete whiteboard")}
                     >
                       <.icon name="hero-trash" class="w-3.5 h-3.5" />
                     </button>

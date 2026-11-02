@@ -55,6 +55,14 @@ defmodule PhoenixKitProjects.Web.Helpers do
           PhoenixKitProjects.Schemas.Assignment.t()
           | PhoenixKitProjects.Schemas.Project.t()
         ) :: String.t() | nil
+  def assignee_label(%PhoenixKitProjects.Schemas.Assignment{} = a) do
+    # Every assignee (V29), in chip order.
+    case PhoenixKitProjects.AssigneeSet.names(a) do
+      [] -> nil
+      names -> Enum.join(names, ", ")
+    end
+  end
+
   def assignee_label(a) do
     cond do
       a.assigned_person && a.assigned_person.user ->
@@ -373,7 +381,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
   baseline that has both the primary fields AND the existing
   translations the user has already typed.
   """
-  @spec in_flight_record(Phoenix.LiveView.Socket.t(), atom(), atom()) :: struct()
+  @spec in_flight_record(Phoenix.LiveView.Socket.t(), atom(), atom()) :: struct() | nil
   def in_flight_record(socket, form_assign, fallback_assign) do
     case socket.assigns[form_assign] do
       %Phoenix.HTML.Form{source: %Ecto.Changeset{} = cs} ->
@@ -396,12 +404,24 @@ defmodule PhoenixKitProjects.Web.Helpers do
   call runs.
 
   Backward-compatible: when `"locale"` is absent, this is a no-op.
+
+  Only where nothing set a locale yet. A router mount has its language
+  from the URL already (core's `on_mount` runs before `mount/3`), and the
+  `session` it gets is the browser's cookie session — where a host's own
+  locale plug, or an older core, may have left a `"locale"` from some
+  earlier page. Applying that one switched the page to another language
+  than its `/et/…` address on the next mount, a Back included (the boss,
+  2026-10-30: "the language changed"). The URL is the language, never the
+  session.
   """
   @spec maybe_put_locale(map()) :: :ok | nil
   def maybe_put_locale(session) do
-    if locale = Map.get(session, "locale") do
+    with locale when is_binary(locale) <- Map.get(session, "locale"),
+         nil <- Process.get(PhoenixKitWeb.Gettext) do
       Gettext.put_locale(PhoenixKitWeb.Gettext, locale)
       Gettext.put_locale(locale)
+    else
+      _ -> nil
     end
   end
 
@@ -881,8 +901,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
   host hears about it once (`notify_dirty/2`). Idempotent — pipe it into
   every handler that changes what a save would write (validate, pending
   dependency picks); later calls see `dirty?` already set and do nothing.
-  Mount with `dirty?: false`; render `data-confirm` from `@dirty?` on
-  Cancel and the header's back link.
+  Mount with `dirty?: false`; Close and the header's back link take
+  `ConfirmAction.close(event, @dirty?)`, so they ask first in the page's
+  own dialog — never the browser's confirm box.
   """
   @spec mark_dirty(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def mark_dirty(%{assigns: %{dirty?: true}} = socket), do: socket

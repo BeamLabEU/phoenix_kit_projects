@@ -66,6 +66,16 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
     project
   end
 
+  # The project's `billable` Tasks flag (off by default).
+  defp billable!(project) do
+    {:ok, project} =
+      Projects.update_project(project, %{
+        "settings" => Map.put(project.settings || %{}, "features", %{"billable" => true})
+      })
+
+    project
+  end
+
   setup %{conn: conn} do
     Extensions.Registry.refresh()
     admin = embed_user_uuid!()
@@ -232,6 +242,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       project: project,
       admin: admin
     } do
+      project = billable!(project)
       cut = task(project, "Cut the panels")
       {:ok, view, _html} = mount_tab(conn, project, admin)
 
@@ -242,7 +253,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
           "project" => project.uuid,
           "date" => Date.to_iso8601(Date.utc_today()),
           "time" => "09:00",
-          "duration" => "1h 30m",
+          "duration" => %{"amount" => "1.5", "unit" => "hours"},
           "person" => "me",
           "task" => cut.uuid,
           "note" => "Morning shift",
@@ -264,19 +275,25 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
          %{conn: conn, project: project, admin: admin} do
       other = fixture_project()
       foreign = task(other, "Elsewhere")
+      own = task(project, "Here")
       {:ok, view, _html} = mount_tab(conn, project, admin)
       render_click(view, "open_log", %{})
 
       base = %{
         "project" => project.uuid,
         "date" => Date.to_iso8601(Date.utc_today()),
-        "duration" => "45",
-        "person" => "me"
+        "duration" => %{"amount" => "45", "unit" => "minutes"},
+        "person" => "me",
+        "task" => own.uuid
       }
 
-      assert render_submit(view, "save_log", %{base | "duration" => "soon"}) =~ "Enter how long"
+      assert render_submit(view, "save_log", %{
+               base
+               | "duration" => %{"amount" => "soon", "unit" => "hours"}
+             }) =~
+               "Enter a positive amount of time"
 
-      assert render_submit(view, "save_log", Map.put(base, "task", foreign.uuid)) =~
+      assert render_submit(view, "save_log", %{base | "task" => foreign.uuid}) =~
                "Pick a task of this project"
 
       assert render_submit(view, "save_log", %{base | "date" => "2999-01-01"}) =~
@@ -302,18 +319,138 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
     } do
       ann = user("Ann", "Able")
       {:ok, _} = Members.add_member(project, ann.uuid, role: "member")
+      fit = task(project, "Fit")
       {:ok, view, _html} = mount_tab(conn, project, admin)
-      assert render_click(view, "open_log", %{}) =~ "Ann Able"
+      render_click(view, "open_log", %{})
+      dom = "hours-#{project.uuid}"
+
+      # Whose time is searched like every other person pick, by name.
+      render_hook(view, "pick_search", %{"q" => "ann", "id" => "#{dom}-pick-logperson"})
+      assert_push_event(view, "picker_results", %{results: [%{label: "Ann Able", uuid: key}]})
+
+      render_click(view, "pick_pick", %{"uuid" => key, "id" => "#{dom}-pick-logperson"})
+      assert has_element?(view, "input[name=person][value='user:#{ann.uuid}']")
 
       render_submit(view, "save_log", %{
         "project" => project.uuid,
         "date" => Date.to_iso8601(Date.utc_today()),
-        "duration" => "2h",
-        "person" => "user:#{ann.uuid}"
+        "duration" => %{"amount" => "2", "unit" => "hours"},
+        "person" => key,
+        "task" => fit.uuid
       })
 
       assert [%{actor_uuid: uuid, started_at: nil}] = Ledger.list_entries(project.uuid)
       assert uuid == ann.uuid
+    end
+
+    test "without the project's billable flag there is no Billable box and nothing is billable",
+         %{conn: conn, project: project, admin: admin} do
+      fit = task(project, "Fit")
+      {:ok, view, _html} = mount_tab(conn, project, admin)
+      refute render_click(view, "open_log", %{}) =~ "-log-billable"
+
+      render_submit(view, "save_log", %{
+        "project" => project.uuid,
+        "date" => Date.to_iso8601(Date.utc_today()),
+        "duration" => %{"amount" => "1", "unit" => "hours"},
+        "person" => "me",
+        "task" => fit.uuid,
+        "billable" => "true"
+      })
+
+      assert [%{billable: false}] = Ledger.list_entries(project.uuid)
+    end
+
+    # The `project_time` flag (time on the project as a whole) is the
+    # project page's Log time rule; the Hours page logs with no task the
+    # same way, so it answers to it too. Off by default × on.
+    for {flag, outcome} <- [{nil, :refused}, {false, :refused}, {true, :logged}] do
+      test "time on the project itself with project_time #{inspect(flag)}: #{outcome}",
+           %{conn: conn, project: project, admin: admin} do
+        project =
+          case unquote(flag) do
+            nil ->
+              project
+
+            value ->
+              {:ok, project} =
+                Projects.update_project(project, %{
+                  "settings" =>
+                    Map.put(project.settings || %{}, "features", %{"project_time" => value})
+                })
+
+              project
+          end
+
+        {:ok, view, _html} = mount_tab(conn, project, admin)
+        opened = render_click(view, "open_log", %{})
+
+        # The task picker offers "the project itself" only where it may be
+        assert opened =~ ~s(placeholder="The project itself — or search a task") ==
+                 (unquote(outcome) == :logged)
+
+        assert opened =~ ~s(placeholder="Search a task") == (unquote(outcome) == :refused)
+
+        html =
+          render_submit(view, "save_log", %{
+            "project" => project.uuid,
+            "date" => Date.to_iso8601(Date.utc_today()),
+            "duration" => %{"amount" => "1", "unit" => "hours"},
+            "person" => "me",
+            "task" => ""
+          })
+
+        case unquote(outcome) do
+          :refused ->
+            assert html =~ "keeps time on its tasks only"
+            assert Ledger.list_entries(project.uuid) == []
+
+          :logged ->
+            assert [%{assignment_uuid: nil}] = Ledger.list_entries(project.uuid)
+        end
+      end
+    end
+
+    test "editing an entry where billable time is off keeps its billable mark",
+         %{conn: conn, project: project, admin: admin} do
+      entry =
+        log(project, 30,
+          actor_uuid: admin,
+          billable: true,
+          ended_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        )
+
+      {:ok, view, _html} = mount_tab(conn, project, admin)
+      render_click(view, "edit_entry", %{"uuid" => entry.uuid})
+
+      assert render_submit(view, "save_edit", %{
+               "duration" => %{"amount" => "45", "unit" => "minutes"}
+             }) =~ "Entry updated."
+
+      amended = Ledger.get_entry(entry.uuid)
+      assert Decimal.to_integer(amended.amount) == 45
+      assert amended.billable
+    end
+
+    test "an account with no name of its own shows by its staff person's name, never its email",
+         %{conn: conn, project: project, admin: admin} do
+      {:ok, nameless} =
+        Auth.register_user(%{
+          email: "nameless-#{uniq()}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      Repo.insert!(%PhoenixKitStaff.Schemas.Person{
+        user_uuid: nameless.uuid,
+        status: "active",
+        name: "Mati Mets"
+      })
+
+      log(project, 45, actor_uuid: nameless.uuid, ended_at: DateTime.utc_now(), note: "fitting")
+      {:ok, _view, html} = mount_tab(conn, project, admin)
+
+      assert html =~ "Mati Mets"
+      refute html =~ nameless.email
     end
 
     test "amends and removes an entry, leaving a trace", %{
@@ -321,6 +458,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       project: project,
       admin: admin
     } do
+      project = billable!(project)
+
       entry =
         log(project, 30,
           actor_uuid: admin,
@@ -330,8 +469,18 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       {:ok, view, _html} = mount_tab(conn, project, admin)
 
       assert render_click(view, "edit_entry", %{"uuid" => entry.uuid}) =~ "Edit entry"
-      assert render_submit(view, "save_edit", %{"duration" => "x"}) =~ "Enter how long"
-      html = render_submit(view, "save_edit", %{"duration" => "45m", "billable" => "true"})
+
+      assert render_submit(view, "save_edit", %{
+               "duration" => %{"amount" => "x", "unit" => "hours"}
+             }) =~
+               "Enter a positive amount of time"
+
+      html =
+        render_submit(view, "save_edit", %{
+          "duration" => %{"amount" => "45", "unit" => "minutes"},
+          "billable" => "true"
+        })
+
       assert html =~ "Entry updated."
 
       amended = Ledger.get_entry(entry.uuid)
@@ -411,7 +560,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       assert render_submit(view, "save_log", %{
                "project" => project.uuid,
                "date" => Date.to_iso8601(Date.utc_today()),
-               "duration" => "1h"
+               "duration" => %{"amount" => "1", "unit" => "hours"}
              }) =~ "Vera Viewer"
 
       assert render_click(view, "edit_entry", %{"uuid" => theirs.uuid}) =~
@@ -605,7 +754,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       render_submit(view, "save_log", %{
         "project" => off.uuid,
         "date" => Date.to_iso8601(Date.utc_today()),
-        "duration" => "20"
+        "duration" => %{"amount" => "20", "unit" => "minutes"}
       })
 
       assert Ledger.list_entries(off.uuid) == []
@@ -621,13 +770,18 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/hours")
 
       render_click(view, "open_log", %{})
-      render_change(view, "log_change", %{"project" => project.uuid, "duration" => "20"})
+
+      render_change(view, "log_change", %{
+        "project" => project.uuid,
+        "duration" => %{"amount" => "20", "unit" => "minutes"}
+      })
+
       assert "Cut the panels" in task_search(view)
 
       render_submit(view, "save_log", %{
         "project" => project.uuid,
         "date" => Date.to_iso8601(Date.utc_today()),
-        "duration" => "20",
+        "duration" => %{"amount" => "20", "unit" => "minutes"},
         "task" => cut.uuid
       })
 

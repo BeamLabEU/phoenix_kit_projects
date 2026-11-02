@@ -86,6 +86,33 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       assert html =~ "Projects"
     end
 
+    # The order page's gap (the boss, 2026-10-30): the root view used to
+    # get `py-6 gap-6` from here on top of the host's own frame; it keeps
+    # its own tight default now.
+    test "the root view keeps its own wrapper, with no extra top padding", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
+      project = fixture_project()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{
+            "pubsub_topic" => unique_topic(),
+            "current_user_uuid" => actor_uuid,
+            "root_view" => %{
+              "lv" => "Elixir.PhoenixKitProjects.Web.ProjectShowLive",
+              "session" => %{"id" => project.uuid}
+            }
+          }
+        )
+
+      assert html =~ project.name
+      refute html =~ "py-6 gap-6"
+      assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
+    end
+
     test "logs a warning and renders without root when root_view.lv is not whitelisted",
          %{conn: conn} do
       topic = unique_topic()
@@ -302,6 +329,40 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       assert button =~ ~s(phx-click="close_top_modal")
       assert button =~ ~r/phx-value-frame-ref="\d+"/
       refute button =~ "data-confirm"
+    end
+
+    # The boss, 2026-11-02: never the browser's box. A dirty frame's ✕ asks
+    # in the host's own dialog, and closes only on Discard.
+    test "a dirty frame's × asks in the host's own dialog and closes on Discard",
+         %{conn: conn} do
+      topic = unique_topic()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic}
+        )
+
+      push_n_frames(topic, view, 1)
+      [%{frame_ref: ref}] = :sys.get_state(view.pid).socket.assigns.modal_stack
+      send(view.pid, {:projects, :dirty, %{frame_ref: ref, dirty: true}})
+      html = render(view)
+
+      [button] = Regex.run(~r/<button[^>]*aria-label="Close"[^>]*>/, html)
+      assert button =~ ~s(phx-click="request_confirm")
+      assert button =~ ~s(phx-value-event="close_top_modal")
+      refute html =~ "data-confirm"
+
+      render_click(view, "request_confirm", %{
+        "event" => "close_top_modal",
+        "title" => "Close without saving?",
+        "frame-ref" => to_string(ref)
+      })
+
+      assert render(view) =~ "Close without saving?"
+      assert [_] = :sys.get_state(view.pid).socket.assigns.modal_stack
+
+      render_click(view, "confirm_action_ok", %{})
+      assert [] = :sys.get_state(view.pid).socket.assigns.modal_stack
     end
 
     test "close_top_modal with non-top frame-ref is a no-op", %{conn: conn} do

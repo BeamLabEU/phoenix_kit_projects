@@ -31,7 +31,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   alias PhoenixKitProjects.{ApiAccess, ApiKeys, ApiUsage, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.Docs
-  alias PhoenixKitProjects.Web.{ApiKeyPanel, ApiKeysFilters, ApiKeysUsage, ListUi}
+  alias PhoenixKitProjects.Web.{ApiKeyPanel, ApiKeysFilters, ApiKeysUsage, ListUi, ProjectApiLive}
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.TableColumns
 
@@ -310,7 +311,24 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
   # ── events ─────────────────────────────────────────────────────────
 
+  @confirmable ~w(rotate revoke remove_grant)
+
   @impl true
+  # An action that asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, @confirmable)}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   # Core's column picker on the Usage page: which figures show (the cards,
   # the chart switch, each key's line) and which columns the tasks table
   # has — each viewer's own choice, saved by `TableColumns`.
@@ -576,7 +594,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
           socket,
           gettext("Saved: %{key} acts as %{role} in %{project}.",
             key: key.name,
-            role: role,
+            role: ProjectApiLive.role_name(role),
             project: project_label(project_uuid)
           )
         )
@@ -917,10 +935,10 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               </span>
             </div>
             <div :if={is_nil(row.key.revoked_at) and (row.rotate? or row.revoke?)} class="flex items-center gap-1">
-              <.button :if={row.rotate?} type="button" variant="ghost" size="xs" phx-click="rotate" phx-value-key={row.key.uuid} phx-disable-with={gettext("Rotating…")} data-confirm={gettext("Make a new token for this key? The old one stops working at once.")}>
+              <.button :if={row.rotate?} type="button" variant="ghost" size="xs" {ConfirmAction.ask("rotate", key: row.key.uuid, title: gettext("Make a new token for “%{name}”?", name: row.key.name), message: gettext("The old token stops working at once."), confirm: gettext("Rotate"))}>
                 <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Rotate")}
               </.button>
-              <.button :if={row.revoke?} type="button" variant="ghost" size="xs" class="text-error" phx-click="revoke" phx-value-key={row.key.uuid} phx-disable-with={gettext("Revoking…")} data-confirm={gettext("Revoke this key? Everything using it stops working, in every project.")}>
+              <.button :if={row.revoke?} type="button" variant="ghost" size="xs" class="text-error" {ConfirmAction.ask("revoke", key: row.key.uuid, title: gettext("Revoke the key “%{name}”?", name: row.key.name), message: gettext("Everything using it stops working, in every project."), confirm: gettext("Revoke"))}>
                 <.icon name="hero-no-symbol" class="w-3.5 h-3.5" /> {gettext("Revoke")}
               </.button>
             </div>
@@ -1007,7 +1025,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                     <.button :if={live? and several? and not home? and grant.scopes != []} type="button" variant="ghost" size="xs" phx-click="set_home" phx-value-key={row.key.uuid} phx-value-home={grant.project_uuid} title={gettext("Calls that name no project act here")}>
                       {gettext("Set as default")}
                     </.button>
-                    <.button :if={can?} type="button" variant="ghost" size="xs" class="text-error" phx-click="remove_grant" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} data-confirm={gettext("Take this project away from the key?")} aria-label={gettext("Remove")}>
+                    <.button :if={can?} type="button" variant="ghost" size="xs" class="text-error" {ConfirmAction.ask("remove_grant", key: row.key.uuid, project: grant.project_uuid, title: gettext("Take “%{project}” away from the key “%{name}”?", project: (project && Project.localized_name(project, L10n.current_content_lang())) || "—", name: row.key.name), confirm: gettext("Remove"))} aria-label={gettext("Remove")}>
                       <.icon name="hero-x-mark" class="w-4 h-4" />
                     </.button>
                   </.table_default_cell>
@@ -1087,6 +1105,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         api_token={@api_token}
         project_name={(@api_token[:project] && @api_token.project.name) || ""}
       />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

@@ -49,6 +49,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       f_ext_val: [default: "", url_key: "xval"]
     ]
 
+  import PhoenixKitProjects.Web.Components.PersonDisplay, only: [person: 1]
+
   alias PhoenixKitProjects.{
     Activity,
     Authz,
@@ -1135,6 +1137,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             >
               {Project.localized_name(p, @lang)}
             </.smart_link>
+            <%!-- Ongoing work says so beside its name, as on its page. --%>
+            <span
+              :if={Project.ongoing?(p) and not p.is_template}
+              class="badge badge-xs badge-outline badge-info gap-0.5 ml-1 align-middle whitespace-nowrap"
+              title={gettext("Ongoing — this project ends only when someone ends it")}
+            >
+              <span aria-hidden="true">∞</span> {gettext("Ongoing")}
+            </span>
             <% desc = Project.localized_description(p, @lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md" title={desc}>{desc}</div>
           </.table_default_cell>
@@ -1166,8 +1176,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               <.table_row_menu_button
                 {ConfirmAction.ask("delete",
                   uuid: p.uuid,
-                  title: gettext("Delete project"),
-                  message: gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, @lang)),
+                  title: gettext("Delete project “%{name}”?", name: Project.localized_name(p, @lang)),
+                  message: gettext("Its tasks are deleted too."),
                   confirm: gettext("Delete")
                 )}
                 icon="hero-trash"
@@ -1272,10 +1282,16 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   defp column_cell(assigns, "progress", p) do
-    assigns = assign(assigns, t: Columns.get(assigns.metrics, :tasks, p))
+    assigns = assign(assigns, t: Columns.get(assigns.metrics, :tasks, p), p: p)
 
     ~H"""
     <.table_default_cell class="whitespace-nowrap">
+      <%!-- Ongoing work has no finish to be a share of: what is open. --%>
+      <%= if Project.ongoing?(@p) and @t && @t.has_work do %>
+        <span class="tabular-nums text-xs text-base-content/70">
+          {ngettext("%{count} open", "%{count} open", @t.open || 0)}
+        </span>
+      <% else %>
       <%= if @t && @t.has_work do %>
         <div class="flex items-center gap-2">
           <progress class="progress progress-primary w-16" value={@t.progress_pct} max="100"></progress>
@@ -1283,6 +1299,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         </div>
       <% else %>
         <span class="text-base-content/40">—</span>
+      <% end %>
       <% end %>
     </.table_default_cell>
     """
@@ -1337,7 +1354,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   defp column_cell(assigns, "owner", p),
-    do: text_cell(assigns, p |> Columns.owners(assigns.metrics) |> Enum.join(", "))
+    do: people_cell(assigns, Columns.owners(p, assigns.metrics))
 
   defp column_cell(assigns, "assignee", p) do
     assigns = assign(assigns, a: Columns.get(assigns.metrics, :assignee, p))
@@ -1424,7 +1441,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   defp column_cell(assigns, "updated", p), do: date_cell(assigns, p.updated_at)
 
   defp column_cell(assigns, "created_by", p),
-    do: text_cell(assigns, Columns.get(assigns.metrics, :creators, p))
+    do: people_cell(assigns, List.wrap(Columns.get(assigns.metrics, :creators, p)))
 
   defp column_cell(assigns, "key", p), do: text_cell(assigns, p.key, "font-mono text-xs")
 
@@ -1485,13 +1502,27 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     """
   end
 
-  defp text_cell(assigns, text, class \\ nil) do
+  defp text_cell(assigns, text, class) do
     assigns = assign(assigns, text: if(text in [nil, ""], do: nil, else: text), class: class)
 
     ~H"""
     <.table_default_cell class={["whitespace-nowrap text-base-content/70", @class]}>
       <span :if={@text} class="inline-block max-w-[14rem] truncate align-bottom" title={@text}>{@text}</span>
       <span :if={!@text} class="text-base-content/40">—</span>
+    </.table_default_cell>
+    """
+  end
+
+  # People in a cell: a face and a name each, as everywhere in the module.
+  defp people_cell(assigns, names) do
+    assigns = assign(assigns, names: Enum.reject(names, &(&1 in [nil, ""])))
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      <span :if={@names != []} class="inline-flex flex-wrap items-center gap-x-2 gap-y-1 max-w-[16rem]">
+        <.person :for={name <- @names} name={name} class="max-w-[14rem]" />
+      </span>
+      <span :if={@names == []} class="text-base-content/40">—</span>
     </.table_default_cell>
     """
   end

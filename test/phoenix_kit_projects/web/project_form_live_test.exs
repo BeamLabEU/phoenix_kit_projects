@@ -38,9 +38,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       html =
         view
         |> form("#project-form",
-          project: %{name: "", description: "", start_mode: "immediate"}
+          project: %{name: "", start_mode: "immediate"}
         )
-        |> render_submit()
+        |> render_submit(%{"project" => %{"description" => ""}})
 
       assert html =~ "can&#39;t be blank" or html =~ "can't be blank"
     end
@@ -55,12 +55,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
         |> form("#project-form",
           project: %{
             name: name,
-            description: "d",
             start_mode: "immediate",
             counts_weekends: "false"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"project" => %{"description" => "d"}})
 
       assert redirect_to =~ "#{PhoenixKitProjects.DataCase.admin_projects()}/"
 
@@ -101,12 +100,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
         |> form("#project-form",
           project: %{
             name: new_name,
-            description: "d2",
             start_mode: project.start_mode || "immediate",
             counts_weekends: "false"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"project" => %{"description" => "d2"}})
 
       assert_activity_logged("projects.project_updated",
         actor_uuid: actor_uuid,

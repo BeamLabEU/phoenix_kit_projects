@@ -19,6 +19,8 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
   }
 
   alias PhoenixKit.Modules.Storage.{File, FileInstance, Library}
+  alias PhoenixKit.Modules.Storage.URLSigner
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.LiveCase
   alias PhoenixKitProjects.Test.Repo
 
@@ -48,8 +50,9 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
       {:ok, project} = Features.set_flags(project, %{"assignees" => false, "estimates" => false})
 
       {gates, q_gates} = QueryCounter.count(fn -> Features.gates(project) end)
-      # The extension map (one read); the flag values ride on the struct.
-      assert q_gates == 1
+      # The extension map (one read) and the site's feature defaults (one
+      # batch read, cached in production); the flag values ride on the struct.
+      assert q_gates <= 2
 
       # Same answer as the per-flag path, for every gate.
       for {gate, value} <- gates, gate != :tasks do
@@ -63,7 +66,7 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
       assert gates.tasks == true
 
       {flags, q_flags} = QueryCounter.count(fn -> Features.flags(project) end)
-      assert q_flags == 1
+      assert q_flags <= 2
       assert flags["assignees"] == false
       assert flags["labels"] == true
       assert map_size(flags) == map_size(Features.catalog())
@@ -72,7 +75,7 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
     test "a bare uuid costs one more read (the settings row), still not one per flag" do
       project = fixture_project()
       {_, queries} = QueryCounter.count(fn -> Features.gates(project.uuid) end)
-      assert queries == 2
+      assert queries <= 3
     end
 
     test "tasks off turns every task flag off in one go" do
@@ -161,6 +164,53 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
     end
   end
 
+  describe "Assignees.recent_for_viewer/4" do
+    defp staff_person!(name) do
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "#{name}-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      Repo.insert!(%PhoenixKitStaff.Schemas.Person{
+        user_uuid: user.uuid,
+        status: "active",
+        name: name
+      })
+    end
+
+    test "reads do not grow with the chips" do
+      me = LiveCase.embed_user_uuid!()
+      project = fixture_project()
+
+      count = fn n ->
+        Repo.update_all(PhoenixKit.Users.Auth.User |> Ecto.Query.where(uuid: ^me),
+          set: [custom_fields: %{}]
+        )
+
+        for i <- 1..n do
+          PhoenixKitProjects.Assignees.remember_pick(
+            me,
+            "person",
+            staff_person!("p#{n}-#{i}").uuid
+          )
+        end
+
+        {rows, queries} =
+          QueryCounter.count(fn ->
+            PhoenixKitProjects.Assignees.recent_for_viewer(me, project.uuid, 8)
+          end)
+
+        assert length(rows) == n
+        queries
+      end
+
+      one = count.(1)
+      six = count.(6)
+      assert six <= one, "#{six} reads for six chips, #{one} for one"
+    end
+  end
+
   describe "Attachments.download_urls/1" do
     defp stored_file!(owner_uuid, attrs \\ %{}) do
       n = System.unique_integer([:positive])
@@ -237,8 +287,15 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
 
       # Core's rule, file by file: a hidden original gets no link; a file
       # mid-edit is served by the app (never the bucket's object URL).
-      for file <- files do
+      for file <- files -- [private] do
         assert Map.get(urls, file.uuid) == Attachments.download_url(file)
+      end
+
+      # A private library's file: the time-window token, which the file
+      # route takes (its permanent one is refused) — on both paths.
+      for url <- [urls[private.uuid], Attachments.download_url(private)] do
+        [token] = Regex.run(~r{/original/([^/?]+)}, url, capture: :all_but_first)
+        assert URLSigner.private_token?(token)
       end
 
       refute Map.has_key?(urls, hidden.uuid)

@@ -242,7 +242,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
     {:ok, view, _html} = show(ctx)
 
     render_click(view, "ask_ready", %{"uuid" => ctx.consult.uuid})
-    assert has_element?(view, next_up(ctx.project), "ready to start?")
+    assert has_element?(view, next_up(ctx.project), "to start?")
     refute has_element?(view, next_up(ctx.project), "Keep idle")
     assert status(ctx.consult) == "waiting"
 

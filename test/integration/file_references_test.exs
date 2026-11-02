@@ -24,6 +24,7 @@ defmodule PhoenixKitProjects.FileReferencesTest do
   @moduletag :requires_core_file_references
 
   @tables [
+    "phoenix_kit_project_assignment_files",
     "phoenix_kit_project_portal_submissions"
   ]
 
@@ -62,7 +63,9 @@ defmodule PhoenixKitProjects.FileReferencesTest do
   test "each pair renders the same SQL as core's built-in one" do
     builtin = Map.new(Storage.builtin_file_references())
 
-    for {table, condition} <- FileReferences.pairs() do
+    # A table newer than core's copy of the list (V27's task files) has no
+    # built-in twin; the others must match it.
+    for {table, condition} <- FileReferences.pairs(), Map.has_key?(builtin, table) do
       assert sql(condition) == sql(Map.fetch!(builtin, table)), "SQL differs for #{table}"
     end
   end

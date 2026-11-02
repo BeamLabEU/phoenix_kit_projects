@@ -17,11 +17,13 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
 
   # A destructive action that asks through core's confirm modal.
   import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
+  import PhoenixKitProjects.Web.Components.TimeInput, only: [clock_input: 1]
 
-  alias PhoenixKitProjects.{Extensions, L10n, Paths, ProjectEvents, Projects}
+  alias PhoenixKitProjects.{CalendarDisplay, Extensions, L10n, Paths, ProjectEvents, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.ProjectEvent
   alias PhoenixKitProjects.Web.Components.ConfirmAction
+  alias PhoenixKitProjects.Web.Components.TimeInput
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -334,11 +336,13 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   end
 
   defp event_attrs(params) do
+    # The clock selects post their parts; folded back to "HH:MM" (or "").
+    params = TimeInput.normalize(params, ~w(start_time end_time))
     all_day = params["all_day"] in ["true", "on"]
     starts_at = parse_moment(params["date"], params["start_time"], all_day)
 
-    # A timed end WITHOUT an end date means "same day": the form labels
-    # End date optional, so 09:00–10:00 on one day silently persisted as
+    # A timed end WITHOUT an end date means "same day": the End date is
+    # not required, so 09:00–10:00 on one day silently persisted as
     # open-ended before (panel round, Grok).
     end_date =
       case blank_to_nil(params["end_date"]) do
@@ -463,7 +467,8 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               <.icon name="hero-chevron-left" class="w-4 h-4" />
             </button>
             <span class="font-medium text-sm min-w-32 text-center">
-              {Calendar.strftime(@anchor_date, "%B %Y")}
+              <%!-- Translated month (strftime's %B is always English). --%>
+              {"#{L10n.short_month(@anchor_date.month)} #{@anchor_date.year}"}
             </span>
             <button type="button" class="btn btn-ghost btn-sm" phx-click="next_month" aria-label={gettext("Next month")}>
               <.icon name="hero-chevron-right" class="w-4 h-4" />
@@ -481,6 +486,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
 
         <.live_component
           module={PhoenixLiveCalendar.CalendarComponent}
+          translations={CalendarDisplay.translations()}
           id={"project-events-cal-#{@project.uuid}"}
           events={@calendar_events}
           views={[:month]}
@@ -564,12 +570,11 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               class="text-error"
               {ConfirmAction.ask("delete_event",
                 uuid: @selected.uuid,
-                title: gettext("Remove event"),
-                message: gettext("Remove \"%{title}\"?", title: @selected.title),
-                confirm: gettext("Remove")
+                title: gettext("Delete event “%{title}”?", title: @selected.title),
+                confirm: gettext("Delete")
               )}
             >
-              <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Remove")}
+              <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Delete")}
             </.button>
             <.button type="button" size="sm" phx-click="close_detail">
               {gettext("Close")}
@@ -652,7 +657,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                 type="date"
                 name="end_date"
                 value=""
-                label={gettext("End date (optional)")}
+                label={gettext("End date")}
                 class="input-sm"
                 wrapper_class="flex-1"
               />
@@ -665,31 +670,26 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               class="checkbox-primary checkbox-sm"
               wrapper_class="gap-2"
             />
-            <div class="flex items-start gap-2">
-              <.input
+            <%!-- The site's clock (24-hour, or AM/PM when core's
+                 `time_format` says so), not the browser's time field,
+                 which drew the device's clock (the boss, 2026-10-30). --%>
+            <div class="flex flex-wrap items-start gap-4">
+              <.clock_input
                 id={"event-start-time-#{@project.uuid}"}
-                type="time"
                 name="start_time"
-                value=""
                 label={gettext("Start time")}
-                class="input-sm"
-                wrapper_class="flex-1"
               />
-              <.input
+              <.clock_input
                 id={"event-end-time-#{@project.uuid}"}
-                type="time"
                 name="end_time"
-                value=""
                 label={gettext("End time")}
-                class="input-sm"
-                wrapper_class="flex-1"
               />
             </div>
             <.input
               id={"event-location-#{@project.uuid}"}
               name="location"
               value=""
-              label={gettext("Location (optional)")}
+              label={gettext("Location")}
               maxlength="200"
               class="input-sm"
             />
@@ -697,7 +697,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               id={"event-description-#{@project.uuid}"}
               name="description"
               value=""
-              label={gettext("Description (optional)")}
+              label={gettext("Description")}
               rows="2"
               class="textarea-sm"
             />

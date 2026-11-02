@@ -12,7 +12,16 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
   import Phoenix.LiveViewTest
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Paths, Projects, ScheduleLayout}
+
+  alias PhoenixKitProjects.{
+    CalendarDisplay,
+    Extensions,
+    Paths,
+    ProjectEvents,
+    Projects,
+    ScheduleLayout
+  }
+
   alias PhoenixKitProjects.Web.ProjectCalendarLive
 
   setup %{conn: conn} do
@@ -126,6 +135,122 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert_redirect(view, Paths.view_assignment(project.uuid, a1.uuid))
   end
 
+  test "a task's deadline is a marker that opens the task, a subtask's too", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
+    {project, a1, a2} = started_project_with_tasks()
+    {_items, layout} = ScheduleLayout.tree(Projects.get_project_with_assignee(project.uuid))
+    %{start: s} = Map.fetch!(layout, a1.uuid)
+    deadline = DateTime.new!(NaiveDateTime.to_date(s), ~T[14:00:00])
+
+    {:ok, _} = Projects.update_assignment_form(a1, %{"deadline" => deadline})
+
+    sub_task = fixture_task(%{"title" => "Sub with a deadline"})
+
+    {:ok, sub} =
+      Projects.create_assignment(%{
+        "project_uuid" => project.uuid,
+        "task_uuid" => sub_task.uuid,
+        "parent_uuid" => a2.uuid,
+        "deadline" => deadline
+      })
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
+
+    html = render(view)
+    assert html =~ "Deadline: #{Projects.get_assignment(a1.uuid).task.title}"
+    assert html =~ "Deadline: Sub with a deadline"
+
+    send(view.pid, {:calendar_event_click, "deadline:" <> sub.uuid})
+    assert_redirect(view, Paths.view_assignment(project.uuid, sub.uuid))
+  end
+
+  describe "the Day view (item 31)" do
+    test "Month, Week and Day; on a day a task planned at hours is a block on each day", %{
+      conn: conn,
+      actor_uuid: actor
+    } do
+      {project, a1, _a2} = started_project_with_tasks()
+      first = Date.utc_today() |> Date.beginning_of_month() |> Date.add(2)
+
+      {:ok, _} =
+        Projects.update_assignment_form(a1, %{
+          "start_date" => first,
+          "end_date" => Date.add(first, 2),
+          "start_time" => "09:00",
+          "end_time" => "11:30"
+        })
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
+
+      html = render(view)
+      assert html =~ ~s(phx-value-view="day") or html =~ "lc_view_change"
+
+      # On the month: one bar, the times in its title.
+      month = :sys.get_state(view.pid).socket.assigns.events
+      assert [bar] = Enum.filter(month, &(&1.id == a1.uuid))
+      assert bar.title =~ "09:00–11:30"
+
+      # The switcher's Day: a timed block on each planned day, untimed tasks
+      # stay all-day (the strip at the top of the day).
+      send(view.pid, {:calendar_view, :day})
+      render(view)
+      day = :sys.get_state(view.pid).socket.assigns.events
+      blocks = Enum.filter(day, &(CalendarDisplay.task_uuid(&1.id) == a1.uuid))
+      assert length(blocks) == 3
+      assert Enum.all?(blocks, &(not &1.all_day))
+      assert Enum.any?(day, & &1.all_day)
+
+      # A block opens its task, as a bar does.
+      send(view.pid, {:calendar_event_click, "#{a1.uuid}@#{first}"})
+      assert_redirect(view, Paths.view_assignment(project.uuid, a1.uuid))
+    end
+
+    test "the switcher's own Day button switches the grid to hours", %{
+      conn: conn,
+      actor_uuid: actor
+    } do
+      {project, _a1, _a2} = started_project_with_tasks()
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
+
+      render(view)
+      view |> element("[phx-value-view='day']") |> render_click()
+      assert :sys.get_state(view.pid).socket.assigns.cal_view == :day
+    end
+
+    test "the project's events are on the calendar and open the Events tab", %{
+      conn: conn,
+      actor_uuid: actor
+    } do
+      {project, _a1, _a2} = started_project_with_tasks()
+      {:ok, _} = Extensions.enable(project, "events")
+      at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      {:ok, event} =
+        ProjectEvents.create(project, %{
+          title: "Meet the client",
+          starts_at: at,
+          ends_at: DateTime.add(at, 3600),
+          all_day: false
+        })
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
+
+      render(view)
+      events = :sys.get_state(view.pid).socket.assigns.events
+      assert Enum.any?(events, &(&1.id == "event:" <> event.uuid and not &1.all_day))
+
+      send(view.pid, {:calendar_event_click, "event:" <> event.uuid})
+      assert_redirect(view, Paths.project_ext_tab(project.uuid, "events"))
+    end
+  end
+
   test "clicking a sub-project bar drills into the child project", %{
     conn: conn,
     actor_uuid: actor
@@ -222,7 +347,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     refute html =~ "cal-container"
   end
 
-  test "unknown project id redirects to the projects list", %{conn: conn, actor_uuid: actor} do
+  test "unknown project id redirects to the projects list", %{conn: conn, actor_uuid: _actor} do
     assert {:error, {:live_redirect, %{to: to}}} =
              live_isolated(conn, ProjectCalendarLive, session: %{"id" => Ecto.UUID.generate()})
 
@@ -391,23 +516,26 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       {:ok, view, _html} =
         live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
-      html = render(view)
-      assert html =~ "assignee_search"
-      assert html =~ mine.title
-      assert html =~ other.title
+      # The two 2-day tasks run back to back, so on the last days of a
+      # month the second one starts in the next month and the grid on
+      # screen does not draw it. The filter decides the event list, so the
+      # assertions read that, not the month that happens to be showing.
+      assert render(view) =~ "assignee_search"
+      assert mine.title in event_titles(view)
+      assert other.title in event_titles(view)
 
-      html = render_click(view, "assignee_pick", %{"uuid" => person.uuid})
-      assert html =~ mine.title
-      refute html =~ other.title
+      render_click(view, "assignee_pick", %{"uuid" => person.uuid})
+      assert mine.title in event_titles(view)
+      refute other.title in event_titles(view)
 
       # Unassigned lens composes back in the other task.
-      html = render_click(view, "toggle_unassigned", %{})
-      assert html =~ other.title
+      render_click(view, "toggle_unassigned", %{})
+      assert other.title in event_titles(view)
 
       # Clear resets to everything.
-      html = render_click(view, "clear_assignee_filter", %{})
-      assert html =~ mine.title
-      assert html =~ other.title
+      render_click(view, "clear_assignee_filter", %{})
+      assert mine.title in event_titles(view)
+      assert other.title in event_titles(view)
     end
 
     test "a sub-project bar matches when a CHILD task belongs to the person", %{
@@ -621,6 +749,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     refute html =~ "remove_assignee_person"
     assert Process.alive?(view.pid)
   end
+
+  defp event_titles(view),
+    do: Enum.map(:sys.get_state(view.pid).socket.assigns.events, & &1.title)
 
   defp unassigned_count(html) do
     [_, count] = Regex.run(~r/Unassigned\s*<span[^>]*>(\d+)<\/span>/, html)

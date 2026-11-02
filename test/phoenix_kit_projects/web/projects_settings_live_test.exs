@@ -234,7 +234,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       GanttDisplay.put("row_height", "comfortable")
       {:ok, view, _html} = live(conn, @path)
 
-      view |> element(~s(button[phx-click="reset_gantt_display"])) |> render_click()
+      view |> element(~s(button[phx-value-event="reset_gantt_display"])) |> render_click()
+      render_click(view, "confirm_action_ok", %{})
 
       d = GanttDisplay.read()
       assert d.label_position == :fit
@@ -441,7 +442,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
 
       # Reset lands INSIDE the quiet window — the queued change row must not
       # flush after it (a pre-reset value after the reset reads backwards).
-      view |> element(~s(button[phx-click="reset_gantt_display"])) |> render_click()
+      view |> element(~s(button[phx-value-event="reset_gantt_display"])) |> render_click()
+      render_click(view, "confirm_action_ok", %{})
 
       await_display_log_flush(view)
 

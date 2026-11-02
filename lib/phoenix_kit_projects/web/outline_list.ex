@@ -23,8 +23,19 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.Icon
+  import PhoenixKitProjects.Web.Components.RefChip, only: [ref_chip: 1]
 
-  alias PhoenixKitProjects.{Activity, Authz, Outline, Paths, Projects, Refs}
+  alias PhoenixKitProjects.{
+    Activity,
+    Authz,
+    L10n,
+    LibrarySearch,
+    Outline,
+    Paths,
+    Projects,
+    Refs
+  }
+
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ProjectShowLive
@@ -134,6 +145,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
         outline_fx: row_fx(project, fx),
         outline_dom_id: "pkp-outline-#{project.uuid}"
       )
+      |> place_draft()
 
     if style == :text do
       lines = lines(socket)
@@ -310,47 +322,168 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
+  # Enter on a row. Text after the cursor was typed already, so it is a task
+  # at once (the row split in two); with nothing after the cursor the next
+  # row is only a draft (`draft_row/1`), written once something is typed in
+  # it. The boss's last Enter of a run used to leave an empty "New task"
+  # behind that he then had to find and delete.
   def handle_event("outline_add", %{"after" => after_uuid} = params, socket, reload) do
-    text = params["text"] |> to_string() |> String.trim()
-    title = if text == "", do: gettext("New task"), else: text
+    text = params["text"] |> to_string() |> clean_title()
 
     with true <- socket.assigns.outline_can.edit,
-         %Assignment{} = anchor <- own(socket, after_uuid),
-         {:ok, %{assignment: a}} <-
-           Projects.create_task_with_assignment(
-             socket.assigns.project.uuid,
-             %{"title" => title, "ad_hoc" => true},
-             %{}
-           ) do
-      Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
-      audit(socket, "projects.assignment_created", a)
-      # Below a task that has subtasks, the new one is its first subtask;
-      # otherwise the next task at the same level. A place that went away
-      # meanwhile leaves the task at the end of the list, where it is seen.
-      has_below? = Outline.descendants(Outline.shape(a.project_uuid), anchor.uuid) != []
+         %Assignment{} = anchor <- own(socket, after_uuid) do
+      {parent, after_row} = below(socket.assigns.assignments, anchor)
 
-      _ =
-        if has_below?,
-          do: Outline.move(a, anchor.uuid, nil),
-          else: Outline.move(a, anchor.parent_uuid, anchor.uuid)
+      if text == "" do
+        {:noreply, open_draft(socket, %{parent: parent, after: after_row, text: ""})}
+      else
+        case create_at(socket, %{"title" => text, "ad_hoc" => true}, parent, after_row) do
+          {:ok, a} ->
+            {:noreply,
+             socket |> assign(outline_focus: a.uuid) |> remember_created([a.uuid]) |> reload.()}
 
-      {:noreply, socket |> assign(outline_focus: a.uuid, outline_fresh: a.uuid) |> reload.()}
+          _ ->
+            {:noreply, socket}
+        end
+      end
     else
       _ -> {:noreply, socket}
     end
   end
 
-  def handle_event("outline_add_first", _params, socket, reload) do
+  # "Add a task" at the foot of the list: a draft at the end, top level.
+  def handle_event("outline_add_first", _params, socket, _reload) do
+    if socket.assigns.outline_can.edit do
+      last =
+        socket.assigns.assignments
+        |> Enum.filter(&is_nil(&1.parent_uuid))
+        |> List.last()
+
+      {:noreply,
+       open_draft(socket, %{parent: nil, after: last && last.uuid, text: "", at_end: true})}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # The draft's title, written: Enter (`next` — the following draft opens
+  # below it, so a run of titles is typed without a click) or leaving the
+  # row with something in it. A draft left empty is no task.
+  def handle_event("outline_draft_save", %{"key" => key} = params, socket, reload) do
+    text = params["text"] |> to_string() |> clean_title()
+
     with true <- socket.assigns.outline_can.edit,
-         {:ok, %{assignment: a}} <-
-           Projects.create_task_with_assignment(
-             socket.assigns.project.uuid,
-             %{"title" => gettext("New task"), "ad_hoc" => true},
-             %{}
-           ) do
-      Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
-      audit(socket, "projects.assignment_created", a)
-      {:noreply, socket |> assign(outline_focus: a.uuid, outline_fresh: a.uuid) |> reload.()}
+         %{key: ^key} = draft <- socket.assigns[:outline_draft] do
+      if text == "" do
+        {:noreply, close_draft(socket, params["refocus"] == true)}
+      else
+        attrs = %{"title" => text, "ad_hoc" => true}
+
+        saved_draft(
+          socket,
+          draft,
+          create_at(socket, attrs, draft),
+          params["next"] == true,
+          reload
+        )
+      end
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # The library's tasks matching what the draft holds so far, for the
+  # dropdown under it (`LibrarySearch.suggest/2`).
+  def handle_event("outline_draft_suggest", %{"key" => key, "q" => q}, socket, _reload) do
+    with true <- socket.assigns.outline_can.edit,
+         %{key: ^key} <- socket.assigns[:outline_draft] do
+      lang = L10n.current_content_lang()
+
+      items =
+        q
+        |> to_string()
+        |> LibrarySearch.suggest()
+        |> Enum.map(fn t ->
+          %{uuid: t.uuid, title: Task.localized_title(t, lang), hint: suggestion_hint(t, lang)}
+        end)
+
+      {:reply, %{key: key, items: items}, socket}
+    else
+      _ -> {:reply, %{key: key, items: []}, socket}
+    end
+  end
+
+  # A library task taken from the dropdown: added the way the task form adds
+  # one from the library (its description, estimate and default assignee
+  # come with it), where the draft stands; Enter opens the next draft.
+  def handle_event(
+        "outline_draft_pick",
+        %{"key" => key, "task" => task_uuid} = params,
+        socket,
+        reload
+      )
+      when is_binary(task_uuid) do
+    with true <- socket.assigns.outline_can.edit,
+         %{key: ^key} = draft <- socket.assigns[:outline_draft],
+         {:ok, _} <- Ecto.UUID.cast(task_uuid),
+         %Task{ad_hoc: false} <- Projects.get_task(task_uuid) do
+      result =
+        case Projects.create_assignment_from_template(task_uuid, %{
+               "project_uuid" => socket.assigns.project.uuid
+             }) do
+          {:ok, a} ->
+            after_row = if draft[:at_end], do: :last, else: draft.after
+            placed(socket, a, draft.parent, after_row)
+
+          error ->
+            audit_failed(socket, "projects.assignment_created", nil)
+            error
+        end
+
+      saved_draft(socket, draft, result, params["next"] == true, reload)
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # Esc, Enter on an empty draft, or clicking away from one: nothing is kept.
+  def handle_event("outline_draft_cancel", %{"key" => key} = params, socket, _reload) do
+    case socket.assigns[:outline_draft] do
+      %{key: ^key} -> {:noreply, close_draft(socket, params["refocus"] == true)}
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # Tab / Shift+Tab on a draft: the same nesting a written row gets, before
+  # anything is written.
+  def handle_event("outline_draft_nest", %{"key" => key, "dir" => dir} = params, socket, _reload) do
+    with true <- socket.assigns.outline_can.edit,
+         true <- socket.assigns.outline_can.nest or dir == "out",
+         %{key: ^key} = draft <- socket.assigns[:outline_draft],
+         {parent, after_row} <- draft_nested(socket.assigns.assignments, draft, dir) do
+      text = params["text"] |> to_string() |> String.slice(0, 500)
+      {:noreply, open_draft(socket, %{parent: parent, after: after_row, text: text})}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # A list pasted into a draft: its lines go where the draft stands, the
+  # draft's own text (if any) first.
+  def handle_event(
+        "outline_draft_paste",
+        %{"key" => key, "lines" => lines} = params,
+        socket,
+        reload
+      )
+      when is_list(lines) do
+    with true <- socket.assigns.outline_can.edit,
+         %{key: ^key} = draft <- socket.assigns[:outline_draft] do
+      typed = params["text"] |> to_string() |> clean_title()
+      lines = if typed == "", do: lines, else: [%{"text" => typed, "depth" => 0} | lines]
+      socket = assign(socket, :outline_draft, nil)
+      depth = draft_depth(socket.assigns.assignments, draft)
+      paste_lines(socket, slot_row(socket.assigns.assignments, draft), depth, lines, reload)
     else
       _ -> {:noreply, socket}
     end
@@ -360,53 +493,14 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       when is_list(lines) do
     with true <- socket.assigns.outline_can.edit,
          %Assignment{} = anchor <- own(socket, after_uuid) do
-      # The list as it stands, with the pasted lines put in after the
-      # anchor's branch — one write, one refresh.
-      walked = Outline.walk(socket.assigns.assignments)
-      depths = socket.assigns.outline_depths
-      base = Map.get(depths, anchor.uuid, 0)
-
+      # The pasted lines go in after the anchor's branch, at its level.
       branch = [
         anchor.uuid
         | socket.assigns.assignments |> Outline.descendants(anchor.uuid) |> Enum.map(& &1.uuid)
       ]
 
-      last = List.last(branch)
-
-      pasted =
-        for %{"text" => text} = line when is_binary(text) <- lines do
-          %{
-            "id" => nil,
-            "text" => text,
-            "depth" => base + to_depth(line["depth"]),
-            "done" => line["done"] == true and socket.assigns.outline_can.tick
-          }
-        end
-
-      all =
-        Enum.flat_map(walked, fn {a, depth} ->
-          here = %{"id" => a.uuid, "text" => line_text(a), "depth" => depth}
-          if a.uuid == last, do: [here | pasted], else: [here]
-        end)
-
-      case Outline.sync(socket.assigns.project.uuid, all, [],
-             actor_uuid: Activity.actor_uuid(socket),
-             rename: false
-           ) do
-        {:ok, summary} ->
-          log_sync(socket, summary)
-          {:noreply, reload.(socket)}
-
-        {:error, reason} ->
-          audit_failed(
-            socket,
-            "projects.task_list_edited",
-            socket.assigns.project.uuid,
-            "project"
-          )
-
-          {:noreply, put_flash(socket, :error, sync_error(reason))}
-      end
+      base = Map.get(socket.assigns.outline_depths, anchor.uuid, 0)
+      paste_lines(socket, List.last(branch), base, lines, reload)
     else
       _ -> {:noreply, socket}
     end
@@ -453,18 +547,35 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  # A task just added and left empty-handed: Backspace on its blank title.
+  # A task this list added and then left empty-handed — Backspace on its
+  # blank title, or the row left with its title cleared. Only a task this
+  # session made (`outline_created`) goes, and only while it still holds
+  # nothing but its title, read from the database now
+  # (`Projects.empty_draft?/1`: no description, subtasks, comments, files
+  # or time) — the event is the client's, and the row may have been filled
+  # in since. Anything else stays as it was, as it always has.
   def handle_event("outline_drop", %{"id" => uuid}, socket, reload) do
+    created = socket.assigns[:outline_created] || MapSet.new()
+
     with true <- socket.assigns.outline_can.edit,
-         true <- socket.assigns[:outline_fresh] == uuid,
+         true <- MapSet.member?(created, uuid),
          %Assignment{} = a <- own(socket, uuid),
          false <- MapSet.member?(socket.assigns.outline_parents, uuid),
+         true <- Projects.empty_draft?(a),
          {:ok, _} <- Projects.delete_assignment(a) do
       audit(socket, "projects.assignment_removed", a)
       rows = Outline.walk(socket.assigns.assignments) |> Enum.map(&elem(&1, 0).uuid)
       index = Enum.find_index(rows, &(&1 == uuid)) || 0
       focus = if index > 0, do: Enum.at(rows, index - 1)
-      {:noreply, socket |> assign(outline_focus: focus, outline_fresh: nil) |> reload.()}
+
+      {:noreply,
+       socket
+       |> assign(
+         outline_focus: focus,
+         outline_fresh: nil,
+         outline_created: MapSet.delete(created, uuid)
+       )
+       |> reload.()}
     else
       _ -> {:noreply, socket}
     end
@@ -497,6 +608,233 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   def handle_event(_event, _params, socket, _reload), do: {:noreply, socket}
 
   defp put_flash(socket, kind, message), do: Phoenix.LiveView.put_flash(socket, kind, message)
+
+  defp clean_title(text),
+    do: text |> String.replace(~r/\s+/u, " ") |> String.trim() |> String.slice(0, 500)
+
+  # Where a row added below `anchor` goes: under a task that has subtasks it
+  # is the first subtask, otherwise the next task at the same level.
+  defp below(rows, %Assignment{} = anchor) do
+    if Outline.descendants(rows, anchor.uuid) != [],
+      do: {anchor.uuid, nil},
+      else: {anchor.parent_uuid, anchor.uuid}
+  end
+
+  # A one-off task written into the list at `parent` / after `after_row`
+  # (nil: first under the parent, `:last`: at its end). A place that went
+  # away meanwhile leaves it at the end of the list, where it is seen.
+  defp create_at(socket, attrs, %{parent: parent, after: after_row} = draft) do
+    after_row = if draft[:at_end], do: :last, else: after_row
+    create_at(socket, attrs, parent, after_row)
+  end
+
+  defp create_at(socket, attrs, parent, after_row) do
+    case Projects.create_task_with_assignment(socket.assigns.project.uuid, attrs, %{}) do
+      {:ok, %{assignment: a}} ->
+        placed(socket, a, parent, after_row)
+
+      error ->
+        audit_failed(socket, "projects.assignment_created", nil)
+        error
+    end
+  end
+
+  defp placed(socket, %Assignment{} = a, parent, after_row) do
+    Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
+    audit(socket, "projects.assignment_created", a)
+    _ = Outline.move(a, parent, after_row)
+    {:ok, a}
+  end
+
+  # After a draft was written: the next draft below it (Enter), or none.
+  defp saved_draft(socket, draft, {:ok, %Assignment{} = a}, next?, reload) do
+    socket = remember_created(socket, [a.uuid])
+
+    socket =
+      if next? do
+        socket
+        |> assign(:outline_draft, nil)
+        |> open_draft(%{parent: draft.parent, after: a.uuid, text: ""}, false)
+      else
+        assign(socket, outline_draft: nil)
+      end
+
+    {:noreply, reload.(socket)}
+  end
+
+  defp saved_draft(socket, _draft, _error, _next?, _reload) do
+    {:noreply, put_flash(socket, :error, gettext("The task could not be added."))}
+  end
+
+  # A second line for a suggestion, to tell like titles apart: the start
+  # of its description, as words — a description from the Leaf editor is
+  # markdown, and a hint line showing `**`, `![…](…)` or a link's address
+  # says less than the words around them.
+  defp suggestion_hint(%Task{} = t, lang) do
+    case Task.localized_description(t, lang) do
+      text when is_binary(text) and text != "" ->
+        text
+        |> markdown_words()
+        |> String.replace(~r/\s+/u, " ")
+        |> String.trim()
+        |> String.slice(0, 90)
+
+      _ ->
+        ""
+    end
+  end
+
+  # A mention token (`@[user:…|Ann]`) becomes its label.
+  defp markdown_words(text) do
+    text
+    |> String.replace(~r/([@#])\[[a-z_]+:[^|\]]*\|([^\]]*)\]/u, "\\1\\2")
+    |> String.replace(~r/!\[[^\]]*\]\([^)]*\)/u, " ")
+    |> String.replace(~r/\[([^\]]*)\]\([^)]*\)/u, "\\1")
+    |> String.replace(~r/<[^>]*>/u, " ")
+    |> String.replace(~r/(^|\n)\s*(#+|>|[-*+]|\d+\.)\s+/u, "\\1")
+    |> String.replace(~r/(\*\*|__|~~|`)/u, "")
+  end
+
+  defp remember_created(socket, uuids) do
+    created = socket.assigns[:outline_created] || MapSet.new()
+    assign(socket, :outline_created, Enum.into(uuids, created))
+  end
+
+  # A draft row: where it stands (`parent`, `after`), what is typed in it
+  # while it moves (Tab), and a key of its own — each draft is a new input,
+  # so a late event from the one before cannot write into this one.
+  defp open_draft(socket, draft, place? \\ true) do
+    draft =
+      draft
+      |> Map.put(:key, "d#{System.unique_integer([:positive])}")
+      |> Map.put_new(:at_end, false)
+
+    socket = assign(socket, :outline_draft, draft)
+    if place?, do: place_draft(socket), else: socket
+  end
+
+  defp close_draft(socket, refocus?) do
+    focus =
+      case socket.assigns[:outline_draft] do
+        %{} = draft when refocus? -> slot_row(socket.assigns[:assignments] || [], draft)
+        _ -> socket.assigns[:outline_focus]
+      end
+
+    assign(socket, outline_draft: nil, outline_focus: focus)
+  end
+
+  # The draft against the rows as they are now: where it is drawn (`slot`,
+  # the row it follows, or `:end`) and how deep. One whose place went away
+  # (its row deleted meanwhile) is dropped.
+  defp place_draft(socket) do
+    rows = socket.assigns[:assignments] || []
+
+    case socket.assigns[:outline_draft] do
+      %{} = draft ->
+        if draft_place_alive?(rows, draft) do
+          slot = if draft.at_end, do: :end, else: slot_row(rows, draft)
+          draft = Map.merge(draft, %{slot: slot, depth: draft_depth(rows, draft)})
+          assign(socket, :outline_draft, draft)
+        else
+          assign(socket, :outline_draft, nil)
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp draft_place_alive?(rows, %{parent: parent, after: after_row}) do
+    uuids = MapSet.new(rows, & &1.uuid)
+    Enum.all?([parent, after_row], &(is_nil(&1) or MapSet.member?(uuids, &1)))
+  end
+
+  # The row a draft is drawn after: the end of the branch of the sibling it
+  # follows, else its parent; nil only at the very top of the list.
+  defp slot_row(rows, %{after: after_row}) when is_binary(after_row) do
+    case Outline.descendants(rows, after_row) |> List.last() do
+      nil -> after_row
+      last -> last.uuid
+    end
+  end
+
+  defp slot_row(_rows, %{parent: parent}), do: parent
+
+  defp draft_depth(_rows, %{parent: nil}), do: 0
+  defp draft_depth(rows, %{parent: parent}), do: Map.get(Outline.depths(rows), parent, 0) + 1
+
+  # Tab: under the sibling above, after its last subtask. Shift+Tab: out one
+  # level, right after what it sat under. `:noop` where neither can go.
+  defp draft_nested(rows, %{after: after_row}, "in") when is_binary(after_row) do
+    case Enum.find(rows, &(&1.uuid == after_row)) do
+      %Assignment{} = above ->
+        if Assignment.subproject?(above) do
+          :noop
+        else
+          last = rows |> Enum.filter(&(&1.parent_uuid == above.uuid)) |> List.last()
+          {above.uuid, last && last.uuid}
+        end
+
+      _ ->
+        :noop
+    end
+  end
+
+  defp draft_nested(rows, %{parent: parent}, "out") when is_binary(parent) do
+    case Enum.find(rows, &(&1.uuid == parent)) do
+      %Assignment{} = up -> {up.parent_uuid, up.uuid}
+      _ -> :noop
+    end
+  end
+
+  defp draft_nested(_rows, _draft, _dir), do: :noop
+
+  # Pasted lines put into the list right after the row `after_uuid` (nil: at
+  # the top), `base` levels deep — one write, one refresh.
+  defp paste_lines(socket, after_uuid, base, lines, reload) do
+    walked = Outline.walk(socket.assigns.assignments)
+
+    # Each pasted line carries a key, so the reply says which tasks this
+    # list made (`outline_created`).
+    pasted =
+      for {%{"text" => text} = line, i} when is_binary(text) <- Enum.with_index(lines) do
+        %{
+          "id" => nil,
+          "tmp" => "p#{i}",
+          "text" => text,
+          "depth" => base + to_depth(line["depth"]),
+          "done" => line["done"] == true and socket.assigns.outline_can.tick
+        }
+      end
+
+    existing =
+      Enum.flat_map(walked, fn {a, depth} ->
+        here = %{"id" => a.uuid, "text" => line_text(a), "depth" => depth}
+        if a.uuid == after_uuid, do: [here | pasted], else: [here]
+      end)
+
+    all = if is_nil(after_uuid), do: pasted ++ existing, else: existing
+
+    case Outline.sync(socket.assigns.project.uuid, all, [],
+           actor_uuid: Activity.actor_uuid(socket),
+           rename: false
+         ) do
+      {:ok, summary} ->
+        log_sync(socket, summary)
+        created = Enum.map(summary.created, fn {_tmp, %{uuid: uuid}} -> uuid end)
+        {:noreply, socket |> remember_created(created) |> reload.()}
+
+      {:error, reason} ->
+        audit_failed(
+          socket,
+          "projects.task_list_edited",
+          socket.assigns.project.uuid,
+          "project"
+        )
+
+        {:noreply, put_flash(socket, :error, sync_error(reason))}
+    end
+  end
 
   # One history line per act, as the row buttons write them; a failure is
   # written too, so the record shows what was tried.
@@ -672,6 +1010,66 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     """
   end
 
+  attr(:draft, :map, default: nil)
+  attr(:slot, :any, required: true)
+  attr(:indent, :boolean, default: true)
+
+  @doc """
+  The row Enter opens on the card face: a title being typed that is no task
+  yet (the `PkpDraft` hook). Drawn after the row `slot` (a row uuid, or
+  `:end` at the foot of the list) when the open draft stands there, else
+  nothing — so the page puts one after every row and one at the foot.
+  Enter writes it and opens the next; Esc, Enter on it empty, or clicking
+  away while it is empty drop it.
+  """
+  def draft_row(assigns) do
+    ~H"""
+    <div
+      :if={@draft && Map.get(@draft, :slot) == @slot}
+      id="outline-draft-row"
+      class="relative flex py-1"
+      style={"margin-left: #{if @indent, do: Map.get(@draft, :depth, 0) * 2, else: 0}rem"}
+    >
+      <%!-- No dashed circle in front: the rows lost their numbered
+           circles (the boss, 2026-10-30), so the draft lines up with
+           their cards. --%>
+      <div class="flex-1 min-w-0 card bg-base-100 shadow-sm border border-dashed border-base-300">
+        <div class="card-body relative py-3 px-4">
+          <input
+            id={"outline-draft-#{@draft.key}"}
+            type="text"
+            phx-hook="PkpDraft"
+            data-key={@draft.key}
+            value={Map.get(@draft, :text, "")}
+            placeholder={gettext("Type the task")}
+            maxlength="500"
+            autocomplete="off"
+            aria-label={gettext("New task title")}
+            aria-autocomplete="list"
+            aria-controls={"outline-draft-#{@draft.key}-menu"}
+            data-menu={"outline-draft-#{@draft.key}-menu"}
+            class="w-full bg-transparent border-0 border-b border-primary px-0 py-0.5 font-medium focus:outline-none"
+          />
+          <%!-- Filled by the hook as the title is typed: the library's
+               tasks that match. ↓/↑ and Enter or a click take one; typing
+               on and Enter makes a new task as before. The rows it draws
+               wear `menu-title` (the heading) and `menu-active` (the one
+               the arrows are on) — named here so the host's Tailwind scan
+               sees them. --%>
+          <ul
+            id={"outline-draft-#{@draft.key}-menu"}
+            phx-update="ignore"
+            role="listbox"
+            data-label={gettext("From the library")}
+            class="hidden absolute left-4 right-4 top-full z-30 -mt-1 menu menu-sm bg-base-100 rounded-box shadow-lg border border-base-200 p-1"
+          >
+          </ul>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   attr(:held, :list, required: true)
   attr(:can, :map, required: true)
   attr(:project, :map, required: true)
@@ -692,7 +1090,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       </p>
       <ul class="flex flex-col gap-1">
         <li :for={a <- @held} class="flex items-center gap-2 text-sm">
-          <span class="font-mono text-xs text-base-content/50 shrink-0">{Refs.task_ref(@project.key, a.number)}</span>
+          <.ref_chip ref={Refs.task_ref(@project.key, a.number)} />
           <span class="truncate flex-1 text-base-content/60 line-through">{Assignment.label(a)}</span>
           <button type="button" class="btn btn-ghost btn-xs" phx-click="outline_restore" phx-value-uuid={a.uuid} phx-disable-with={gettext("Restoring…")}>
             <.icon name="hero-arrow-uturn-left" class="w-3.5 h-3.5" /> {gettext("Restore")}
@@ -701,10 +1099,12 @@ defmodule PhoenixKitProjects.Web.OutlineList do
             :if={@can.delete}
             type="button"
             class="btn btn-ghost btn-xs text-error"
-            phx-click="outline_purge"
-            phx-value-uuid={a.uuid}
-            phx-disable-with={gettext("Deleting…")}
-            data-confirm={gettext("Delete \"%{title}\" and everything it carries? This cannot be undone.", title: Assignment.label(a))}
+            {PhoenixKitProjects.Web.Components.ConfirmAction.ask("outline_purge",
+              uuid: a.uuid,
+              title: gettext("Delete “%{title}”?", title: Assignment.label(a)),
+              message: gettext("Everything it carries goes with it. This cannot be undone."),
+              confirm: gettext("Delete")
+            )}
           >
             <.icon name="hero-trash" class="w-3.5 h-3.5" /> {gettext("Delete")}
           </button>

@@ -3,6 +3,10 @@ defmodule PhoenixKitProjects.Web.Components.ConfirmAction do
   A destructive action that asks first, through core's `confirm_modal/1`
   instead of the browser's `data-confirm` dialog — the shape the catalogue
   uses for its deletes (boss, 2026-10-05: "use the core's confirm modal").
+  Nothing in this module asks through the browser's box any more (the
+  boss, 2026-11-02 — it froze the page and looks foreign): every Close,
+  Delete and popup ✕ comes here, and `NoBrowserConfirmTest` keeps
+  `data-confirm` out of `lib/`.
 
   Three parts, so a page adds one assign-free modal and three short event
   clauses and keeps its existing handlers untouched:
@@ -54,6 +58,22 @@ defmodule PhoenixKitProjects.Web.Components.ConfirmAction do
           message: String.t() | nil,
           confirm: String.t() | nil
         }
+
+  @doc """
+  A popup's Close button: `event` at once when nothing is unsaved, behind
+  "Discard your changes?" in the page's own dialog when something is (the
+  boss, 2026-11-02 — the browser's own box froze the page).
+  """
+  @spec close(String.t(), boolean()) :: map()
+  def close(event, true),
+    do:
+      ask(event,
+        title: gettext("Discard your changes?"),
+        message: gettext("What you changed since the last save is lost."),
+        confirm: gettext("Discard")
+      )
+
+  def close(event, _dirty?), do: %{"phx-click" => event}
 
   @doc """
   The attributes of a button that must ask first. `event` is the page's own
@@ -108,7 +128,15 @@ defmodule PhoenixKitProjects.Web.Components.ConfirmAction do
 
   attr(:confirm, :map, default: nil, doc: "The pending question (`request/3`), or nil.")
 
-  @doc "Core's confirm modal for the pending question; nothing when there is none."
+  @doc """
+  Core's confirm modal for the pending question; nothing when there is
+  none. The title IS the question ("Delete task “Measure”?"); `message`
+  is only for a real consequence ("Its 3 subtasks are deleted too.") and
+  shows as a plain line under it. No warning box repeating the question
+  and no "Do you want to continue?" — it said the same thing three times
+  (the boss, 2026-10-30). `prompt=""` keeps core's default line away on a
+  core that still has one.
+  """
   def confirm_action_modal(assigns) do
     ~H"""
     <.confirm_modal
@@ -119,10 +147,12 @@ defmodule PhoenixKitProjects.Web.Components.ConfirmAction do
       title={@confirm.title || gettext("Are you sure?")}
       title_icon="hero-exclamation-triangle"
       title_icon_class="w-5 h-5 text-error"
-      messages={if @confirm.message, do: [{:warning, @confirm.message}], else: []}
+      prompt=""
       confirm_text={@confirm.confirm || gettext("Confirm")}
       danger={true}
-    />
+    >
+      <p :if={@confirm.message} class="text-sm text-base-content/70">{@confirm.message}</p>
+    </.confirm_modal>
     """
   end
 end

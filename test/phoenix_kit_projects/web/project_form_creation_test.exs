@@ -1139,7 +1139,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
       assert html =~ ~s(id="create-start")
-      assert html =~ "From template (optional)"
+      assert html =~ "From template"
       refute html =~ ~s(id="create-top-template")
       refute html =~ ~s(id="create-top-start")
       # Statuses fold in too (Max: essentials only by default).

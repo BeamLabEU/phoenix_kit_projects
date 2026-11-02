@@ -261,7 +261,8 @@ Repo-local aliases:
   depth level; feeds `project_tree_summaries/1` and `ScheduleLayout.trees/1`),
   `Projects.list_all_dependencies/1` on a LIST, `Extensions.enabled_map/1` +
   `Features.gates/1` / `flags/1` (one context read), `Portal.review_details_for/1`,
-  `Attachments.download_urls/1`, `Grants.subject_reaches/1`, `ListMetrics.load/3`
+  `Attachments.download_urls/1`, `Assignees.recent_for_viewer/4` (the
+  picker's Recent chips, one read per kind), `Grants.subject_reaches/1`, `ListMetrics.load/3`
   (the projects list's columns, one family of reads per column group) and
   `Extensions.project_columns/2`. Ecto preloads are
   statements too, so assert N-independence, never an exact count. Known and
@@ -614,6 +615,16 @@ browsing the public portal is a visitor.
   status titles (per-project tri-state override in the project's `settings`).
 - `projects_default_preset`, `projects_new_form_top_blocks` — new-project form
   defaults.
+- `projects_feature_default_<flag>` — the site's default for a project
+  feature declared `site_default: true` (`Features.site_flags/0`: today
+  `project_time`, `billable`, `subproject_auto`, `project_comments`,
+  `all_comments`), set on Settings → "Project Features"
+  (`Features.set_site_default/2`, only those keys). Resolution order for one
+  project: its own `settings["features"][key]` → this row (`"true"` /
+  `"false"`) → the flag's catalog `default`. Absent means the catalog
+  default, so an install that never saved the tab reads what it read
+  before. Read in one cached batch (`Settings.get_settings_cached/1`) per
+  `Features` context, never per row.
 - `projects_admin_all_backfilled`, `projects_api_keys_permissions_backfilled`,
   `projects_manage_library_backfilled`, `projects_settings_backfilled`,
   `projects_checklist_flags_backfilled` — one-time `migrate_legacy/0` flags. One-way and one-time on purpose:
@@ -646,6 +657,18 @@ browsing the public portal is a visitor.
 - `projects.status_entity_provisioned` (`metadata.scope` = `"shared"` |
   `"global_default"`), `projects.default_status_entity_set`,
   `projects.status_translations_toggled`
+- `projects.assignment_made_subproject` / `projects.assignment_made_task`
+  (`TaskConversion`, the row ⋮; `metadata.child_project_uuid`, `moved`; the
+  task named in its primary language)
+- `projects.task_file_added` / `projects.task_file_removed` (a task's own
+  files, V27; `resource_uuid` the task)
+- `projects.feature_default_set` (Settings → Project Features;
+  `resource_type: "projects_settings"`, `metadata.flag` / `enabled`)
+- a repeating task's next occurrence is a `projects.assignment_created` with
+  `metadata.repeat_of` (the finished task) and `auto: true`, under the actor
+  whose write finished it (`Repeats.next/2`, called from `Handoffs`)
+- `projects.staff_person_created` (a staff record made from the assignee
+  picker), `projects.project_access_updated`
 - `projects.member_added/role_changed/removed`, `projects.health_updated`,
   `projects.event_created/updated/deleted` — the four notification sub-types
   fan out through core's activity→notification bridge whenever their entries
@@ -655,7 +678,12 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V26**. `mix phoenix_kit.update` applies it
+`phoenix_kit_projects`, currently **V28** (V27: `phoenix_kit_project_assignment_files`,
+a task's own files — `assignment_uuid` / `file_uuid` both `ON DELETE CASCADE`,
+`inline` for an image placed in the description; V28: `repeat_rule JSONB` on
+assignments). ⚠️ `ExpectedSchema` was extended by hand for V27/V28: core's
+generator cannot build this chain without the staff/entities prerequisites —
+regenerate it with core when that is possible. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
 `migrated_version_runtime/1`; tests run it through
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on
@@ -1522,9 +1550,53 @@ matches the top frame.
 | `"root_view"` | `nil` | The LV rendered as the host's base frame |
 | `"placement"` | `"center"` | `"end"` renders every frame as a full-height right-hand sheet |
 | `"max_width"` | `6xl` centered, `2xl` as a drawer | any core `max_width` value (`sm` … `7xl`, `full`) |
+| `"url_param"` | `nil` (off) | Name of the HOST page's query parameter that carries the open task (e.g. `"task"`, `"pk_task"`; a letter, then letters, digits, `_`, `-`, at most 32). Absent or invalid: the address is neither written nor read |
 
 `PopupHostLive` forwards `current_user_uuid` and `locale` into every child
 session, so a popup-host integration passes the viewer's uuid once.
+
+**The open task in the HOST page's address is opt-in** (`"url_param"`, Max
+2026-10-31: off by default, the host names the parameter; boss item 21 asked
+for it inside the order page). With it, e.g. `"url_param" => "task"`,
+opening a task's view or edit form `pushState`s `?task=KEY-12` (hook
+`PkpDrawerUrl`, `data-param`), closing drops it, Back closes the drawer, and
+the parameter present when the host mounts opens that task (`"pkp_url_task"`;
+who may see it is the view's own check). Only that one parameter is touched.
+Without it nothing is written to the address and a `"pkp_url_task"` event is
+ignored. The module's own routed project page passes `"url_param" => "task"`
+to its drawer, so `/admin/projects/<id>?task=KEY-12` works as before.
+
+#### A project kept on a host record (an order): the `"embedded"` preset
+
+A host that creates one project per record of its own (an order, a case)
+passes the `"embedded"` feature preset, the "ongoing" choice and the
+immediate start in the same attrs (boss item 16, 2026-10-31):
+
+```elixir
+PhoenixKitProjects.Projects.create_project(
+  %{
+    "name" => "#15-1 — Kitchen",
+    "preset" => "embedded",      # any Features.presets/0 key; an unknown key is ignored
+    "ongoing" => true,           # settings["completion"] = "manual": ends only when someone ends it
+    "start_mode" => "immediate"  # the default; an ongoing immediate project is started at once
+  },
+  actor_uuid: user_uuid          # the creator's owner seat
+)
+# => {:ok, %Project{started_at: %DateTime{}, settings: %{"completion" => "manual", "features" => %{…}}}}
+```
+
+`create_project_from_template/3` takes the same keys (the preset's flags
+and extensions win over the template's). String keys only. The preset's
+flags are written into the new row's `settings["features"]` (flags the
+caller passes there win); its extensions are set after the insert. **On:**
+tasks, assignees, statuses with the in-progress step, dates and deadlines,
+dependencies, subtasks, the task library, estimates, scheduling, Timeline,
+sub-projects, Board, Calendar, the work ledger (time on tasks), the Files
+extension, the All comments tab. **Off:** the project's general comments,
+priorities, labels, progress %, time on the project as a whole, billable,
+the dead `waiting` flag, whiteboards, events, the portal and its flags. An
+existing project takes it with `Features.apply_preset(project, "embedded",
+actor_uuid: …)` (flags and extensions) or on its Modules page → Presets.
 
 ## Versioning & releases
 
@@ -1638,6 +1710,87 @@ text), the print rules hide everything but `.pk-hours-report`. On the API,
 Not built: a running timer; editing an entry's day, note or person (the
 ledger amends minutes and the billable flag only); a saved or scheduled
 report; a true PDF file (the browser's print makes one).
+
+## Boss review of 2026-10-30 (branch `feat/boss-review-1030`)
+
+What the branch added, by where it lives — the `@moduledoc` of each is the
+reference:
+
+- **Repeating tasks** (`Repeats`, V28 `repeat_rule`): a done repeating task
+  stays done and ONE new task (subtasks again, dates moved on) comes for the
+  next date. `Repeats.next/2` runs from `Handoffs.run/1`, so every path that
+  announces a finish (page, board, popup, form, API, tick rules, rollups)
+  repeats; the rule is taken off the finished row in the same transaction
+  that makes the next, so two finishes make one. A task made a sub-project
+  loses its rule (`TaskConversion`). The control's "Every…" with a number or
+  unit it cannot read is refused by the changeset, never read as "does not
+  repeat". A repeating SUBTASK's next one goes under the nearest OPEN
+  ancestor, right after the done branch (under a done parent the completion
+  rules would reopen it). A month rule keeps its first deadline's day
+  (`"day"` in the rule: 31 Jan → 28 Feb → 31 Mar). The occurrence is made
+  under the project lock and announced after the commit.
+- **A sub-project that finishes by itself** (`subproject_auto`) releases
+  nothing on its own (Max, 2026-10-31: "go with b"). The page that handled
+  the last Done wraps the step in `Projects.collect_finished_subprojects/1`
+  (`ProjectShowLive.run_step/3`, every gated event) and opens the usual
+  "next up" dialog (mode `:subproject`) for the rows the sub-project
+  unlocks — in the parent project even when the Done was on the
+  sub-project's own page; each row's release right is checked in its own
+  project, Keep idle and the notify ticks work as for a task, Cancel leaves
+  them waiting. The API, a job or any other process collects nothing, so
+  nothing is released.
+- **Task ⇄ sub-project in place** (`TaskConversion`): needs `:edit_tasks` +
+  `:create_tasks` on the project the row sits in (an expanded sub-project's
+  task is converted in ITS project), and, back to a task, `:edit_tasks` in
+  BOTH the project the row sits in and the sub-project (Max, 2026-10-31:
+  "Go with B"); the sub-project is archived as part of the conversion under
+  that rule, not the owner-level `:archive_project`, and its tasks move
+  into the list.
+- **A task's files** (`Attachments.store_task_file/…`, V27,
+  `Web.Components.TaskFiles`, registered in `FileReferences`): stored through
+  core Storage in a folder per task; each upload, paste and removal re-checks
+  `:upload_files` and the form's `WriteGate`; an add or removal broadcasts
+  `:assignment_updated` so an open task view reloads. A picture in the
+  description is kept by FILE, `![alt](pkfile:<uuid>)` (`InlineImages`):
+  the changeset turns an app file address the editor wrote back into the
+  reference, `RichText` resolves it per viewer through
+  `Storage.authorized_url/4` (a private library's file gets a time-window
+  URL; one the viewer may not read is left out), and the editor is handed
+  the text resolved. The reference names the file, not the task, so a
+  repeat's copied description still shows it (the file rows stay with
+  their occurrence). Removing an inline file takes it out of the text in
+  every language; a picture pasted into a task not saved yet is refused
+  with "Save the task first to add images" (the editor always intercepts
+  pastes, so none lands in the text as a `data:` URL).
+- **Project features with a site default** — see "Settings keys". `project_time`
+  (time on the project as a whole) is enforced on the project page's Log time,
+  on the Hours page (an entry with no task) AND on the API's `POST /time`
+  (422 `task_required` while it is off — Max, 2026-10-31: "A"); `billable` on every write,
+  and an edit where it is off keeps the entry's mark.
+- **Shared form parts**: `TimeInput`, `DurationInput`, `AssigneePicker`
+  (recent picks under the user's `custom_fields["projects_recent_assignees"]`,
+  written with `Auth.merge_user_custom_fields/3`), `FormParts`,
+  `DescriptionEditor` (Leaf) and `RichText` (sanitised markdown; mentions are
+  put back after the sanitiser under a per-render nonce).
+- **The "From library" picker** (item 27; the add-task form's library tab,
+  `AssignmentFormLive.library_picker/1` + `LibrarySearch`): a focused search
+  box (`LibrarySearch.filter/3`, diacritic-insensitive — "mootmine" finds
+  "Mõõtmine" — titles first, then descriptions; typing replaces the blocks
+  with one match list), then **Recent** (this viewer's last adds,
+  `custom_fields["projects_recent_library_tasks"]`, written with
+  `Auth.merge_user_custom_fields/3` by `LibrarySearch.remember/2`),
+  **Often used** (`often_used/2`: library tasks named by the most project
+  rows, at least two) and the whole library **A–Z under letter headings**
+  (`alphabetical/2`; in Estonian Õ Ä Ö Ü after W). Checkboxes, ticked in
+  order; the footer reads "Add N tasks". One tick is the form's own pick
+  (its details and pulled-in tasks, as the old select); several are added
+  in the order ticked, each with its library defaults. The search and the
+  ticks belong to a hidden form of their own (`assignment-library-form-*`),
+  so they never post with the task.
+- **Hooks** (all through `js_sources/0`): `PkpDraft` (the outline's draft row,
+  `phoenix_kit_projects_drafts.js`, global `PhoenixKitProjectsDraftHooks`),
+  `PkpTabScroll`, `PkpDrawerUrl`, `PkpUrlMirror` (`phoenix_kit_projects.js`,
+  `PhoenixKitProjectsHooks`).
 
 ## TODOs
 

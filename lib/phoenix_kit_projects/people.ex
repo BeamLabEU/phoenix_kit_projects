@@ -283,13 +283,47 @@ defmodule PhoenixKitProjects.People do
   end
 
   @doc """
-  The user accounts an assignee stands for — the people a notice about the
-  task reaches: a person's own account; a team's members; a department's
-  people (by their primary department). Trashed people and people without an
-  account are left out. Anything else, or a failed read, is `[]`.
+  The user accounts a record's assignees stand for — the people a notice
+  about it reaches: a person's own account; a team's members; a
+  department's people (by their primary department, and its teams'
+  members). Every assignee of a task counts (V29, several and all equal),
+  each account once. Trashed people and people without an account are
+  left out. A project (one assignee) reads its own columns. Anything else,
+  or a failed read, is `[]`.
   """
   @spec assignee_user_uuids(map()) :: [binary()]
-  def assignee_user_uuids(%{assigned_person_uuid: uuid}) when is_binary(uuid) do
+  def assignee_user_uuids(record) when is_map(record) do
+    record |> assignee_keys() |> user_uuids_for()
+  end
+
+  def assignee_user_uuids(_), do: []
+
+  @doc """
+  The user accounts a list of assignee keys (`{kind, uuid}`) stand for,
+  each once — see `assignee_user_uuids/1`.
+  """
+  @spec user_uuids_for([{String.t(), binary()}]) :: [binary()]
+  def user_uuids_for(keys) when is_list(keys) do
+    keys |> Enum.flat_map(&key_user_uuids/1) |> Enum.uniq()
+  end
+
+  @doc """
+  A record's assignees as `[{kind, uuid}]`: a task's set
+  (`AssigneeSet.keys/1`), a project's (or a library task's) one.
+  """
+  @spec assignee_keys(map()) :: [{String.t(), binary()}]
+  def assignee_keys(%PhoenixKitProjects.Schemas.Project{} = p),
+    do: PhoenixKitProjects.AssigneeSet.legacy_keys(p)
+
+  def assignee_keys(%PhoenixKitProjects.Schemas.Task{} = t),
+    do: PhoenixKitProjects.AssigneeSet.legacy_keys(t)
+
+  def assignee_keys(record) when is_map(record),
+    do: PhoenixKitProjects.AssigneeSet.keys(record)
+
+  def assignee_keys(_), do: []
+
+  defp key_user_uuids({"person", uuid}) do
     from(p in Person,
       where: p.uuid == ^uuid and p.status != @trashed and not is_nil(p.user_uuid),
       select: p.user_uuid
@@ -299,7 +333,7 @@ defmodule PhoenixKitProjects.People do
     _ -> []
   end
 
-  def assignee_user_uuids(%{assigned_team_uuid: uuid}) when is_binary(uuid) do
+  defp key_user_uuids({"team", uuid}) do
     from(m in TeamMembership,
       join: p in Person,
       on: p.uuid == m.staff_person_uuid,
@@ -314,7 +348,7 @@ defmodule PhoenixKitProjects.People do
 
   # A department's people are those whose primary department it is AND the
   # members of its teams — the same reach as "My tasks" (`Assignees`).
-  def assignee_user_uuids(%{assigned_department_uuid: uuid}) when is_binary(uuid) do
+  defp key_user_uuids({"department", uuid}) do
     in_teams =
       from(m in TeamMembership,
         join: t in Team,
@@ -335,27 +369,35 @@ defmodule PhoenixKitProjects.People do
     _ -> []
   end
 
-  def assignee_user_uuids(_), do: []
+  defp key_user_uuids(_), do: []
 
   @doc """
-  The name of a task's assignee — the person's, the team's or the
-  department's (primary names, as audit rows keep them) — or nil.
+  The names of a record's assignees — the person's, the team's or the
+  department's (primary names, as audit rows keep them) — joined with
+  ", " in chip order, or nil when nobody is on it.
   """
   @spec assignee_name(map()) :: String.t() | nil
-  def assignee_name(%{assigned_person_uuid: uuid}) when is_binary(uuid) do
+  def assignee_name(record) when is_map(record) do
+    case record |> assignee_keys() |> Enum.map(&key_name/1) |> Enum.reject(&is_nil/1) do
+      [] -> nil
+      names -> Enum.join(names, ", ")
+    end
+  end
+
+  def assignee_name(_), do: nil
+
+  @doc "The name of one assignee key (`{kind, uuid}`), or nil."
+  @spec key_name({String.t(), binary()}) :: String.t() | nil
+  def key_name({"person", uuid}) do
     case get_person(uuid, preload: [:user]) do
       %Person{} = p -> display_name(p)
       _ -> nil
     end
   end
 
-  def assignee_name(%{assigned_team_uuid: uuid}) when is_binary(uuid),
-    do: name_of(Team, uuid)
-
-  def assignee_name(%{assigned_department_uuid: uuid}) when is_binary(uuid),
-    do: name_of(Department, uuid)
-
-  def assignee_name(_), do: nil
+  def key_name({"team", uuid}), do: name_of(Team, uuid)
+  def key_name({"department", uuid}), do: name_of(Department, uuid)
+  def key_name(_), do: nil
 
   defp name_of(schema, uuid) do
     RepoHelper.repo().one(from(x in schema, where: x.uuid == ^uuid, select: x.name))
@@ -390,6 +432,44 @@ defmodule PhoenixKitProjects.People do
   end
 
   def display_name(_), do: gettext("Unnamed")
+
+  @doc """
+  How the module names accounts, in one read for many: the account's first
+  and last name, else its staff person's name, else its email —
+  `%{user_uuid => name}`. A person picked or shown by name
+  is never shown as an email when a name exists (the boss, 2026-10-30: time
+  logs listed people by email).
+  """
+  @spec user_display_names([String.t()]) :: %{String.t() => String.t()}
+  def user_display_names([]), do: %{}
+
+  def user_display_names(user_uuids) when is_list(user_uuids) do
+    uuids = Enum.uniq(user_uuids)
+
+    staff =
+      from(p in Person,
+        where: p.user_uuid in ^uuids and p.status != ^@trashed,
+        where: not is_nil(p.name) and p.name != "",
+        select: {p.user_uuid, p.name}
+      )
+      |> RepoHelper.repo().all()
+      |> Map.new()
+
+    uuids
+    |> Auth.get_users_by_uuids()
+    |> Map.new(fn user ->
+      {user.uuid, account_name(user) || Map.get(staff, user.uuid) || user.email}
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  defp account_name(user) do
+    case Auth.User.full_name(user) do
+      name when is_binary(name) and name != "" -> name
+      _ -> nil
+    end
+  end
 
   @doc "A team/department's localized name: `translations[lang][\"name\"]` else the primary."
   @spec localized_name(Team.t() | Department.t() | nil, String.t() | nil) :: String.t() | nil

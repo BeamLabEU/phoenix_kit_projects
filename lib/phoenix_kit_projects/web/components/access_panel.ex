@@ -174,7 +174,7 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
   defp action_label("delete_tasks"), do: gettext("Delete tasks")
   defp action_label("assign_tasks"), do: gettext("Assign tasks")
   defp action_label("update_status"), do: gettext("Change task status")
-  defp action_label("log_time"), do: gettext("Log time")
+  defp action_label("log_time"), do: pgettext("permission", "Log time")
   defp action_label("log_time_for_others"), do: gettext("Log time for other people")
   defp action_label("comment"), do: gettext("Comment")
   defp action_label("upload_files"), do: gettext("Upload files")

@@ -28,10 +28,16 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
     refute html =~ ~s(id="quick-add")
     assert has_element?(view, "[data-id='add-task-sheet']")
 
+    # It opens a draft row at the foot: nothing is written until a title is
+    # typed into it (`OutlineList.draft_row/1`), so a click and a walk away
+    # leave no empty task behind.
     view |> element("button[phx-click='outline_add_first']") |> render_click()
+    assert PhoenixKitProjects.Projects.list_assignments(p.uuid) == []
+    assert %{slot: :end, key: key} = :sys.get_state(view.pid).socket.assigns.outline_draft
+
+    render_hook(view, "outline_draft_save", %{"key" => key, "text" => "Typed in place"})
     [a] = PhoenixKitProjects.Projects.list_assignments(p.uuid)
-    # The new row's title takes the cursor, empty, to be typed into.
-    assert render(view) =~ ~s(id="task-title-#{a.uuid}")
+    assert a.task.title == "Typed in place"
   end
 
   test "on a host page in navigate mode the sheet is a link to the add page",

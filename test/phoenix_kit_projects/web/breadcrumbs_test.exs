@@ -101,12 +101,14 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     {:ok, %{child_project: child, assignment: row}} =
       Projects.create_subproject(parent.uuid, %{"name" => "Child"})
 
-    {:ok, _, html} = live(conn, "/en/admin/projects/#{parent.uuid}/assignments/#{row.uuid}/edit")
-    assert trail_labels(html) == ["Projects", "Parent", "Child", "Edit"]
+    # A sub-project is edited as the project it is (the boss, 2026-11-02):
+    # its row's edit opens the project's own edit page, which names it.
+    {:error, {:live_redirect, %{to: to}}} =
+      live(conn, "/en/admin/projects/#{parent.uuid}/assignments/#{row.uuid}/edit")
 
-    assert {"Child", "#{PhoenixKitProjects.DataCase.admin_projects()}/#{child.key}"} in trail(
-             html
-           ).crumbs
+    assert to =~ "/projects/#{child.uuid}/edit?subproject_link=#{row.uuid}"
+    {:ok, _, html} = live(conn, to)
+    assert "Child" in trail_labels(html)
   end
 
   test "the task library and templates", %{conn: conn} do

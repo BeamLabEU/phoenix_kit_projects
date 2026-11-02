@@ -922,6 +922,42 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert html =~ "30 min"
     end
 
+    test "a task's files are part of its story, in words of their own", ctx do
+      %{alice: alice} = ctx.people
+      t = task!(ctx.project, "Measure", alice)
+
+      for action <- ~w(projects.task_file_added projects.task_file_removed) do
+        {:ok, _} =
+          PhoenixKitProjects.Activity.log(action,
+            actor_uuid: alice.user,
+            resource_type: "assignment",
+            resource_uuid: t.uuid,
+            metadata: %{"file_uuid" => Ecto.UUID.generate(), "project_uuid" => ctx.project.uuid}
+          )
+      end
+
+      assert Repo.all(
+               from(e in Entry,
+                 where: like(e.action, "projects.task_file_%"),
+                 select: e.permanent
+               )
+             ) == [true, true]
+
+      require Phoenix.LiveViewTest
+
+      html =
+        Phoenix.LiveViewTest.render_component(
+          &HistoryFeed.history_feed/1,
+          id: "h",
+          entries: History.list(ctx.project).entries,
+          project: ctx.project,
+          links: false
+        )
+
+      assert html =~ "added a file to"
+      assert html =~ "removed a file from"
+    end
+
     test "History leaves out what the project switched off", ctx do
       %{alice: alice} = ctx.people
       t = task!(ctx.project, "T", alice)
@@ -1187,6 +1223,88 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
                History.list(Projects.get_project(ctx.project.uuid)).entries,
                &(&1[:action] == "projects.assignment_reopened")
              )
+    end
+  end
+
+  describe "a sub-project that finishes by itself (item 26)" do
+    # Max, 2026-10-31 ("go with b"): nothing is released by itself; the page
+    # that handled the last Done is told what it unlocks and asks.
+    test "releases nothing by itself, and tells the step what it unlocked", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+
+      {:ok, %{child_project: child, assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Kitchen"})
+
+      fit = task!(ctx.project, "Fit the worktop", bob, status: "waiting")
+      {:ok, _} = Projects.add_dependency(fit.uuid, link.uuid)
+      cut = task!(child, "Cut the boards", alice)
+
+      {_, finished} =
+        Projects.collect_finished_subprojects(fn ->
+          set_status!(cut, "done", alice.user)
+          Projects.recompute_project_completion(child.uuid)
+        end)
+
+      assert Projects.get_assignment(link.uuid).status == "done"
+      assert Projects.get_assignment(fit.uuid).status == "waiting"
+      assert notices("projects.assignment_ready", bob.user) == []
+
+      assert [%{link_uuid: link_uuid, project_uuid: project_uuid, row_uuids: [fit_uuid]}] =
+               finished
+
+      assert {link_uuid, project_uuid, fit_uuid} == {link.uuid, ctx.project.uuid, fit.uuid}
+    end
+
+    test "outside a page's step nothing is collected", ctx do
+      %{alice: alice} = ctx.people
+
+      {:ok, %{child_project: child, assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Kitchen"})
+
+      fit = task!(ctx.project, "Fit the worktop", alice, status: "waiting")
+      {:ok, _} = Projects.add_dependency(fit.uuid, link.uuid)
+      cut = task!(child, "Cut the boards", alice)
+
+      set_status!(cut, "done", alice.user)
+      Projects.recompute_project_completion(child.uuid)
+      assert Projects.get_assignment(link.uuid).status == "done"
+      assert Process.get(:pkp_finished_subprojects) == nil
+      assert Projects.get_assignment(fit.uuid).status == "waiting"
+    end
+
+    test "a finish nobody is named for releases nothing", ctx do
+      %{alice: alice} = ctx.people
+
+      {:ok, %{child_project: child, assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Kitchen"})
+
+      fit = task!(ctx.project, "Fit the worktop", alice, status: "waiting")
+      {:ok, _} = Projects.add_dependency(fit.uuid, link.uuid)
+      cut = task!(child, "Cut the boards", alice)
+
+      set_status!(cut, "done", nil)
+      Projects.recompute_project_completion(child.uuid)
+
+      assert Projects.get_assignment(link.uuid).status == "done"
+      assert Projects.get_assignment(fit.uuid).status == "waiting"
+    end
+
+    test "with its status set by hand, nothing is released", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(ctx.project, %{"subproject_auto" => false})
+
+      {:ok, %{child_project: child, assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Kitchen"})
+
+      fit = task!(ctx.project, "Fit the worktop", bob, status: "waiting")
+      {:ok, _} = Projects.add_dependency(fit.uuid, link.uuid)
+      cut = task!(child, "Cut the boards", alice)
+
+      set_status!(cut, "done", alice.user)
+      Projects.recompute_project_completion(child.uuid)
+
+      assert Projects.get_assignment(fit.uuid).status == "waiting"
+      assert notices("projects.assignment_ready", bob.user) == []
     end
   end
 end

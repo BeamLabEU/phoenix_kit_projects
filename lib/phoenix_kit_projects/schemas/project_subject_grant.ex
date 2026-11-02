@@ -21,6 +21,7 @@ defmodule PhoenixKitProjects.Schemas.ProjectSubjectGrant do
 
   use Ecto.Schema
   use PhoenixKit.SchemaPrefix
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   import Ecto.Changeset
 
@@ -59,11 +60,11 @@ defmodule PhoenixKitProjects.Schemas.ProjectSubjectGrant do
     |> validate_required([:project_uuid, :subject_type, :subject_uuid, :role])
     |> validate_inclusion(:subject_type, @subject_types)
     |> validate_inclusion(:role, @roles,
-      message: "must be manager, member, or viewer — groups cannot own a project"
+      message: gettext("must be manager, member, or viewer — groups cannot own a project")
     )
     |> unique_constraint([:project_uuid, :subject_type, :subject_uuid],
       name: :phoenix_kit_project_subject_grants_identity_index,
-      message: "this group already has access to the project"
+      message: gettext("this group already has access to the project")
     )
     |> foreign_key_constraint(:project_uuid)
   end

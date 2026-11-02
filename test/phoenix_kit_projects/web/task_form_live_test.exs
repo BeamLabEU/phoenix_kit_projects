@@ -37,8 +37,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveTest do
       # it through.
       html =
         view
-        |> form("#task-form", task: %{title: "", description: "x"})
-        |> render_submit()
+        |> form("#task-form", task: %{title: ""})
+        |> render_submit(%{"task" => %{"description" => "x"}})
 
       assert html =~ "can&#39;t be blank" or html =~ "can't be blank"
     end

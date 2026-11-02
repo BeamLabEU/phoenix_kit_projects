@@ -7,6 +7,7 @@ defmodule PhoenixKitProjects.Hours.Format do
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Schemas.WorkEntry
 
   @doc ~S|Minutes as `45m`, `2h` or `2h 05m` — the project page's own shape.|
@@ -27,15 +28,19 @@ defmodule PhoenixKitProjects.Hours.Format do
   @spec decimal_hours(number()) :: String.t()
   def decimal_hours(minutes), do: :erlang.float_to_binary(minutes / 60, decimals: 2)
 
-  @doc ~S|Tokens as `12`, `3.4k` or `1.2M`.|
+  @doc ~S|Minutes as decimal hours on the page: `1.50`, or `1,50` in a decimal-comma language (`L10n.format_decimal/2`). The CSV keeps `decimal_hours/1`.|
+  @spec hours_shown(number()) :: String.t()
+  def hours_shown(minutes), do: L10n.format_decimal(minutes / 60, decimals: 2, trim: false)
+
+  @doc ~S|Tokens as `12`, `3.4k` or `1.2M` (`3,4k` in a decimal-comma language).|
   @spec tokens(number()) :: String.t()
-  def tokens(t) when t >= 1_000_000, do: "#{Float.round(t / 1_000_000, 1)}M"
-  def tokens(t) when t >= 1_000, do: "#{Float.round(t / 1_000, 1)}k"
+  def tokens(t) when t >= 1_000_000, do: L10n.format_decimal(t / 1_000_000, trim: false) <> "M"
+  def tokens(t) when t >= 1_000, do: L10n.format_decimal(t / 1_000, trim: false) <> "k"
   def tokens(t), do: to_string(round(t))
 
   @doc "Cents as a dollar figure, the unit the ledger's cost entries are shown in."
   @spec cost(number()) :: String.t()
-  def cost(cents), do: "$" <> :erlang.float_to_binary(cents / 100, decimals: 2)
+  def cost(cents), do: "$" <> L10n.format_decimal(cents / 100, decimals: 2, trim: false)
 
   @doc """
   What a person types for an amount of time, as whole minutes:

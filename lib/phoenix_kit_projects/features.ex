@@ -19,7 +19,9 @@ defmodule PhoenixKitProjects.Features do
        the GitLab-style dependency rule: `view_timeline` requires
        `scheduling`, `scheduling` requires `estimates`;
     4. the project's explicit value — `settings["features"][key]` — when
-       present; otherwise the flag's declared `default`.
+       present; otherwise the site's default for a flag declared
+       `site_default: true` (the module's settings page, `site_flags/0`),
+       when one is set; otherwise the flag's declared `default`.
 
   **Absence semantics are frozen**: a missing settings key ALWAYS means
   "inherit the flag's catalog default", never a latent choice. Presets and
@@ -31,12 +33,17 @@ defmodule PhoenixKitProjects.Features do
 
   Named flag bundles applied at creation (or any time before a team relies
   on the current shape): `"simple"` (a todo list — everything off but the
-  list), `"standard"` (the pre-hub defaults), `"full"` (everything on).
+  list), `"standard"` (the pre-hub defaults), `"embedded"` (a project a
+  host app keeps on one of its own records, such as an order: lean, with
+  its extensions set too), `"full"` (everything on).
   `apply_preset/3` writes the bundle as EXPLICIT values. The site default
   for new projects is the `projects_default_preset` setting (`"standard"`).
   """
 
   import Ecto.Query
+  # `gettext_noop/1` only: the preset names and the creation-block labels are
+  # catalog data, translated where they are drawn (`Web.Helpers.translate_catalog/1`).
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   require Logger
 
@@ -117,7 +124,8 @@ defmodule PhoenixKitProjects.Features do
   defp context(project_or_uuid) do
     %{
       enabled: Extensions.enabled_map(project_uuid(project_or_uuid)),
-      features: settings_features(project_or_uuid)
+      features: settings_features(project_or_uuid),
+      site: site_defaults()
     }
   end
 
@@ -146,8 +154,80 @@ defmodule PhoenixKitProjects.Features do
   defp explicit_or_default(ctx, flag) do
     case Map.get(ctx.features, flag.key) do
       value when is_boolean(value) -> value
+      _ -> site_or_default(Map.get(ctx, :site, %{}), flag)
+    end
+  end
+
+  defp site_or_default(site, flag) do
+    case Map.get(site, flag.key) do
+      value when is_boolean(value) -> value
       _ -> flag.default
     end
+  end
+
+  # ── Site defaults ───────────────────────────────────────────────────
+  #
+  # A flag declared `site_default: true` takes its default from the
+  # module's settings page when the site set one (the boss, 2026-10-30:
+  # project-level time logging and billable time are off unless a site
+  # turns them on). Absence still means "the catalog default", so an
+  # existing install reads exactly what it read before. A project's own
+  # explicit value wins over both.
+
+  @site_default_prefix "projects_feature_default_"
+
+  @doc "The flags whose default the site sets, in catalog order of key: `[flag]`."
+  @spec site_flags() :: [map()]
+  def site_flags do
+    catalog()
+    |> Map.values()
+    |> Enum.filter(&Map.get(&1, :site_default, false))
+    |> Enum.sort_by(& &1.key)
+  end
+
+  @doc """
+  What a new project inherits for each `site_flags/0` flag:
+  `%{flag_key => boolean}` (the site's value, else the catalog default).
+  """
+  @spec site_default_values() :: %{String.t() => boolean()}
+  def site_default_values do
+    site = site_defaults()
+    Map.new(site_flags(), &{&1.key, site_or_default(site, &1)})
+  end
+
+  @doc "Sets the site's default for one `site_flags/0` flag."
+  @spec set_site_default(String.t(), boolean()) ::
+          {:ok, term()} | {:error, :unknown_flag | term()}
+  def set_site_default(flag_key, value) when is_binary(flag_key) and is_boolean(value) do
+    if Enum.any?(site_flags(), &(&1.key == flag_key)) do
+      PhoenixKit.Settings.update_boolean_setting_with_module(
+        @site_default_prefix <> flag_key,
+        value,
+        "projects"
+      )
+    else
+      {:error, :unknown_flag}
+    end
+  end
+
+  # The values the site set — only those: an unset one is absent, so the
+  # catalog default applies. One cached batch read for all of them (one
+  # query on a cold cache).
+  defp site_defaults do
+    keys = Map.new(site_flags(), &{@site_default_prefix <> &1.key, &1.key})
+    values = PhoenixKit.Settings.get_settings_cached(Map.keys(keys))
+
+    Enum.reduce(keys, %{}, fn {setting, flag_key}, acc ->
+      case Map.get(values, setting) do
+        "true" -> Map.put(acc, flag_key, true)
+        "false" -> Map.put(acc, flag_key, false)
+        _ -> acc
+      end
+    end)
+  rescue
+    _ -> %{}
+  catch
+    :exit, _ -> %{}
   end
 
   # ── Gate maps (the render layer's one-stop lookup) ──────────────────
@@ -175,8 +255,26 @@ defmodule PhoenixKitProjects.Features do
     :lifecycle,
     :view_board,
     :view_timeline,
-    :view_calendar
+    :view_calendar,
+    # Time logged on the project as a whole (its "Log time" and the logged
+    # chip in the header) and the billable mark on a time entry. Off unless
+    # the site or the project turns them on (the boss, 2026-10-30).
+    :project_time,
+    :billable,
+    # A sub-project's row follows its own tasks (waiting until released,
+    # in progress once one starts, done when all are); off, it is set by
+    # hand like a task.
+    :subproject_auto,
+    # The Discussions extension's two tabs: the project's own thread and
+    # every comment on its tasks.
+    :project_comments,
+    :all_comments
   ]
+
+  # Not part of "Full tracker": time on the project as a whole and the
+  # billable mark are a site's or a project's own choice (the boss,
+  # 2026-10-30: off unless someone turns them on).
+  @opt_in_gates [:project_time, :billable]
 
   @doc """
   EVERY catalog flag resolved for one project, `%{flag_key => boolean}`
@@ -206,11 +304,13 @@ defmodule PhoenixKitProjects.Features do
           %{atom() => boolean()} | %{binary() => %{atom() => boolean()}}
   def gates(projects) when is_list(projects) do
     enabled = Extensions.enabled_maps(Enum.map(projects, & &1.uuid))
+    site = site_defaults()
 
     Map.new(projects, fn project ->
       ctx = %{
         enabled: Map.get(enabled, project.uuid, %{}),
-        features: settings_features(project)
+        features: settings_features(project),
+        site: site
       }
 
       {project.uuid, resolve_gates(ctx)}
@@ -242,24 +342,28 @@ defmodule PhoenixKitProjects.Features do
   @spec default_gates() :: %{atom() => boolean()}
   def default_gates do
     cat = catalog()
+    site = site_defaults()
 
     base = %{tasks: true}
 
     Enum.reduce(@task_gates, base, fn gate, acc ->
       default =
         case Map.get(cat, to_string(gate)) do
-          nil -> false
-          flag -> flag.default and Enum.all?(flag.requires, &default_of(cat, &1))
+          nil ->
+            false
+
+          flag ->
+            site_or_default(site, flag) and Enum.all?(flag.requires, &default_of(cat, site, &1))
         end
 
       Map.put(acc, gate, default)
     end)
   end
 
-  defp default_of(cat, key) do
+  defp default_of(cat, site, key) do
     case Map.get(cat, key) do
       nil -> false
-      flag -> flag.default
+      flag -> site_or_default(site, flag)
     end
   end
 
@@ -341,8 +445,9 @@ defmodule PhoenixKitProjects.Features do
     [
       %{
         key: "simple",
-        name: "Simple task list",
-        description: "Just a task list — no start or finish, no tracking, no scheduling.",
+        name: gettext_noop("Simple task list"),
+        description:
+          gettext_noop("Just a task list — no start or finish, no tracking, no scheduling."),
         flags: %{
           # A checklist is typed in place — no shared library to pick
           # from or feed (Max, 2026-09-05: "for the checklist it's not
@@ -372,24 +477,81 @@ defmodule PhoenixKitProjects.Features do
           "ledger" => false,
           "view_board" => false,
           "view_timeline" => false,
-          "view_calendar" => false
+          "view_calendar" => false,
+          "project_time" => false,
+          "billable" => false
         }
       },
       %{
         key: "standard",
-        name: "Standard project",
-        description: "The default feature set — everything the module ships on today.",
+        name: gettext_noop("Standard project"),
+        description:
+          gettext_noop("The default feature set — everything the module ships on today."),
         flags: %{}
       },
       %{
+        key: "embedded",
+        name: gettext_noop("Embedded project"),
+        description:
+          gettext_noop(
+            "Work that lives on another record: tasks with deadlines, files and their comments — no general comments, priorities, labels, progress or time on the project itself."
+          ),
+        # The project a host app keeps on one of its own records — an order,
+        # a case (the boss, 2026-10-31: half the features on an order's
+        # project were never needed). The record has its own comments, so
+        # the project's general thread is off and the tab of every task's
+        # comments is on; time is logged on tasks only; estimates, the
+        # Timeline and sub-projects stay (Max). The module names no host
+        # record: any app embedding a project per record can use it.
+        flags: %{
+          "library" => true,
+          "in_progress" => true,
+          "assignees" => true,
+          "subtasks" => true,
+          # The "Waiting on / requested by" fields this flag gated are gone.
+          "waiting" => false,
+          "dates" => true,
+          "estimates" => true,
+          "progress" => false,
+          "dependencies" => true,
+          "statuses" => true,
+          "scheduling" => true,
+          "subprojects" => true,
+          "priorities" => false,
+          "labels" => false,
+          "ledger" => true,
+          "lifecycle" => true,
+          "view_board" => true,
+          "view_timeline" => true,
+          "view_calendar" => true,
+          "project_time" => false,
+          "billable" => false,
+          "project_comments" => false,
+          "all_comments" => true,
+          "portal_submit" => false,
+          "portal_list" => false,
+          "portal_status" => false
+        },
+        # Extensions this preset turns on or off (`apply_preset/3`); one not
+        # installed, or whose site module is off, is left as it is.
+        extensions: %{
+          "tasks" => true,
+          "files" => true,
+          "discussions" => true,
+          "whiteboards" => false,
+          "events" => false,
+          "portal" => false
+        }
+      },
+      %{
         key: "full",
-        name: "Full tracker",
-        description: "Every task feature explicitly on.",
+        name: gettext_noop("Full tracker"),
+        description: gettext_noop("Every task feature explicitly on."),
         # EVERY built-in flag, derived from the gate list rather than typed
         # out: a hand-kept map missed lifecycle, ledger and view_board, so
         # "Full" applied over "Simple" left three explicit falses standing
         # (found seeding the boss's Test project at full power, 2026-09-05).
-        flags: Map.new(@task_gates, &{to_string(&1), true})
+        flags: Map.new(@task_gates -- @opt_in_gates, &{to_string(&1), true})
       }
     ]
   end
@@ -408,10 +570,10 @@ defmodule PhoenixKitProjects.Features do
   @creation_blocks_setting "projects_new_form_top_blocks"
 
   @creation_blocks [
-    %{key: "template", label: "From template"},
-    %{key: "start", label: "Start timing"},
-    %{key: "statuses", label: "Workflow statuses"},
-    %{key: "people", label: "People"}
+    %{key: "template", label: gettext_noop("From template")},
+    %{key: "start", label: gettext_noop("Start timing")},
+    %{key: "statuses", label: gettext_noop("Workflow statuses")},
+    %{key: "people", label: gettext_noop("People")}
   ]
 
   @creation_block_keys Enum.map(@creation_blocks, & &1.key)
@@ -467,9 +629,54 @@ defmodule PhoenixKitProjects.Features do
   @spec apply_preset(Project.t(), String.t(), keyword()) :: {:ok, Project.t()} | {:error, term()}
   def apply_preset(%Project{} = project, preset_key, opts \\ []) do
     case get_preset(preset_key) do
-      nil -> {:ok, project}
-      %{flags: flags} -> set_flags(project, flags, opts)
+      nil ->
+        {:ok, project}
+
+      %{flags: flags} = preset ->
+        with {:ok, project} <- set_flags(project, flags, opts) do
+          apply_preset_extensions(project, preset, opts)
+          {:ok, project}
+        end
     end
+  end
+
+  @doc """
+  Turns on or off the extensions a preset names (its `extensions` map;
+  most presets name none). Only what differs from the project's current
+  state is written; an extension that is not installed or cannot be
+  enabled is left alone. Best-effort: returns `:ok`.
+  """
+  @spec apply_preset_extensions(Project.t() | map(), String.t() | map(), keyword()) :: :ok
+  def apply_preset_extensions(project, preset_key, opts \\ [])
+
+  def apply_preset_extensions(project, preset_key, opts) when is_binary(preset_key) do
+    case get_preset(preset_key) do
+      nil -> :ok
+      preset -> apply_preset_extensions(project, preset, opts)
+    end
+  end
+
+  def apply_preset_extensions(%{uuid: uuid}, %{} = preset, opts) do
+    wanted = Map.get(preset, :extensions, %{})
+
+    if wanted != %{} do
+      current = Extensions.enabled_map(uuid)
+      ext_opts = Keyword.take(opts, [:actor_uuid])
+
+      Enum.each(wanted, fn {ext_key, on?} ->
+        case {on?, Map.get(current, ext_key, false)} do
+          {true, false} -> Extensions.enable(uuid, ext_key, ext_opts)
+          {false, true} -> Extensions.disable(uuid, ext_key, ext_opts)
+          _ -> :ok
+        end
+      end)
+    end
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("[Projects.Features] preset extensions failed: #{Exception.message(e)}")
+      :ok
   end
 
   # ── Internals ───────────────────────────────────────────────────────

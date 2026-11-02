@@ -70,8 +70,9 @@ defmodule PhoenixKitProjects.Extensions.Extension do
   rework when later hub layers land —
 
     * `feature_flags` — per-project flags this extension owns
-      (`%{key, label, default, requires: [...]}`); the hub's Features layer
-      resolves them.
+      (`%{key, label, default, requires: [...], site_default: bool}`); the
+      hub's Features layer resolves them. `site_default: true` lets the
+      module's settings page set the default every project inherits.
     * `permission_actions` — action keys the extension's UI asks
       `PhoenixKitProjects.Authz.can?/5` about.
     * `notification_types` — passthrough entries merged into this module's
@@ -279,7 +280,10 @@ defmodule PhoenixKitProjects.Extensions.Extension do
             key: to_string(flag[:key]),
             label: to_string(flag[:label] || flag[:key]),
             default: flag[:default] == true,
-            requires: flag[:requires] |> List.wrap() |> Enum.map(&to_string/1)
+            requires: flag[:requires] |> List.wrap() |> Enum.map(&to_string/1),
+            # The site may set this flag's default on the module's settings
+            # page (`Features.site_flags/0`); a project still overrides it.
+            site_default: flag[:site_default] == true
           }
         ]
       else

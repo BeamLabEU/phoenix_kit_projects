@@ -5,6 +5,8 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  import PhoenixKitProjects.Web.Components.PersonDisplay, only: [person: 1]
+
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
@@ -656,8 +658,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
               <.table_row_menu_button
                 {ConfirmAction.ask("delete",
                   uuid: t.uuid,
-                  title: gettext("Delete template"),
-                  message: gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, @lang)),
+                  title: gettext("Delete template “%{name}”?", name: Project.localized_name(t, @lang)),
                   confirm: gettext("Delete")
                 )}
                 icon="hero-trash"
@@ -827,7 +828,11 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
     ~H"""
     <.table_default_cell class="whitespace-nowrap text-base-content/70">
-      {Map.get(@creators, @t.uuid) || "—"}
+      <%= if name = Map.get(@creators, @t.uuid) do %>
+        <.person name={name} class="max-w-[14rem]" />
+      <% else %>
+        <span class="text-base-content/40">—</span>
+      <% end %>
     </.table_default_cell>
     """
   end

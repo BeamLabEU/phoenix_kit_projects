@@ -60,7 +60,13 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
   test "apply_preset simple flips the feature set", %{conn: conn, project: project} do
     {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
-    view |> element("button[phx-value-key='simple'][phx-click='apply_preset']") |> render_click()
+    view
+    |> element("button[phx-value-key='simple'][phx-value-event='apply_preset']")
+    |> render_click()
+
+    # It asks first, in the shared confirm: the question is the title.
+    assert render(view) =~ "Apply the “Simple task list” preset?"
+    render_click(view, "confirm_action_ok", %{})
 
     refute Features.on?(project.uuid, "assignees")
     refute Features.on?(project.uuid, "view_calendar")
@@ -185,6 +191,42 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
 
       assert html =~ "uuid-gone"
       assert html =~ "Current value (unavailable)"
+    end
+  end
+
+  describe "questions asked first (item 10)" do
+    test "deleting a label asks the one question, then deletes", %{conn: conn, project: project} do
+      {:ok, _} = Features.set_flags(project, %{"labels" => true})
+      {:ok, label} = PhoenixKitProjects.Labels.create(project, %{name: "Urgent"})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
+
+      html =
+        view
+        |> element("[phx-value-event='delete_label'][phx-value-uuid='#{label.uuid}']")
+        |> render_click()
+
+      assert html =~ "Delete label “Urgent”?"
+      refute html =~ "Remove the"
+      render_click(view, "confirm_action_ok", %{})
+      assert PhoenixKitProjects.Labels.list_for_project(project.uuid) == []
+    end
+
+    test "making the portal board public asks first; Cancel leaves it as it was",
+         %{conn: conn, project: project} do
+      {:ok, _} = Extensions.enable(project, "portal")
+      :ok = PhoenixKitProjects.Portal.ensure_portal(project.uuid)
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
+
+      html =
+        view
+        |> element("input[phx-value-event='set_portal_access_mode'][phx-value-mode='public']")
+        |> render_click()
+
+      assert html =~ "Make this board public?"
+      render_click(view, "confirm_action_cancel", %{})
+      assert PhoenixKitProjects.Portal.get_portal(project.uuid).access_mode != "public"
+      # The radio the browser ticked is drawn afresh.
+      assert has_element?(view, "#portal-access-public-1")
     end
   end
 end

@@ -146,19 +146,26 @@ defmodule PhoenixKitProjects.ListMetrics do
   end
 
   defp read(:members, _projects, uuids, _opts) do
-    from(m in ProjectMember,
-      join: u in User,
-      on: u.uuid == m.user_uuid,
-      where: m.project_uuid in ^uuids,
-      order_by: [asc: m.inserted_at],
-      select: {m.project_uuid, m.role, u}
-    )
-    |> repo().all()
+    rows =
+      from(m in ProjectMember,
+        join: u in User,
+        on: u.uuid == m.user_uuid,
+        where: m.project_uuid in ^uuids,
+        order_by: [asc: m.inserted_at],
+        select: {m.project_uuid, m.role, u}
+      )
+      |> repo().all()
+
+    # Named as everywhere (`People.user_display_names/1`: the account's
+    # name, else its staff person's, else the email), in one go.
+    names = rows |> Enum.map(fn {_p, _role, u} -> u.uuid end) |> People.user_display_names()
+
+    rows
     |> Enum.group_by(&elem(&1, 0))
     |> Map.new(fn {uuid, rows} ->
       people =
         Enum.map(rows, fn {_p, role, user} ->
-          %{uuid: user.uuid, name: user_name(user), role: role}
+          %{uuid: user.uuid, name: Map.get(names, user.uuid) || user.email, role: role}
         end)
 
       {uuid, %{count: length(people), people: people}}
@@ -305,13 +312,6 @@ defmodule PhoenixKitProjects.ListMetrics do
 
       _ ->
         acc
-    end
-  end
-
-  defp user_name(user) do
-    case User.full_name(user) do
-      name when is_binary(name) and name != "" -> name
-      _ -> user.email
     end
   end
 

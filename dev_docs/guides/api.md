@@ -213,7 +213,10 @@ task — a shared library task answers 409 `library_task`),
 `POST /tasks/:id/transition {status}` with `start` / `complete` / `reopen` as
 aliases through the same path (panel: one state machine, aliases must not
 drift). Ledger: `POST /tasks/:id/time`, `POST /time` (minutes), `POST
-/tasks/:id/usage`, `POST /usage` (tokens, cost_cents, model). Project:
+/tasks/:id/usage`, `POST /usage` (tokens, cost_cents, model). `POST /time`
+(no task) follows the project's `project_time` feature like the page's own
+Log time: off (the default) it answers 422 `task_required` and the agent
+names a task (Max, 2026-10-31). Project:
 `GET /project`, `POST /project/status {slug}` — workflow statuses belong to the
 project, not to tasks, which have only todo / in_progress / done. Discussion:
 `GET /tasks/:id/comments`, `POST /tasks/:id/comments {content, parent?}`

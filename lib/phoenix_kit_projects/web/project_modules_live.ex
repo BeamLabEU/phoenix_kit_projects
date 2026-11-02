@@ -55,7 +55,10 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       |> WebHelpers.attach_open_embed_hook()
       |> assign(
         wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
-        embedded_in_form: Map.get(session, "embedded_in_form", false)
+        embedded_in_form: Map.get(session, "embedded_in_form", false),
+        # Bumped when a question is cancelled: the access radios carry it in
+        # their ids, so the one the browser ticked is drawn afresh, unticked.
+        confirm_rev: 0
       )
 
     with %Project{} = project <- Projects.get_project(id) || :not_found,
@@ -74,6 +77,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
          page_title: gettext("Modules"),
          project: project
        )
+       |> keep_host_title()
        |> load_panel()}
     else
       :not_found ->
@@ -112,6 +116,16 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   # bounce them out of editing the project's name. Embedded, it simply
   # renders nothing — the host already decided whether to show it, and the
   # gate here is the backstop.
+  # The browser tab keeps its page's title: LiveView applies every LV's
+  # `page_title`, nested ones too, so the project popup that embeds this
+  # panel retitled the tab "Modules" (the walk-through, 2026-10-31). Inside
+  # the form, or opened as a popup, it sets none.
+  defp keep_host_title(socket) do
+    if socket.assigns.embedded_in_form,
+      do: assign(socket, page_title: nil),
+      else: WebHelpers.keep_host_title(socket)
+  end
+
   defp refuse(socket, message) do
     # Every assign load_panel/1 would have set: with no project the
     # template short-circuits, but HEEx still needs the keys to exist.
@@ -217,10 +231,16 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   # A destructive action asks first through core's confirm modal
   # (`Components.ConfirmAction`); only these events may be put behind it.
   def handle_event("request_confirm", params, socket),
-    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete_label))}
+    do:
+      {:noreply,
+       ConfirmAction.request(
+         socket,
+         params,
+         ~w(delete_label apply_preset rotate_portal_link set_portal_access_mode)
+       )}
 
   def handle_event("confirm_action_cancel", _params, socket),
-    do: {:noreply, ConfirmAction.clear(socket)}
+    do: {:noreply, socket |> ConfirmAction.clear() |> update(:confirm_rev, &(&1 + 1))}
 
   def handle_event("confirm_action_ok", _params, socket) do
     case ConfirmAction.take(socket) do
@@ -353,7 +373,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
     with true <- socket.assigns.labels_on,
          %{} = label <- Enum.find(socket.assigns.labels, &(&1.uuid == uuid)),
          :ok <- Labels.delete(label, actor_uuid: Activity.actor_uuid(socket)) do
-      {:noreply, socket |> reload() |> put_flash(:info, gettext("Label removed."))}
+      {:noreply, socket |> reload() |> put_flash(:info, gettext("Label deleted."))}
     else
       false ->
         {:noreply,
@@ -375,19 +395,33 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           {:noreply, socket |> reload() |> put_flash(:info, gettext("Label added."))}
 
         {:error, %Ecto.Changeset{} = changeset} ->
-          msg =
-            case changeset.errors[:name] do
-              {m, _} -> gettext("Label name %{problem}.", problem: m)
-              _ -> gettext("Could not add the label.")
-            end
-
-          {:noreply, put_flash(socket, :error, msg)}
+          # One whole sentence per problem: gluing the changeset's English
+          # message into "Label name %{problem}." showed it untranslated.
+          {:noreply, put_flash(socket, :error, label_error(changeset.errors[:name]))}
       end
     else
       {:noreply,
        put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
+
+  defp label_error({_, opts}) when is_list(opts) do
+    cond do
+      opts[:constraint] == :unique ->
+        gettext("A label with this name already exists in this project.")
+
+      opts[:validation] == :required ->
+        gettext("Give the label a name.")
+
+      opts[:validation] == :length ->
+        gettext("A label name can be at most 60 characters.")
+
+      true ->
+        gettext("Could not add the label.")
+    end
+  end
+
+  defp label_error(_error), do: gettext("Could not add the label.")
 
   # Events re-check authorization — this page writes configuration.
   defp do_set_access_mode(socket, mode) do
@@ -493,7 +527,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         <div :if={@embedded_in_form}>
           <h2 class="text-sm font-semibold">{gettext("Modules & features")}</h2>
           <p class="text-xs opacity-60">
-            {gettext("Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields.")}
+            {gettext("Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields.")}
           </p>
         </div>
 
@@ -526,17 +560,15 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             :for={preset <- @presets}
             type="button"
             class="btn btn-outline btn-xs"
-            phx-click="apply_preset"
-            phx-value-key={preset.key}
-            phx-disable-with={gettext("Applying…")}
-            data-confirm={
-              gettext("Apply the \"%{name}\" preset? This overwrites this project's feature toggles.",
-                name: preset.name
-              )
-            }
-            title={preset.description}
+            {ConfirmAction.ask("apply_preset",
+              key: preset.key,
+              title: gettext("Apply the “%{name}” preset?", name: WebHelpers.translate_catalog(preset.name)),
+              message: gettext("It overwrites this project's feature toggles."),
+              confirm: gettext("Apply")
+            )}
+            title={WebHelpers.translate_catalog(preset.description)}
           >
-            {preset.name}
+            {WebHelpers.translate_catalog(preset.name)}
           </button>
         </div>
 
@@ -548,7 +580,19 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             class={["card border bg-base-100", (available && "border-base-200") || "border-base-200 opacity-60"]}
           >
             <div class="card-body py-4 gap-3">
+              <%!-- The toggle right before its name (the boss, 2026-11-02: a
+                   toggle far across the row had to be matched to its label by
+                   eye). --%>
               <div class="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  class="toggle toggle-primary mt-0.5 shrink-0"
+                  checked={enabled}
+                  disabled={not available}
+                  phx-click="toggle_ext"
+                  phx-value-key={ext.key}
+                  aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(ext.name))}
+                />
                 <.icon name={ext.icon} class="w-6 h-6 mt-0.5 shrink-0 opacity-70" />
                 <div class="min-w-0 grow">
                   <div class="flex items-center gap-2">
@@ -562,15 +606,6 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                     {gettext("Unavailable — enable the backing module in Admin › Modules first.")}
                   </p>
                 </div>
-                <input
-                  type="checkbox"
-                  class="toggle toggle-primary"
-                  checked={enabled}
-                  disabled={not available}
-                  phx-click="toggle_ext"
-                  phx-value-key={ext.key}
-                  aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(ext.name))}
-                />
               </div>
 
               <%!-- Per-instance config (only while enabled, only with a schema) --%>
@@ -620,9 +655,11 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   </code>
                   <button
                     type="button"
-                    phx-click="rotate_portal_link"
-                    phx-disable-with={gettext("Rotating…")}
-                    data-confirm={gettext("Rotate the portal link? The current link stops working immediately.")}
+                    {ConfirmAction.ask("rotate_portal_link",
+                      title: gettext("Rotate the portal link?"),
+                      message: gettext("The current link stops working at once."),
+                      confirm: gettext("Rotate")
+                    )}
                     class="btn btn-ghost btn-sm gap-1"
                   >
                     <span class="hero-arrow-path w-4 h-4"></span> {gettext("Rotate link")}
@@ -643,14 +680,22 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                       :for={{mode, title, hint} <- access_mode_choices()}
                       class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-300 p-2 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
                     >
+                      <% ask = access_mode_confirm(mode, @portal, @board_exposure) %>
                       <input
+                        id={"portal-access-#{mode}-#{@confirm_rev}"}
                         type="radio"
                         name="portal_access_mode"
                         value={mode}
                         checked={@portal.access_mode == mode}
-                        phx-click="set_portal_access_mode"
-                        phx-value-mode={mode}
-                        data-confirm={access_mode_confirm(mode, @portal, @board_exposure)}
+                        {if ask,
+                          do:
+                            ConfirmAction.ask("set_portal_access_mode",
+                              mode: mode,
+                              title: elem(ask, 0),
+                              message: elem(ask, 1),
+                              confirm: gettext("Change")
+                            ),
+                          else: %{"phx-click" => "set_portal_access_mode", "phx-value-mode" => mode}}
                         class="radio radio-primary radio-xs mt-0.5 shrink-0"
                       />
                       <span class="min-w-0">
@@ -722,27 +767,28 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           <div :for={{ext, flags} <- @flag_groups} class="card border border-base-200 bg-base-100">
             <div class="card-body py-4 gap-2">
               <h3 class="text-sm font-semibold opacity-70">{WebHelpers.translate_catalog(ext.name)}</h3>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+              <%!-- One column, each toggle right before its label. --%>
+              <div class="flex flex-col gap-1">
                 <label
                   :for={%{flag: flag, on: on, unmet_requires: unmet} <- flags}
-                  class={["flex items-center justify-between gap-3 py-1", unmet != [] && "opacity-50"]}
+                  class={["flex items-start gap-3 py-1 cursor-pointer", unmet != [] && "opacity-50"]}
                   title={requires_hint(unmet, @flag_groups)}
                 >
-                  <span class="text-sm">
-                    {WebHelpers.translate_catalog(flag.label)}
-                    <span :if={unmet != []} class="block text-xs text-warning">
-                      {gettext("Requires: %{list}", list: requires_labels(unmet, @flag_groups))}
-                    </span>
-                  </span>
                   <input
                     type="checkbox"
-                    class="toggle toggle-primary toggle-sm"
+                    class="toggle toggle-primary toggle-sm shrink-0"
                     checked={on}
                     disabled={unmet != []}
                     phx-click="toggle_flag"
                     phx-value-key={flag.key}
                     aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(flag.label))}
                   />
+                  <span class="text-sm">
+                    {WebHelpers.translate_catalog(flag.label)}
+                    <span :if={unmet != []} class="block text-xs text-warning">
+                      {gettext("Requires: %{list}", list: requires_labels(unmet, @flag_groups))}
+                    </span>
+                  </span>
                 </label>
               </div>
             </div>
@@ -765,11 +811,11 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                 type="button"
                 {ConfirmAction.ask("delete_label",
                   uuid: label.uuid,
-                  title: gettext("Remove label"),
-                  message: gettext("Remove the \"%{name}\" label from this project?", name: label.name),
-                  confirm: gettext("Remove")
+                  title: gettext("Delete label “%{name}”?", name: label.name),
+                  message: gettext("It comes off every task that has it."),
+                  confirm: gettext("Delete")
                 )}
-                aria-label={gettext("Remove %{name}", name: label.name)}
+                aria-label={gettext("Delete label “%{name}”", name: label.name)}
                 class="cursor-pointer opacity-60 hover:opacity-100"
               >
                 <.icon name="hero-x-mark" class="w-3 h-3" />
@@ -860,7 +906,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   {PhoenixKitProjects.Web.ProjectApiLive.access_label(row.access)}
                 </div>
                 <div :if={row.access} class="text-xs text-base-content/60 mt-0.5">
-                  {gettext("acts as %{role}", role: row.access.role)} · {PhoenixKitProjects.Web.ProjectApiLive.source_label(row.source)}
+                  {gettext("acts as %{role}", role: PhoenixKitProjects.Web.ProjectApiLive.role_name(row.access.role))} · {PhoenixKitProjects.Web.ProjectApiLive.source_label(row.source)}
                 </div>
               </td>
               <td class="align-top text-xs">
@@ -938,30 +984,31 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   # expose work retroactively, so it is the only one that stops to say so —
   # and it names the number, because "some tasks" is not a thing anyone can
   # make a decision about.
+  # The question a change of who may reach the board asks first, as
+  # `{title, consequence}`; nil when the change needs no question.
   defp access_mode_confirm("public", portal, exposure) when portal.access_mode != "public" do
-    base =
-      gettext(
-        "Make this board public? It gets a findable address and search engines may index it."
-      )
+    base = gettext("It gets a findable address and search engines may index it.")
 
-    if exposure > 0 do
-      base <>
-        "\n\n" <>
-        ngettext(
-          "%{count} task is currently marked public for link-holders. It will NOT be published to the board — you publish tasks to a public board one at a time.",
-          "%{count} tasks are currently marked public for link-holders. They will NOT be published to the board — you publish tasks to a public board one at a time.",
-          exposure,
-          count: exposure
-        )
-    else
-      base
-    end
+    consequence =
+      if exposure > 0 do
+        base <>
+          " " <>
+          ngettext(
+            "%{count} task is currently marked public for link-holders. It will NOT be published to the board — you publish tasks to a public board one at a time.",
+            "%{count} tasks are currently marked public for link-holders. They will NOT be published to the board — you publish tasks to a public board one at a time.",
+            exposure,
+            count: exposure
+          )
+      else
+        base
+      end
+
+    {gettext("Make this board public?"), consequence}
   end
 
   defp access_mode_confirm("link", portal, _exposure) when portal.access_mode == "public" do
-    gettext(
-      "Go back to a private link? The current public address stops working and cannot be reused as a secret."
-    )
+    {gettext("Go back to a private link?"),
+     gettext("The current public address stops working and cannot be reused as a secret.")}
   end
 
   defp access_mode_confirm(_mode, _portal, _exposure), do: nil

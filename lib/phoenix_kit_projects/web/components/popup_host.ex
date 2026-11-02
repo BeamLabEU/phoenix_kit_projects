@@ -43,8 +43,12 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   matches against its top frame (`pop_if_top_matches/2`). A frame the
   host marks `closeable: false` (a form that has been edited) ignores Esc
   and the backdrop — the form's own Cancel is the way out, so a stray
-  click never eats what was typed. Stack cap at 5 frames matches
-  `PopupHostLive`'s `@max_stack_depth`.
+  click never eats what was typed. Its ✕ still closes, but asks first in
+  the host's own dialog (`ConfirmAction.ask/2` for `on_close`, carrying
+  the frame ref), never the browser's box: the host answers
+  `request_confirm` / `confirm_action_ok` / `confirm_action_cancel` and
+  draws `<.confirm_action_modal>` (`PopupHostLive` does). Stack cap at 5
+  frames matches `PopupHostLive`'s `@max_stack_depth`.
 
   ## Example
 
@@ -68,6 +72,8 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
   import PhoenixKitWeb.Components.Core.Modal, only: [modal: 1]
+
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
 
   attr(:modal_stack, :list, required: true)
   attr(:on_close, :string, default: "close_top_modal")
@@ -122,6 +128,40 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       .popup-host-frame-spinner {
         animation: popup-host-frame-spinner-fade 600ms ease-out forwards;
       }
+      /* Tabs never jump (the panel, 2026-10-31): a drawer holding a tab
+         strip (`FormParts.form_tabs/1`) is one full-height column. Every
+         box from the frame down to the strip is a flex column that fills
+         what is left; beside the strip, the open pane is the ONE scroll
+         area; everything else (the header, the form's buttons) keeps its
+         height. The strip is outside what scrolls, so it cannot move. */
+      /* A centred popup with tabs keeps one height whatever the open tab
+         holds (the boss, 2026-10-31: the tabs jumped as the content
+         changed length): the box is a fixed share of the screen, so a
+         short tab leaves room at the bottom and a long one scrolls inside
+         its pane — never a small box around a long tab. Popups without
+         tabs (confirms, small forms) keep their own height. */
+      .pkp-frame.pkp-center:has([data-pkp-tabs]) { overflow: hidden; }
+      .pkp-frame.pkp-center > *:has([data-pkp-tabs]) {
+        flex: none; height: 70dvh;
+      }
+      /* A long hint wraps; nothing in a pane scrolls sideways. */
+      .pkp-frame [role="tabpanel"] { overflow-x: hidden; }
+      .pkp-frame [role="tabpanel"] .label { white-space: normal; }
+      .pkp-frame *:has([data-pkp-tabs]) {
+        display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0;
+      }
+      .pkp-frame *:has([data-pkp-tabs]) > *:not(:has([data-pkp-tabs])):not([role="tabpanel"]):not([data-pkp-scroll]) {
+        flex-shrink: 0;
+      }
+      /* A form whose tabs sit outside it (the project popup, whose Settings
+         tab shows a panel that cannot be inside the form): the area after
+         the tabs is the one scroll area instead of the open pane. */
+      .pkp-frame *:has([data-pkp-tabs]) > [data-pkp-scroll] {
+        flex: 1 1 0%; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+      }
+      .pkp-frame *:has(> [data-pkp-tabs]) > [role="tabpanel"]:not(.hidden) {
+        flex: 1 1 0%; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+      }
     </style>
     <div class={@class}>
       {render_slot(@inner_block)}
@@ -137,7 +177,11 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         close_guard={:input}
         placement={@placement}
         max_width={@max_width}
-        class={Enum.join(Enum.reject([@modal_box_class, "relative"], &is_nil/1), " ")}
+        class={
+          [@modal_box_class, "relative pkp-frame", @placement == :center && "pkp-center"]
+          |> Enum.reject(&(&1 in [nil, false]))
+          |> Enum.join(" ")
+        }
         phx-value-frame-ref={frame.frame_ref}
         data-frame-ref={frame.frame_ref}
       >
@@ -157,15 +201,15 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
              could not close — the backdrop is a no-op while a field holds
              typed text, by `close_guard={:input}`, and there was no other
              control). A click on × is deliberate, so it closes; it asks
-             first only while the form says it has unsaved changes. --%>
+             first only while the form says it has unsaved changes. On the
+             header's row (the boss, 2026-11-02): the box's padding is 1.5rem
+             and the header's buttons are 2rem high. --%>
         <button
           type="button"
-          class="btn btn-ghost btn-sm btn-circle absolute right-2 top-2 z-20"
-          phx-click={@on_close}
-          phx-value-frame-ref={frame.frame_ref}
+          class="btn btn-ghost btn-sm btn-circle absolute right-6 top-6 z-20"
+          {close_attrs(@on_close, frame)}
           aria-label={gettext("Close")}
           title={gettext("Close")}
-          data-confirm={Map.get(frame, :closeable, true) == false && gettext("Close without saving?")}
         >
           <.icon name="hero-x-mark" class="w-5 h-5" />
         </button>
@@ -173,5 +217,20 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       </.modal>
     </div>
     """
+  end
+
+  # The ✕: closes at once, or — while the frame's form holds unsaved
+  # changes — asks first in the host's own dialog.
+  defp close_attrs(on_close, %{frame_ref: ref} = frame) do
+    if Map.get(frame, :closeable, true) == false do
+      ConfirmAction.ask(on_close,
+        title: gettext("Close without saving?"),
+        message: gettext("What you changed since the last save is lost."),
+        confirm: gettext("Discard"),
+        "frame-ref": ref
+      )
+    else
+      %{"phx-click" => on_close, "phx-value-frame-ref" => ref}
+    end
   end
 end

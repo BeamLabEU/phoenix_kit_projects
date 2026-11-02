@@ -35,6 +35,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       lens: [default: :library, cast: :atom, in: [:library, :one_off], url_key: "lens"]
     ]
 
+  import PhoenixKitProjects.Web.Components.PersonDisplay, only: [person: 1]
+
   alias PhoenixKitProjects.{Activity, Authz, Hours, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
@@ -1063,8 +1065,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               <.table_row_menu_button
                 {ConfirmAction.ask("delete",
                   uuid: task.uuid,
-                  title: gettext("Delete task"),
-                  message: gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, @lang)),
+                  title: gettext("Delete task “%{title}”?", title: TaskSchema.localized_title(task, @lang)),
+                  message: gettext("The projects' tasks made from it are deleted too."),
                   confirm: gettext("Delete")
                 )}
                 icon="hero-trash"
@@ -1207,7 +1209,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
     ~H"""
     <.table_default_cell class="whitespace-nowrap text-base-content/70">
-      {Map.get(@creators, @task.uuid) || "—"}
+      <%= if name = Map.get(@creators, @task.uuid) do %>
+        <.person name={name} class="max-w-[14rem]" />
+      <% else %>
+        <span class="text-base-content/40">—</span>
+      <% end %>
     </.table_default_cell>
     """
   end

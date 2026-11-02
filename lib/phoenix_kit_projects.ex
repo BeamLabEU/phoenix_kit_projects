@@ -221,6 +221,11 @@ defmodule PhoenixKitProjects do
     %{
       key: module_key(),
       label: "Projects",
+      # The labels below are OUR strings: without the backend core looks them
+      # up in its own catalogue, finds none, and the permissions matrix shows
+      # every sub-permission in English (`Web.GettextManifest` registers them).
+      gettext_backend: PhoenixKitProjects.Gettext,
+      gettext_domain: "default",
       icon: "hero-clipboard-document-list",
       description: "Reach the Projects module — see the projects you belong to",
       sub_permissions: [
@@ -501,6 +506,13 @@ defmodule PhoenixKitProjects do
         app: :phoenix_kit_projects,
         file: "static/assets/phoenix_kit_projects.js",
         global: "PhoenixKitProjectsHooks"
+      },
+      # The card list's draft row (`PkpDraft`): a title typed after Enter
+      # that becomes a task only once something is in it.
+      %{
+        app: :phoenix_kit_projects,
+        file: "static/assets/phoenix_kit_projects_drafts.js",
+        global: "PhoenixKitProjectsDraftHooks"
       }
     ]
   end
@@ -626,6 +638,39 @@ defmodule PhoenixKitProjects do
             label: gettext_noop("Calendar view"),
             default: true,
             requires: ["scheduling"]
+          },
+          # Time logged on the project as a whole: the page's own "Log
+          # time" and the logged time in its header. Off by default, on the
+          # site's settings page or per project (the boss, 2026-10-30: a
+          # big "Log time" on every project confused people). A task's own
+          # "Log time", the Hours tab and the Time page stay with the
+          # ledger.
+          %{
+            key: "project_time",
+            label: gettext_noop("Time logging on the project"),
+            default: false,
+            requires: ["ledger"],
+            site_default: true
+          },
+          # The "Billable" mark on a time entry: off by default, it was
+          # unclear (the boss, 2026-10-30). Off, no entry is marked billable.
+          %{
+            key: "billable",
+            label: gettext_noop("Billable time"),
+            default: false,
+            requires: ["ledger"],
+            site_default: true
+          },
+          # A sub-project's row follows its own tasks — waiting until it is
+          # released, in progress once one of them starts, done when all
+          # are. Off, its status is set by hand like a task's (Max,
+          # 2026-10-30: "a setting for sure, and probably by default, yes").
+          %{
+            key: "subproject_auto",
+            label: gettext_noop("Sub-project status follows its tasks"),
+            default: true,
+            requires: ["subprojects"],
+            site_default: true
           }
         ],
         # Hours: the work ledger read back — who worked, on what, when —
@@ -701,7 +746,25 @@ defmodule PhoenixKitProjects do
         icon: "hero-chat-bubble-left-right",
         module_key: "comments",
         default_enabled: true,
-        permission_actions: [:comment]
+        permission_actions: [:comment],
+        # Two tabs, each switchable (the boss, 2026-10-30): the project's
+        # own thread, and every comment on its tasks in one list. A host
+        # whose record already has a comments tab (an order) turns the
+        # first off and keeps the second.
+        feature_flags: [
+          %{
+            key: "project_comments",
+            label: gettext_noop("Comments on the project"),
+            default: true,
+            site_default: true
+          },
+          %{
+            key: "all_comments",
+            label: gettext_noop("All comments tab"),
+            default: false,
+            site_default: true
+          }
+        ]
       },
       # Public portal (Phase J): anonymous issue intake + a public issue
       # list/status page behind a random capability link. Off by default

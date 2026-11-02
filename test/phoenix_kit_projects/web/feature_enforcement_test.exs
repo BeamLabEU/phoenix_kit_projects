@@ -235,8 +235,10 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       refute html =~ ~s(phx-value-tab="board")
       html = render_click(view, "switch_tab", %{"tab" => "board"})
-      # Falls back to list — the board columns don't render.
-      refute html =~ "In progress</span>"
+      # Falls back to list — the board columns don't render (the rows'
+      # status menus name the statuses too, so the columns are looked for).
+      refute html =~ ~s(id="board-column-)
+      refute html =~ ~s(phx-value-tab="board")
     end
   end
 
@@ -280,6 +282,32 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       {:ok, _view, html} = live(conn, show_path(project))
       assert html =~ ~s(id="project-tabs-#{project.uuid}")
       assert html =~ "ext:tasks:hours"
+    end
+  end
+
+  describe "contributed tabs in the reader's language" do
+    # The Hours tab is the Tasks extension's contributed tab: its label is
+    # a msgid, and the strip drew it raw — English on every /ru/ page.
+    test "the Hours tab is translated", %{conn: conn, project: project} do
+      {:ok, _} = Features.set_flags(project, %{"ledger" => true})
+
+      {:ok, u} =
+        Auth.register_user(%{
+          "email" => "hours-ru-#{System.unique_integer([:positive])}@example.com",
+          "password" => "HoursRuPass123!"
+        })
+
+      {:ok, _} = Members.add_member(project, u.uuid, role: "manager")
+
+      # The page as the host embeds it, in Russian (the test router serves /en only).
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid, "current_user_uuid" => u.uuid, "locale" => "ru"}
+        )
+
+      tab = ~s([phx-value-tab="ext:tasks:hours"])
+      assert has_element?(view, tab, "Часы")
+      refute has_element?(view, tab, "Hours")
     end
   end
 
@@ -378,7 +406,10 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       html = render_click(view, "open_log_time", %{"uuid" => assignment.uuid})
       assert html =~ "This feature is turned off for this project."
 
-      render_submit(view, "save_work_entry", %{"hours" => "1", "minutes" => "0"})
+      render_submit(view, "save_work_entry", %{
+        "duration" => %{"amount" => "60", "unit" => "minutes"}
+      })
+
       assert Ledger.list_entries(project.uuid) == []
     end
   end
@@ -386,6 +417,8 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
   describe "ledger flag on (default)" do
     test "logging time through the modal writes an entry and refreshes the strip",
          %{conn: conn, project: project, assignment: assignment} do
+      # Billable time is off unless turned on (the boss, 2026-10-30).
+      {:ok, project} = Features.set_flags(project, %{"billable" => true})
       {:ok, view, html} = live(conn, show_path(project))
 
       # Entry points render: the effort strip and the per-task chip.
@@ -395,8 +428,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       html =
         render_submit(view, "save_work_entry", %{
-          "hours" => "1",
-          "minutes" => "30",
+          "duration" => %{"amount" => "90", "unit" => "minutes"},
           "note" => "Night shift",
           "billable" => "true"
         })
@@ -433,7 +465,10 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       render_click(view, "toggle_subproject", %{"uuid" => link.uuid})
       render_click(view, "open_log_time", %{"uuid" => child_task.uuid})
-      render_submit(view, "save_work_entry", %{"hours" => "0", "minutes" => "25"})
+
+      render_submit(view, "save_work_entry", %{
+        "duration" => %{"amount" => "25", "unit" => "minutes"}
+      })
 
       assert [entry] = Ledger.list_entries(child.uuid)
       assert entry.assignment_uuid == child_task.uuid
@@ -466,18 +501,26 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       {:ok, view, _} = live(conn, show_path(project))
 
       render_click(view, "open_log_time", %{"uuid" => assignment.uuid})
-      html = render_submit(view, "save_work_entry", %{"hours" => "1", "minutes" => "0"})
+
+      html =
+        render_submit(view, "save_work_entry", %{
+          "duration" => %{"amount" => "60", "unit" => "minutes"}
+        })
 
       assert html =~ "permission to log time"
       assert Ledger.list_entries(project.uuid) == []
     end
 
     test "garbage duration is refused with a flash, nothing written",
-         %{conn: conn, project: project} do
+         %{conn: conn, project: project, assignment: assignment} do
       {:ok, view, _} = live(conn, show_path(project))
 
-      render_click(view, "open_log_time", %{})
-      html = render_submit(view, "save_work_entry", %{"hours" => "0", "minutes" => "0"})
+      render_click(view, "open_log_time", %{"uuid" => assignment.uuid})
+
+      html =
+        render_submit(view, "save_work_entry", %{
+          "duration" => %{"amount" => "0", "unit" => "minutes"}
+        })
 
       assert html =~ "Enter a positive amount of time."
       assert Ledger.list_entries(project.uuid) == []

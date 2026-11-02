@@ -18,6 +18,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   alias PhoenixKitProjects.{GanttDisplay, L10n, Paths, Projects, ScheduleLayout}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   # Assignee display helper shared with ProjectShowLive. See WebHelpers.
@@ -423,7 +424,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       start: start_date,
       end: end_date,
       progress_pct: a.progress_pct,
-      color: gantt_color(a.status),
+      color: AssignmentStatusBadge.bar_color(a.status),
       assignee: assignee_label(a),
       extra: extra
     }
@@ -458,11 +459,6 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   end
 
   # ── Display helpers ─────────────────────────────────────────────
-
-  defp gantt_color("done"), do: "bg-success"
-  defp gantt_color("in_progress"), do: "bg-warning"
-  defp gantt_color("waiting"), do: "bg-neutral"
-  defp gantt_color(_), do: "bg-primary"
 
   # The chart's CHROME strings (toolbar, zoom labels, Today, prev/next, popover +
   # expand/collapse labels) — localized via this app's gettext, matching how the

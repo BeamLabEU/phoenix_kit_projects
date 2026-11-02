@@ -18,6 +18,15 @@
  * PkpTitle: one task title edited in place on a card row.
  *
  * PkpBoard: one column of the board, its cards dragged between columns.
+ *
+ * PkpTabScroll: the one scroll area under a tab strip, back to its top
+ * only when the open tab changes.
+ *
+ * PkpDrawerUrl / PkpUrlMirror: the task open in a drawer in the page's
+ * address (`?task=`), and the project page's tab address keeping it.
+ *
+ * PkpCalendarWorkday: a calendar's Week and Day grids open at the start of
+ * the work day instead of midnight.
  */
 (function () {
   "use strict";
@@ -1126,7 +1135,7 @@
         } else if (e.key === "Escape") {
           el.value = self.saved;
           el.blur();
-        } else if (e.key === "Backspace" && el.value === "" && el.dataset.fresh === "1") {
+        } else if (e.key === "Backspace" && el.value === "") {
           e.preventDefault();
           self.pushEvent("outline_drop", { id: el.dataset.id });
         } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -1144,7 +1153,7 @@
         if (rows.length === 0) return;
         self.save(function () { self.pushEvent("outline_paste", { after: el.dataset.id, lines: rows }); });
       });
-      el.addEventListener("blur", function () { self.save(); });
+      el.addEventListener("blur", function () { if (el.value.trim() === "") self.pushEvent("outline_drop", { id: el.dataset.id }); else self.save(); });
       this.wanted = el.dataset.focus === "1";
       if (this.wanted) { el.focus(); el.setSelectionRange(0, 0); }
     },
@@ -1194,7 +1203,11 @@
     // The label is a tab on the card's top-left edge, out of the row's flow:
     // it comes and goes without moving anything (the view icon stays put).
     "[data-pkp-rel]{position:absolute;left:.75rem;top:-.6rem;z-index:1;pointer-events:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.7rem;font-weight:600;line-height:1.15rem;white-space:nowrap;border-radius:999px}",
-    "@media (prefers-reduced-motion:reduce){[data-pkp-card]{transition:none}}"
+    // While no arrows show, a top-level card reaches over the gutter they
+    // use (its contents stay put); `apply` draws it back while they show.
+    ".pkp-links-gutter .pkp-row-card{margin-left:-2rem;padding-left:2rem;transition:margin-left .15s ease,padding-left .15s ease}",
+    ".pkp-links-gutter.sortable-dragging .pkp-row-card,.pkp-links-gutter .sortable-ghost .pkp-row-card{transition:none}",
+    "@media (prefers-reduced-motion:reduce){[data-pkp-card],.pkp-links-gutter .pkp-row-card{transition:none}}"
   ].join("\n");
   var LK_BEFORE = "#7c5cd6", LK_AFTER = "#e0682b", LK_AFTER_TEXT = "#d0571d";
   var LK_PRIMARY = "var(--color-primary,#4f46e5)";
@@ -1300,6 +1313,7 @@
     destroyed: function () {
       clearTimeout(this.enterT);
       clearTimeout(this.leaveT);
+      clearTimeout(this.drawT);
       document.removeEventListener("keydown", this.onKey);
       document.removeEventListener("click", this.onDoc, true);
       window.removeEventListener("resize", this.onResize);
@@ -1355,7 +1369,9 @@
         b.setAttribute("aria-pressed", on ? "true" : "false");
         if (labels.trace) b.title = on ? labels.stop : labels.trace;
       });
-      if (src === null) { this.marks.textContent = ""; this.draw([]); return; }
+      var wasOn = this.gutterOn === true;
+      this.gutterOn = src !== null;
+      if (src === null) { clearTimeout(this.drawT); this.marks.textContent = ""; this.draw([]); return; }
 
       // Hover: direct neighbours only, nothing fades. Trace: the whole
       // chain, and what is not part of it fades a little.
@@ -1382,6 +1398,8 @@
 
       // Everything outside what is shown fades to half, hover and trace.
       rules.push(scope + "[data-pkp-card]{opacity:.4}");
+      // The cards give the gutter back to the arrows.
+      rules.push(scope + ".pkp-row-card{margin-left:0;padding-left:0}");
       rules.push(card(src) + "{opacity:1;box-shadow:inset 0 0 0 1px color-mix(in oklab,currentColor 28%,transparent)}");
       Object.keys(b1).forEach(function (id) { mark(id, LK_BEFORE, true, labels.before, LK_BEFORE); });
       Object.keys(a1).forEach(function (id) { if (!b1[id]) mark(id, LK_AFTER, true, labels.after, LK_AFTER_TEXT); });
@@ -1403,7 +1421,17 @@
       }).map(function (p) {
         return { from: p[0], to: p[1], after: !!aAll[p[1]] && !bAll[p[1]], direct: p[0] === src || p[1] === src };
       });
-      this.draw(edges);
+      // Coming from no arrows, the cards are still sliding back: drawn once
+      // they stand where the arrows meet them (the slide is .15s).
+      clearTimeout(this.drawT);
+      var slides = !wasOn && this.el.classList.contains("pkp-links-gutter") &&
+        !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      if (slides) {
+        this.draw([]);
+        this.drawT = setTimeout(function () { if (self.gutterOn) self.draw(edges); }, 170);
+      } else {
+        this.draw(edges);
+      }
     },
     // Draws `edges` into the list's arrow layer: a curve from the left edge
     // of the earlier task, out into the gutter and back into the later
@@ -1646,5 +1674,278 @@
     }
   };
 
-  window.PhoenixKitProjectsHooks = { PkpOutline: Outline, PkpTitle: Title, PkpLinks: Links, PkpBoard: Board };
+  // PkpTabScroll: tabs never jump (the panel, 2026-10-31). Under every tab
+  // strip there is ONE scroll area holding only the open tab, and the strip
+  // sits outside it. This takes that area back to its top when the open tab
+  // changes — never on any other update, so a patch while someone reads
+  // halfway down a tab leaves them there.
+  //   * on a form's strip (`FormParts.form_tabs/1`, `data-active` the open
+  //     pane) the area is the open pane, found through its tab;
+  //   * with `data-pkp-fill` (the project page's views) the area is the
+  //     element itself, sized from where it starts to the window's bottom,
+  //     so the page around it has nothing to scroll and the strip above it
+  //     stays where it is. Too far down the page to be worth it (an embed
+  //     under a host's own content): left at its own height.
+  var FILL_MIN_PX = 320;
+  var FILL_GAP_PX = 16;
+
+  var TabScroll = {
+    mounted: function () {
+      var self = this;
+      this.tab = this.el.dataset.active;
+      if (this.el.hasAttribute("data-pkp-fill")) {
+        this.onResize = function () { self.fill(); };
+        window.addEventListener("resize", this.onResize);
+        this.fill();
+      }
+    },
+    updated: function () {
+      var tab = this.el.dataset.active;
+      if (tab !== this.tab) {
+        this.tab = tab;
+        var area = this.area();
+        if (area) area.scrollTop = 0;
+      }
+      if (this.onResize) this.fill();
+    },
+    destroyed: function () {
+      if (this.onResize) window.removeEventListener("resize", this.onResize);
+    },
+    area: function () {
+      if (this.el.hasAttribute("data-pkp-fill")) return this.el;
+      var tab = this.el.querySelector('[role="tab"][aria-selected="true"]');
+      var id = tab && tab.getAttribute("aria-controls");
+      var pane = id ? document.getElementById(id) : null;
+      // A form whose tabs sit outside it scrolls the area holding the panes.
+      return (pane && pane.closest("[data-pkp-scroll]")) || pane;
+    },
+    fill: function () {
+      // A tab that is not open has no place to measure from (the project
+      // page's other tabs carry this hook too): sized when it shows.
+      if (this.el.offsetParent === null) return;
+      var top = this.el.getBoundingClientRect().top + window.scrollY;
+      var height = window.innerHeight - top - FILL_GAP_PX;
+      this.el.style.height = height < FILL_MIN_PX ? "" : height + "px";
+    }
+  };
+
+  // PkpDrawerUrl: the task open in a drawer is in the page's address
+  // (`?task=ACME-12`, `PopupHostLive`), so a reload or a shared link opens
+  // it again and Back closes it instead of leaving the page. Rendered only
+  // when the host named the parameter (`data-param`, PopupHostLive's
+  // `"url_param"`); only that parameter is ever touched, the host's path
+  // and its own parameters stay as they are.
+  //
+  // Opening pushes ONE history entry (marked `pkpTask`); another task
+  // replaces it; closing goes back over it — or, when the page was loaded
+  // with the parameter (nothing was pushed), drops it in place. A Back or
+  // Forward that changes only `task` is this hook's, not a navigation:
+  // its listener runs in the capture phase and keeps LiveView's own
+  // popstate handler from treating it as one (which would remount the
+  // page), then tells the server what the address now names.
+  var TASK_PARAM = "task";
+
+  function taskOf(loc, name) {
+    try { return new URLSearchParams(loc.search).get(name || TASK_PARAM) || ""; } catch (_e) { return ""; }
+  }
+
+  function withTask(loc, ref, name) {
+    var params = new URLSearchParams(loc.search);
+    if (ref) params.set(name || TASK_PARAM, ref); else params.delete(name || TASK_PARAM);
+    var search = params.toString();
+    return loc.pathname + (search ? "?" + search : "") + loc.hash;
+  }
+
+  function withoutTask(loc, name) {
+    return withTask({ pathname: loc.pathname, search: loc.search, hash: "" }, "", name);
+  }
+
+  var DrawerUrl = {
+    mounted: function () {
+      var self = this;
+      this.param = this.el.dataset.param || TASK_PARAM;
+      var wanted = taskOf(window.location, this.param);
+      this.ref = this.el.dataset.task || "";
+      this.base = withoutTask(window.location, this.param);
+
+      this.onPop = function (e) {
+        // Another page, or another of the host's own parameters: not ours.
+        if (withoutTask(window.location, self.param) !== self.base) return;
+        e.stopImmediatePropagation();
+        var now = taskOf(window.location, self.param);
+        if (now !== self.ref) {
+          self.ref = now;
+          self.pushEvent("pkp_url_task", { task: now });
+        }
+      };
+      window.addEventListener("popstate", this.onPop, true);
+
+      if (wanted && wanted !== this.ref) {
+        // A reload or a link: the address already says it, so nothing is
+        // pushed when the frame opens.
+        this.ref = wanted;
+        this.pushEvent("pkp_url_task", { task: wanted });
+      } else if (this.ref && !wanted) {
+        this.replace(this.ref);
+      }
+    },
+    updated: function () {
+      var ref = this.el.dataset.task || "";
+      if (ref === this.ref) return;
+      var was = this.ref;
+      this.ref = ref;
+      this.base = withoutTask(window.location, this.param);
+      var state = window.history.state;
+
+      try {
+        if (ref && !was) {
+          window.history.pushState({ pkpTask: ref, back: state }, "", withTask(window.location, ref, this.param));
+        } else if (ref) {
+          this.replace(ref);
+        } else if (state && state.pkpTask) {
+          window.history.back();
+        } else {
+          this.replace("");
+        }
+      } catch (_e) {
+        // A refused URL: leave the address bar alone.
+      }
+    },
+    destroyed: function () {
+      window.removeEventListener("popstate", this.onPop, true);
+    },
+    replace: function (ref) {
+      try {
+        window.history.replaceState(window.history.state, "", withTask(window.location, ref, this.param));
+      } catch (_e) {}
+    }
+  };
+
+  // PkpUrlMirror: core's PkUrlMirror (the address bar follows the project
+  // page's tab, `data-url`, replaced never pushed) keeping the `task`
+  // parameter the page's drawer writes (`PkpDrawerUrl`) — core's would
+  // drop it on the page's next update.
+  var UrlMirror = {
+    mounted: function () { this.sync(); },
+    updated: function () { this.sync(); },
+    sync: function () {
+      var url = this.el.dataset.url;
+      if (typeof url !== "string" || url.charAt(0) !== "/") return;
+      if (url.charAt(1) === "/" || url.charAt(1) === "\\") return;
+      if (/[\u0000-\u001f\u007f#?]/.test(url)) return;
+      var task = taskOf(window.location);
+      var target = task ? url + "?" + TASK_PARAM + "=" + encodeURIComponent(task) : url;
+      if (target === window.location.pathname + window.location.search) return;
+      try {
+        window.history.replaceState(window.history.state, "", target + window.location.hash);
+      } catch (_e) {}
+    }
+  };
+
+  // PkpCalendarWorkday: a calendar's Week and Day grids open at the start
+  // of the work day (`data-start`, "08:00:00"), not at midnight (the
+  // walk-through, 2026-10-31). Each time a time grid appears or shows other
+  // days, the scroll box holding it — the nearest one inside this element,
+  // never the page — is moved so that slot is at its top; scrolling within
+  // the same days is left alone. A MutationObserver, because the calendar
+  // is a LiveComponent: its own patches (prev / next) never reach this
+  // element's `updated`.
+  var CalendarWorkday = {
+    mounted: function () {
+      var self = this;
+      this.key = null;
+      this.queued = false;
+      this.observer = new MutationObserver(function () { self.queue(); });
+      this.observer.observe(this.el, { childList: true, subtree: true });
+      this.apply();
+    },
+    updated: function () { this.queue(); },
+    destroyed: function () {
+      if (this.observer) this.observer.disconnect();
+    },
+    queue: function () {
+      var self = this;
+      if (this.queued) return;
+      this.queued = true;
+      window.requestAnimationFrame(function () {
+        self.queued = false;
+        self.apply();
+      });
+    },
+    apply: function () {
+      var cols = this.el.querySelectorAll(".cal-day-column[data-date]");
+      if (!cols.length) { this.key = null; return; }
+      var key = Array.prototype.map.call(cols, function (c) { return c.getAttribute("data-date"); }).join(",");
+      if (key === this.key) return;
+      var start = this.el.dataset.start || "08:00:00";
+      var slot = cols[0].querySelector('[data-slot="' + start + '"]');
+      if (!slot) return;
+      var box = scrollBoxWithin(slot, this.el);
+      if (!box) return;
+      this.key = key;
+      box.scrollTop += slot.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    }
+  };
+
+  function scrollBoxWithin(node, stop) {
+    for (var el = node.parentElement; el && el !== stop; el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight + 1) {
+        var y = window.getComputedStyle(el).overflowY;
+        if (y === "auto" || y === "scroll") return el;
+      }
+    }
+    return null;
+  }
+
+  // A side menu inside a row's ⋮ menu ("Change status ›", the boss,
+  // 2026-10-31): it opens on hover, and a press on its entry (touch, a
+  // keyboard's Enter) toggles it. The row menu closes on ANY click inside
+  // it, so this press is taken in the capture phase, before that listener
+  // and before LiveView, and goes no further. Its items are ordinary
+  // menu items: their click closes the menu and runs as usual.
+  if (!window.__pkpSubmenu) {
+    window.__pkpSubmenu = true;
+    // The row menu is a popover, which the browser clips (`overflow:auto`):
+    // a menu holding a side list lets it out.
+    var subStyle = document.createElement("style");
+    subStyle.textContent = "[data-row-menu-content]:has([data-pkp-submenu]){overflow:visible}";
+    document.head.appendChild(subStyle);
+    document.addEventListener("click", function (e) {
+      var toggle = e.target && e.target.closest && e.target.closest("[data-pkp-submenu-toggle]");
+      if (!toggle) return;
+      e.stopPropagation();
+      e.preventDefault();
+      var item = toggle.closest("[data-pkp-submenu]");
+      if (!item) return;
+      var open = !item.hasAttribute("data-open");
+      item.toggleAttribute("data-open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        var first = item.querySelector("[data-pkp-submenu-list] [role='menuitem']");
+        if (first) first.focus({ preventScroll: true });
+      }
+    }, true);
+  }
+
+  // A description editor's image button: the server answers its insert
+  // request with the id of the upload's hidden file input, opened here
+  // (`DescriptionImages.pick/1`).
+  if (!window.__pkpPickFile) {
+    window.__pkpPickFile = true;
+    window.addEventListener("phx:pkp:pick-file", function (e) {
+      var input = e.detail && e.detail.id && document.getElementById(e.detail.id);
+      if (input) input.click();
+    });
+  }
+
+  window.PhoenixKitProjectsHooks = {
+    PkpOutline: Outline,
+    PkpTitle: Title,
+    PkpLinks: Links,
+    PkpBoard: Board,
+    PkpTabScroll: TabScroll,
+    PkpDrawerUrl: DrawerUrl,
+    PkpUrlMirror: UrlMirror,
+    PkpCalendarWorkday: CalendarWorkday
+  };
 })();

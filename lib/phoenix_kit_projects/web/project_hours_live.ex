@@ -33,6 +33,9 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   import PhoenixKitWeb.Components.Core.Chart, only: [bar_chart: 1]
   import PhoenixKitWeb.Components.Core.DateNav, only: [date_nav: 1]
   import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
+  import PhoenixKitProjects.Web.Components.TimeInput, only: [clock_input: 1]
+  import PhoenixKitProjects.Web.Components.DurationInput, only: [duration_input: 1]
+  import PhoenixKitProjects.Web.Components.PersonDisplay, only: [person: 1]
 
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Date, as: KitDate
@@ -55,6 +58,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Project, WorkEntry}
   alias PhoenixKitProjects.Web.Components.ConfirmAction
+  alias PhoenixKitProjects.Web.Components.{DurationInput, TimeInput}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Components.Core.FormFieldLabel
 
@@ -142,7 +146,9 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         dom: "hours-#{project.uuid}",
         enabled?: Features.on?(project, "ledger"),
         project_options: [],
-        page_title: gettext("Hours")
+        # A tab of the project page, never a page of its own: it leaves the
+        # browser tab's title to the page (LiveView applies every LV's).
+        page_title: nil
       )
     else
       mount_nothing(socket)
@@ -158,7 +164,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       dom: "hours-none",
       enabled?: false,
       project_options: [],
-      page_title: gettext("Hours")
+      page_title: nil
     )
   end
 
@@ -562,6 +568,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       "task" -> {:noreply, push_url_state(socket, task: value)}
       "project" -> {:noreply, push_url_state(socket, project_filter: value)}
       "logtask" -> {:noreply, put_log_value(socket, "task", value)}
+      "logperson" -> {:noreply, put_log_value(socket, "person", value)}
       _ -> {:noreply, socket}
     end
   end
@@ -573,6 +580,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       "task" -> {:noreply, push_url_state(socket, task: "")}
       "project" -> {:noreply, push_url_state(socket, project_filter: "")}
       "logtask" -> {:noreply, put_log_value(socket, "task", "")}
+      "logperson" -> {:noreply, put_log_value(socket, "person", "me")}
       _ -> {:noreply, socket}
     end
   end
@@ -667,12 +675,16 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   # Keeps what was typed and, on the site-wide page, re-reads the tasks and
   # people of the project just chosen.
   def handle_event("log_change", params, socket) do
+    params = log_params(params)
+
     if socket.assigns.log_form,
       do: {:noreply, assign(socket, log_form: log_form(socket, params))},
       else: {:noreply, socket}
   end
 
   def handle_event("save_log", params, socket) do
+    params = log_params(params)
+
     with %{} <- socket.assigns.log_form || :closed,
          {:ok, project_uuid} <- log_project(socket, params),
          {:ok, minutes} <- minutes(params["duration"]),
@@ -686,7 +698,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
              [
                assignment_uuid: task_uuid,
                note: blank_to_nil(params["note"]),
-               billable: params["billable"] in ["true", "on"]
+               billable: billable_on?(project_uuid) and params["billable"] in ["true", "on"]
              ] ++ actor ++ times
            ) do
       {:noreply,
@@ -705,8 +717,16 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   def handle_event("edit_entry", %{"uuid" => uuid}, socket) do
     case amendable(socket, uuid) do
-      {:ok, entry} -> {:noreply, assign(socket, edit_entry: entry, edit_error: nil)}
-      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
+      {:ok, entry} ->
+        {:noreply,
+         assign(socket,
+           edit_entry: entry,
+           edit_error: nil,
+           edit_billable?: billable_on?(entry.project_uuid)
+         )}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, message)}
     end
   end
 
@@ -718,7 +738,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
          {:ok, minutes} <- minutes(params["duration"]),
          {:ok, _} <-
            Ledger.update_time(entry, minutes,
-             billable: params["billable"] in ["true", "on"],
+             billable: edited_billable(entry, params),
              actor_uuid: Activity.actor_uuid(socket)
            ) do
       {:noreply,
@@ -837,7 +857,29 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     end)
   end
 
+  # Whose time: the people the open form offers (`person_options/2`).
+  defp pick_rows("logperson", q, limit, socket) do
+    case socket.assigns[:log_form] do
+      %{people: people} ->
+        people
+        |> Enum.filter(fn {name, _key} -> name_matches?(name, q) end)
+        |> page_of(limit, fn {name, key} ->
+          %{kind: "person", uuid: key, label: name, icon: "hero-user"}
+        end)
+
+      _ ->
+        {[], false}
+    end
+  end
+
   defp pick_rows(_field, _q, _limit, _socket), do: {[], false}
+
+  # The chosen person's name for the picker, nil for "Me".
+  defp person_label(%{values: %{"person" => key}, people: people})
+       when key not in [nil, "", "me"],
+       do: Enum.find_value(people, fn {name, k} -> k == key && name end)
+
+  defp person_label(_form), do: nil
 
   defp task_row(task) do
     %{
@@ -877,6 +919,35 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   # ── Log-time helpers ────────────────────────────────────────────
 
+  # The start-time picker posts its parts (`TimeInput`): folded back into
+  # `HH:MM` (or `""`, no time).
+  defp log_params(params), do: TimeInput.normalize(params, ["time"])
+
+  # The project's `billable` Tasks flag (off by default): without it there is
+  # no Billable box and an entry is never saved as billable.
+  # Where the project tracks billable time the box decides; where it does
+  # not, the box is not shown and the entry keeps the mark it has — an
+  # edit of its length never clears a billable mark logged before the
+  # flag was turned off.
+  defp edited_billable(%WorkEntry{} = entry, params) do
+    if billable_on?(entry.project_uuid),
+      do: params["billable"] in ["true", "on"],
+      else: entry.billable == true
+  end
+
+  defp billable_on?(project_uuid), do: feature_on?(project_uuid, "billable")
+
+  defp feature_on?(project_uuid, flag) when is_binary(project_uuid) do
+    case Projects.get_project(project_uuid) do
+      %Project{} = project -> PhoenixKitProjects.Features.on?(project, flag)
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp feature_on?(_project_uuid, _flag), do: false
+
   # The projects the viewer may log time on, as `{name, uuid}`: the tab's
   # own project, or on the site-wide page every listed project that allows
   # it.
@@ -913,10 +984,16 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         "time" => params["time"] || "",
         "person" => params["person"] || "me",
         "task" => blank_to_nil(params["task"]) || "",
-        "duration" => params["duration"] || "",
+        # The number and unit as typed (`DurationInput`), kept on a re-render.
+        "duration" => duration_parts(params["duration"]),
         "note" => params["note"] || "",
         "billable" => params["billable"] in ["true", "on"]
       },
+      # The Billable box only where the project tracks billable time.
+      billable?: is_binary(project_uuid) and billable_on?(project_uuid),
+      # An entry with no task only where the project keeps time on itself
+      # (`log_task/2`), so the picker offers "the project itself" only there.
+      project_time?: is_binary(project_uuid) and feature_on?(project_uuid, "project_time"),
       # The task picked, as its chip says it (nil = the project itself).
       task_label:
         case Hours.task_option(params["task"], lang) do
@@ -939,11 +1016,17 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     if is_binary(project_uuid) and may?(socket.assigns, project_uuid, :for_others) do
       my_uuid = Activity.actor_uuid(socket)
 
+      members = project_uuid |> Members.list_members() |> Enum.reject(&(&1.user_uuid == my_uuid))
+      # By name — the account's, else its staff person's — never by email
+      # when a name exists.
+      names = People.user_display_names(Enum.map(members, & &1.user_uuid))
+
       members =
-        project_uuid
-        |> Members.list_members()
-        |> Enum.reject(&(&1.user_uuid == my_uuid))
-        |> Enum.map(&{member_name(&1), Hours.actor_key("user", &1.user_uuid)})
+        Enum.map(
+          members,
+          &{Map.get(names, &1.user_uuid) || member_name(&1),
+           Hours.actor_key("user", &1.user_uuid)}
+        )
 
       listed =
         MapSet.new([
@@ -979,12 +1062,16 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
        else: {:error, gettext("You don't have permission to log time here.")}
   end
 
-  defp minutes(text) do
-    case Format.parse_duration(text) do
+  # A number and a unit (`DurationInput`), never text to parse.
+  defp minutes(duration) do
+    case DurationInput.to_minutes(duration) do
       {:ok, minutes} -> {:ok, minutes}
-      :error -> {:error, gettext("Enter how long, like 1h 30m, 1:30, 90 or 1.5h.")}
+      :error -> {:error, gettext("Enter a positive amount of time.")}
     end
   end
+
+  defp duration_parts(%{} = parts), do: Map.take(parts, ["amount", "unit"])
+  defp duration_parts(_), do: %{}
 
   # Who the time is for. Anyone but "me" needs the plan-level permission,
   # and must be one of the choices the form offered.
@@ -1007,7 +1094,14 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     end
   end
 
-  defp log_task(_project_uuid, blank) when blank in [nil, ""], do: {:ok, nil}
+  # Empty means the project itself — only where the project keeps time on
+  # the project as a whole (its `project_time` flag, off unless the site or
+  # the project turns it on), as the project page's Log time asks.
+  defp log_task(project_uuid, blank) when blank in [nil, ""] do
+    if feature_on?(project_uuid, "project_time"),
+      do: {:ok, nil},
+      else: {:error, gettext("Pick a task: this project keeps time on its tasks only.")}
+  end
 
   defp log_task(project_uuid, task_uuid) do
     # The one task is looked up, not the project's whole list.
@@ -1200,6 +1294,15 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               <p class="text-sm">
                 <span class="font-medium">{@period_info.label}</span>
                 <span class="text-base-content/50">· {tz_label(@offset)}</span>
+                <%!-- The project's start, off the project page's header and
+                     here, beside its time (the boss, 2026-11-02). --%>
+                <span
+                  :if={@mode == :project and @project && @project.started_at}
+                  class="text-base-content/50"
+                  title={L10n.format_datetime(@project.started_at)}
+                >
+                  · {gettext("Started %{date}", date: L10n.format_date(@project.started_at))}
+                </span>
               </p>
             </div>
             <div class="flex items-center gap-2">
@@ -1264,7 +1367,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       <% end %>
 
       <.log_modal :if={@log_form} form={@log_form} projects={@log_projects} mode={@mode} dom={@dom} />
-      <.edit_modal :if={@edit_entry} entry={@edit_entry} error={@edit_error} dom={@dom} />
+      <.edit_modal :if={@edit_entry} entry={@edit_entry} error={@edit_error} dom={@dom} billable={assigns[:edit_billable?] == true} />
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
@@ -1597,7 +1700,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   defp pct(_part, whole) when whole <= 0, do: 0
   defp pct(part, whole), do: Float.round(part / whole * 100, 2)
 
-  defp short_day(%Date{} = d), do: "#{L10n.short_month(d.month)} #{d.day}"
+  defp short_day(%Date{} = d),
+    do: gettext("%{month} %{day}", month: L10n.short_month(d.month), day: d.day)
 
   # ── Breakdowns ──
 
@@ -1730,7 +1834,9 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           </.table_default_header>
           <.table_default_body>
             <.table_default_row :for={w <- @workers}>
-              <.table_default_cell class="whitespace-nowrap">{w.name}</.table_default_cell>
+              <.table_default_cell class="whitespace-nowrap">
+                <.person name={w.name} kind={w.kind} />
+              </.table_default_cell>
               <.table_default_cell :for={day <- @sheet.days} class="text-right tabular-nums">
                 {sheet_cell(@sheet.matrix[w.key][day])}
               </.table_default_cell>
@@ -1830,8 +1936,9 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                 {day} <span class="text-base-content/50 tabular-nums">{time}</span>
               </.table_default_cell>
               <.table_default_cell class="whitespace-nowrap">
-                {row.worker.name}
-                <span :if={row.worker.kind == "ai_agent"} class="badge badge-ghost badge-xs ml-1">{gettext("AI")}</span>
+                <.person name={row.worker.name} kind={row.worker.kind}>
+                  <span :if={row.worker.kind == "ai_agent"} class="badge badge-ghost badge-xs">{gettext("AI")}</span>
+                </.person>
               </.table_default_cell>
               <.table_default_cell :if={@multi?} class="whitespace-nowrap">
                 <.smart_link
@@ -1880,12 +1987,12 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                   <.table_row_menu_button
                     {ConfirmAction.ask("delete_entry",
                       uuid: row.entry.uuid,
-                      title: gettext("Remove entry"),
-                      message: gettext("Remove %{amount} logged by %{name}? The project's activity keeps a record of it.", amount: Format.duration(Decimal.to_float(row.entry.amount)), name: row.worker.name),
-                      confirm: gettext("Remove")
+                      title: gettext("Delete %{amount} logged by %{name}?", amount: Format.duration(Decimal.to_float(row.entry.amount)), name: row.worker.name),
+                      message: gettext("The project's activity keeps a record of it."),
+                      confirm: gettext("Delete")
                     )}
                     icon="hero-trash"
-                    label={gettext("Remove")}
+                    label={gettext("Delete")}
                     variant="error"
                   />
                 </.table_row_menu>
@@ -1998,36 +2105,48 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             class="input-sm"
             wrapper_class="flex-1"
           />
-          <.input
+          <.clock_input
             id={"#{@dom}-log-time"}
-            type="time"
             name="time"
-            label={gettext("Started at (optional)")}
+            label={gettext("Started at")}
             value={@form.values["time"]}
-            class="input-sm"
-            wrapper_class="flex-1"
+            class="flex-1"
           />
         </div>
-        <.input
+        <.duration_input
           id={"#{@dom}-log-duration"}
           name="duration"
           label={gettext("How long")}
-          value={@form.values["duration"]}
-          placeholder={gettext("1h 30m, 1:30, 90 or 1.5h")}
-          class="input-sm"
-          autocomplete="off"
+          amount={@form.values["duration"]["amount"]}
+          unit={@form.values["duration"]["unit"]}
         />
-        <.select
-          :if={length(@form.people) > 1}
-          id={"#{@dom}-log-person"}
-          name="person"
-          label={gettext("Who")}
-          value={@form.values["person"]}
-          options={@form.people}
-          class="select-sm"
-        />
+        <%!-- Whose time: searched like every other person pick (the
+             assignee picker's search box), "Me" until someone is picked. --%>
+        <div :if={length(@form.people) > 1}>
+          <span class="label mb-2 block"><span class="font-semibold">{gettext("Who")}</span></span>
+          <input type="hidden" name="person" value={@form.values["person"]} />
+          <.search_picker
+            id={"#{@dom}-pick-logperson"}
+            dropdown_id={"#{@dom}-pick-logperson-list"}
+            search_event="pick_search"
+            pick_event="pick_pick"
+            chosen={person_label(@form)}
+            clear_event="unpick"
+            clear_label={gettext("Back to me")}
+            search_on_focus
+            close_on_pick
+            row_layout="stacked"
+            placeholder={gettext("Me — or search a person")}
+            class="input input-sm w-full"
+            searching_label={gettext("Searching…")}
+            more_label={gettext("Load more")}
+            loading_more_label={gettext("Loading…")}
+            no_matches_label={gettext("No matches")}
+          />
+        </div>
         <%!-- Searched, not listed: a project can hold any number of
-             tasks. Empty means the project itself. --%>
+             tasks. Empty means the project itself, where it keeps time
+             on itself (`project_time`). --%>
         <div>
           <span class="label mb-2 block"><span class="font-semibold">{gettext("Task")}</span></span>
           <input type="hidden" name="task" value={@form.values["task"]} />
@@ -2042,7 +2161,11 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             search_on_focus
             close_on_pick
             row_layout="stacked"
-            placeholder={gettext("The project itself — or search a task")}
+            placeholder={
+              if @form[:project_time?],
+                do: gettext("The project itself — or search a task"),
+                else: gettext("Search a task")
+            }
             class="input input-sm w-full"
             searching_label={gettext("Searching…")}
             more_label={gettext("Load more")}
@@ -2053,12 +2176,12 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         <.input
           id={"#{@dom}-log-note"}
           name="note"
-          label={gettext("Note (optional)")}
+          label={gettext("Note")}
           value={@form.values["note"]}
           placeholder={gettext("What was the time spent on?")}
           class="input-sm"
         />
-        <label class="label cursor-pointer justify-start gap-2">
+        <label :if={@form[:billable?]} class="label cursor-pointer justify-start gap-2">
           <input type="hidden" name="billable" value="false" />
           <input
             type="checkbox"
@@ -2086,6 +2209,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   attr(:entry, :map, required: true)
   attr(:error, :string, default: nil)
   attr(:dom, :string, required: true)
+  attr(:billable, :boolean, default: false)
 
   defp edit_modal(assigns) do
     ~H"""
@@ -2093,15 +2217,13 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       <:title>{gettext("Edit entry")}</:title>
       <form id={"#{@dom}-edit-form"} phx-submit="save_edit" class="flex flex-col gap-3 mt-2" novalidate>
         <p :if={@error} class="alert alert-error text-sm py-2" role="alert">{@error}</p>
-        <.input
+        <.duration_input
           id={"#{@dom}-edit-duration"}
           name="duration"
           label={gettext("How long")}
-          value={Format.duration(Decimal.to_float(@entry.amount))}
-          class="input-sm"
-          autocomplete="off"
+          minutes={Decimal.to_float(@entry.amount)}
         />
-        <label class="label cursor-pointer justify-start gap-2">
+        <label :if={@billable} class="label cursor-pointer justify-start gap-2">
           <input type="hidden" name="billable" value="false" />
           <input
             type="checkbox"
@@ -2188,13 +2310,13 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           <div>
             <dt class="opacity-60">{gettext("Human time")}</dt>
             <dd class="font-semibold">
-              {Format.duration(@report.totals.minutes)} ({Format.decimal_hours(@report.totals.minutes)} h)
+              {Format.duration(@report.totals.minutes)} ({Format.hours_shown(@report.totals.minutes)} h)
             </dd>
           </div>
           <div>
             <dt class="opacity-60">{gettext("Billable")}</dt>
             <dd class="font-semibold">
-              {Format.duration(@report.totals.billable_minutes)} ({Format.decimal_hours(@report.totals.billable_minutes)} h)
+              {Format.duration(@report.totals.billable_minutes)} ({Format.hours_shown(@report.totals.billable_minutes)} h)
             </dd>
           </div>
           <div :if={@report.totals.ai_minutes > 0}>
@@ -2292,7 +2414,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           <.table_default_row :for={{label, row} <- @rows}>
             <.table_default_cell>{label}</.table_default_cell>
             <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.minutes)}</.table_default_cell>
-            <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{Format.decimal_hours(row.minutes)}</.table_default_cell>
+            <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{Format.hours_shown(row.minutes)}</.table_default_cell>
             <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.billable_minutes)}</.table_default_cell>
             <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{row.entries}</.table_default_cell>
           </.table_default_row>

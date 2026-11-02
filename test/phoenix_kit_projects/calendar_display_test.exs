@@ -579,6 +579,158 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
     end
   end
 
+  describe "deadlines and planned times (item 30)" do
+    defp dl_item(attrs, parent \\ nil) do
+      a =
+        struct(
+          Assignment,
+          Map.merge(
+            %{
+              uuid: "a-#{System.unique_integer([:positive])}",
+              status: "todo",
+              parent_uuid: parent,
+              translations: %{},
+              task: struct(TaskSchema, %{title: "Order the sink", translations: %{}})
+            },
+            attrs
+          )
+        )
+
+      %{uuid: a.uuid, assignment: a, project: project(%{name: "P"}), parent_uuid: parent}
+    end
+
+    @span %{start: ~N[2026-06-10 08:00:00], end: ~N[2026-06-10 10:00:00]}
+
+    test "a deadline is a marker at its day and time, red once missed" do
+      item = dl_item(%{deadline: ~U[2026-06-11 13:30:00Z]})
+
+      {[bar, marker], meta} =
+        CalendarDisplay.task_events([{item, @span}], nil, "+2", now: ~N[2026-06-12 09:00:00])
+
+      assert bar.id == item.uuid
+      assert marker.id == "deadline:" <> item.uuid
+      assert marker.title == "Deadline: Order the sink"
+      # 13:30 UTC is 15:30 at +2.
+      assert marker.start == ~N[2026-06-11 15:30:00]
+      refute marker.all_day
+      assert marker.color == "bg-error"
+      assert meta[marker.id].late
+      assert meta[marker.id].assignment_uuid == item.uuid
+      assert CalendarDisplay.task_uuid(marker.id) == item.uuid
+    end
+
+    test "an upcoming deadline is outlined, a done task's is greyed" do
+      ahead = dl_item(%{deadline: ~U[2026-06-20 09:00:00Z]})
+      done = dl_item(%{status: "done", deadline: ~U[2026-06-01 09:00:00Z]})
+
+      {events, meta} =
+        CalendarDisplay.task_events([{ahead, @span}, {done, @span}], nil, "0",
+          now: ~N[2026-06-12 09:00:00]
+        )
+
+      ahead_m = Enum.find(events, &(&1.id == "deadline:" <> ahead.uuid))
+      done_m = Enum.find(events, &(&1.id == "deadline:" <> done.uuid))
+      assert ahead_m.class =~ "ring-error"
+      refute meta[ahead_m.id].late
+      assert done_m.class == "line-through"
+      refute meta[done_m.id].late
+    end
+
+    test "a subtask with a deadline and no dates has only its marker" do
+      sub = dl_item(%{deadline: ~U[2026-06-11 09:00:00Z]}, "parent-uuid")
+      refute CalendarDisplay.bar_item?(sub)
+
+      {[only], _} = CalendarDisplay.task_events([{sub, @span}], nil)
+      assert only.id == "deadline:" <> sub.uuid
+    end
+
+    test "a deadline at the end of a day stays on that day" do
+      item = dl_item(%{deadline: ~U[2026-06-11 23:59:00Z]})
+      {[_bar, marker], _} = CalendarDisplay.task_events([{item, @span}], nil)
+
+      assert NaiveDateTime.to_date(marker.start) == ~D[2026-06-11]
+      assert NaiveDateTime.to_date(marker.end) == ~D[2026-06-11]
+    end
+
+    test "a one-day task with planned times is a timed event at those hours" do
+      a =
+        struct(Assignment, %{
+          uuid: "t1",
+          start_time: ~T[09:00:00],
+          end_time: ~T[12:30:00],
+          translations: %{}
+        })
+
+      [e] = CalendarDisplay.planned_events(a, "Fit", {~D[2026-06-10], ~D[2026-06-10]}, :month)
+      refute e.all_day
+      assert {e.start, e.end} == {~N[2026-06-10 09:00:00], ~N[2026-06-10 12:30:00]}
+
+      # A start alone is an hour long.
+      [e] =
+        CalendarDisplay.planned_events(
+          %{a | end_time: nil},
+          "Fit",
+          {~D[2026-06-10], ~D[2026-06-10]},
+          :month
+        )
+
+      assert e.end == ~N[2026-06-10 10:00:00]
+    end
+
+    test "a longer task with times: one bar titled with them on a month, a block a day on a day view" do
+      a =
+        struct(Assignment, %{
+          uuid: "t2",
+          start_time: ~T[09:00:00],
+          end_time: ~T[17:00:00],
+          translations: %{}
+        })
+
+      days = {~D[2026-06-10], ~D[2026-06-12]}
+
+      [bar] = CalendarDisplay.planned_events(a, "Fit", days, :month)
+      assert bar.all_day
+      assert bar.title == "09:00–17:00 Fit"
+      assert bar.end == ~D[2026-06-13]
+
+      blocks = CalendarDisplay.planned_events(a, "Fit", days, :day)
+      assert Enum.map(blocks, & &1.id) == ["t2@2026-06-10", "t2@2026-06-11", "t2@2026-06-12"]
+      assert Enum.all?(blocks, &(NaiveDateTime.to_time(&1.start) == ~T[09:00:00]))
+      assert CalendarDisplay.task_uuid("t2@2026-06-11") == "t2"
+
+      # No times: the all-day bar as before.
+      [plain] =
+        CalendarDisplay.planned_events(%{a | start_time: nil, end_time: nil}, "Fit", days, :day)
+
+      assert plain.all_day and plain.id == "t2"
+    end
+
+    test "events_on/2 counts a timed event on its own day, all-day first" do
+      timed =
+        PhoenixLiveCalendar.event("timed", ~N[2026-06-10 09:00:00],
+          end: ~N[2026-06-10 10:00:00],
+          title: "b"
+        )
+
+      day =
+        PhoenixLiveCalendar.event("day", ~D[2026-06-10],
+          end: ~D[2026-06-11],
+          title: "z",
+          all_day: true
+        )
+
+      assert Enum.map(CalendarDisplay.events_on([timed, day], ~D[2026-06-10]), & &1.id) ==
+               ["day", "timed"]
+
+      assert CalendarDisplay.events_on([timed], ~D[2026-06-11]) == []
+    end
+
+    test "the calendar's hour labels follow how the site writes a time" do
+      assert CalendarDisplay.time_format() in [:h12, :h24]
+      assert CalendarDisplay.clock(~T[09:05:00]) =~ "9"
+    end
+  end
+
   describe "shared calendar primitives (both calendars consume these)" do
     test "events_on/2 keeps only spans covering the date, soonest-starting first" do
       mk = fn id, s, e -> PhoenixLiveCalendar.event(id, s, end: e, title: id, all_day: true) end
@@ -634,5 +786,11 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       assert CalendarDisplay.max_events() >= 1
       assert CalendarDisplay.max_multiday() >= CalendarDisplay.max_events()
     end
+  end
+
+  test "the Week/Day grid keeps its hour labels the height of their slots" do
+    # In the shorter scroll box a flex column squeezed the 3rem label rows,
+    # so the 08:00 slot sat beside the "20:00" label.
+    assert CalendarDisplay.time_grid_class() =~ "[&_.cal-time-gutter>.cal-time-slot]:shrink-0"
   end
 end

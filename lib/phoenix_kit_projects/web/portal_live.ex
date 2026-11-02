@@ -30,9 +30,11 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Utils.Routes
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Paths
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.AdminEditHelper
 
@@ -462,7 +464,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           <.file_upload
             upload={@uploads.screenshot}
             standalone={false}
-            label={gettext("Screenshots (optional)")}
+            label={gettext("Screenshots")}
             icon="hero-photo"
             accept_description={gettext("PNG, JPEG, WebP or GIF")}
             max_size_description={
@@ -563,6 +565,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           current_user={commenter(assigns)}
           enabled={@view.may_comment}
           show_title={false}
+          show_likes={false}
           rich_text={false}
           withhold_mention_titles
           project_attribution={@project_attribution}
@@ -692,12 +695,11 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
     [{"all", gettext("All"), length(view.issues)}]
     |> Kernel.++(
-      for {status, label} <- [
-            {"waiting", gettext("Waiting")},
-            {"todo", gettext("Open")},
-            {"in_progress", gettext("In progress")},
-            {"done", gettext("Done")}
-          ],
+      # The same names the issues' own badges carry (`AssignmentStatusBadge`):
+      # a filter called "Open" over rows marked "Can be started" read as two
+      # different states.
+      for status <- ~w(waiting todo in_progress done),
+          label = AssignmentStatusBadge.label(status),
           Map.has_key?(counts, status),
           do: {status, label, Map.fetch!(counts, status)}
     )
@@ -742,7 +744,8 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   end
 
   defp short_date(nil), do: ""
-  defp short_date(dt), do: Calendar.strftime(dt, "%-d %b %Y")
+  # Translated (strftime's %b is always English).
+  defp short_date(dt), do: L10n.format_date(dt)
 
   defp issue_path(slug, uuid), do: Routes.path("/portal/#{slug}/i/#{uuid}")
 

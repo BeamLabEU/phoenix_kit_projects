@@ -77,8 +77,38 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       assert html =~ "Create 3D model"
       assert html =~ "Unassigned"
       refute html =~ "None"
-      # On its own page the next step takes you to the project to run it.
-      assert html =~ "Ready to start"
+      # The status is a row of the details; no "Mark done" button, no "Add
+      # a description" link (the boss, 2026-11-02).
+      assert html =~ "Status"
+      refute html =~ "Add a description"
+      refute html =~ "Allow start"
+    end
+
+    test "draws the description as written and lists the task's own files", ctx do
+      {:ok, a} =
+        Projects.update_assignment_form(ctx.measure, %{
+          "description" => "Bring **the long tape**."
+        })
+
+      path = Path.join(System.tmp_dir!(), "pkp-view-#{System.unique_integer([:positive])}")
+      File.write!(path, "plan")
+      on_exit(fn -> File.rm(path) end)
+
+      {:ok, _} =
+        PhoenixKitProjects.Attachments.store_task_file(
+          a,
+          path,
+          [filename: "plan.txt", content_type: "text/plain", size_bytes: 4],
+          ctx.user.uuid
+        )
+
+      {:ok, view, html} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{a.uuid}")
+
+      assert html =~ "<strong>the long tape</strong>"
+      assert has_element?(view, "#task-view-files-#{a.uuid}", "plan.txt")
+      # Read-only: the view lists them, the edit popup removes them.
+      refute html =~ "remove_task_file"
     end
 
     test "a task of another project is not found", ctx do
@@ -121,13 +151,16 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       assert s["back_to"] == ctx.measure.uuid
     end
 
-    test "the next step is asked of the page, and the view steps aside", ctx do
+    test "a status picked in the details is asked of the page, and the view steps aside", ctx do
       {:ok, view, _html} =
         live_isolated(ctx.conn, AssignmentViewLive,
           session: emit_session(ctx, ctx.measure, %{"step_intents" => "1"})
         )
 
-      assert has_element?(view, ~s(button[phx-click="step"][phx-value-step="ask_ready"]))
+      assert has_element?(
+               view,
+               ~s(#view-status-#{ctx.measure.uuid}-todo[phx-click="step"][phx-value-step="ask_ready"])
+             )
 
       render_click(view, "step", %{"step" => "ask_ready"})
 
@@ -136,15 +169,12 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       assert_receive {:projects, :closed, %{frame_ref: 7}}
     end
 
-    test "in a host that does not run the step, it is a link to the task on its project page",
-         ctx do
+    test "in a host that does not run the step, the status is plain", ctx do
       {:ok, view, _html} =
         live_isolated(ctx.conn, AssignmentViewLive, session: emit_session(ctx, ctx.measure))
 
       refute has_element?(view, ~s(button[phx-click="step"]))
-
-      href = PhoenixKitProjects.Paths.task(ctx.project, ctx.measure)
-      assert has_element?(view, ~s(a[href="#{href}"]), "Ready to start")
+      refute has_element?(view, "#view-status-pop-#{ctx.measure.uuid}")
 
       # A forged click asks nobody: no intent nobody would answer, and the
       # view stays open.
@@ -192,7 +222,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
         )
 
       assert html =~ "Take kitchen measurements"
-      refute html =~ "Ready to start"
+      refute html =~ "Allow start"
       refute has_element?(view, ~s(button[phx-click="edit"]))
 
       render_click(view, "edit", %{})
@@ -298,7 +328,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       assert html =~ "step_intents"
 
       send(view.pid, {:projects, :intent, %{event: "ask_ready", uuid: ctx.measure.uuid}})
-      assert render(view) =~ "ready to start?"
+      assert render(view) =~ "Allow “"
     end
 
     test "a step the page does not own is ignored", ctx do

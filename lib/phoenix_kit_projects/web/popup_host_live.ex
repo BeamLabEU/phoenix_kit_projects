@@ -49,6 +49,11 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     for the drawer.
   - `"modal_box_class"` (optional) — extra classes on every frame's
     `modal-box` (a host that wants a specific width or padding).
+  - `"url_param"` (optional, off by default) — the name of the parameter
+    of the HOST page's address that carries the open task (`"task"`,
+    `"pk_task"`, …: letters, digits, `_` and `-`, a letter first, at most
+    32). Absent, nothing is written to the address and nothing is read
+    from it. See "A task in the page's address".
 
   ## Example: dashboard root view (`OverviewLive`)
 
@@ -88,20 +93,41 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   Whenever the embedded LV (or anything it transitively opens) emits
   `:opened`, this LV renders the target inside a modal on the host's
-  existing page. No URL change. No DOM replacement.
+  existing page. No DOM replacement.
+
+  ## A task in the page's address
+
+  Only when the host asks for it with `"url_param"` (Max, 2026-10-31:
+  "by default, it's off, but they can turn it on, and they can even change
+  what … goes into the URL"); the module's own project page asks for
+  `"task"`. A task's view or edit form open in a frame puts the task in
+  the PAGE's URL — `?task=ACME-12` (the host's name for the parameter),
+  the host's own path and other parameters kept —
+  so a reload or a shared link opens it again, and the browser's Back
+  closes the frame instead of leaving the page (the boss, 2026-10-30, on
+  an order page: "he refreshed the page, and the task is closed"). The
+  `PkpDrawerUrl` hook owns the address bar: opening pushes one history
+  entry, swapping to another task replaces it, closing goes back over it
+  (or drops the parameter when the page was loaded with it). A `?task=`
+  in the address when the host mounts opens that task (`"pkp_url_task"`),
+  read by the hook since an embedded LiveView never sees the host's URL.
+  Only that one parameter is ever written.
   """
 
   use Phoenix.LiveView, layout: false
 
   import PhoenixKitProjects.Web.Components.PopupHost
 
+  alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.Assignment
+  alias PhoenixKitProjects.Web.{AssignmentFormLive, AssignmentViewLive, ProjectShowLive}
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
 
   @default_wrapper_class "flex flex-col w-full"
-  @default_root_wrapper_class "flex flex-col w-full px-4 py-6 gap-6"
   # Default cap on simultaneously-stacked modal frames. Hosts can
   # override via `session["max_stack_depth"]`; the value is clamped to
   # `1..@absolute_max_stack_depth` so a misconfigured host can't
@@ -138,6 +164,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     modal_box_class = Map.get(session, "modal_box_class")
     placement = decode_placement(Map.get(session, "placement"))
     max_width = decode_max_width(Map.get(session, "max_width"), placement)
+    url_param = decode_url_param(Map.get(session, "url_param"))
 
     if connected?(socket) do
       ProjectsPubSub.subscribe(topic)
@@ -157,10 +184,19 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
        modal_box_class: modal_box_class,
        placement: placement,
        max_width: max_width,
+       url_param: url_param,
        modal_stack: [],
        root_view: root_view
      )}
   end
+
+  # The host's name for the address parameter, or nil (off). A plain name,
+  # so it can sit in a query string and a data attribute as it is.
+  defp decode_url_param(name) when is_binary(name) do
+    if Regex.match?(~r/\A[A-Za-z][A-Za-z0-9_-]{0,31}\z/, name), do: name
+  end
+
+  defp decode_url_param(_), do: nil
 
   defp decode_placement("end"), do: :end
   defp decode_placement(_), do: :center
@@ -202,7 +238,10 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
         session
         |> Map.put("mode", "emit")
         |> Map.put("pubsub_topic", topic)
-        |> Map.put_new("wrapper_class", @default_root_wrapper_class)
+        # No wrapper forced on the root view: it sits in the host's own
+        # page, which already frames it, and each view's own default is
+        # the tight one. The `py-6 gap-6` this used to put here was the
+        # gap the boss saw above a project on the order page (2026-10-30).
         |> maybe_put_locale_key(locale)
         |> maybe_put_current_user_uuid(current_user_uuid)
 
@@ -467,6 +506,25 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   end
 
   @impl true
+  # A frame's ✕ while its form holds unsaved changes asks first, in this
+  # host's own dialog (`PopupHost` puts it behind `ConfirmAction`); only
+  # the close may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(close_top_modal))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {%{event: "close_top_modal" = event, params: params}, socket} ->
+        handle_event(event, params, socket)
+
+      {_none, socket} ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_event("close_top_modal", params, socket) do
     # Backdrop click + ESC keypress both fire `close_top_modal`. Each
     # element passes `phx-value-frame-ref={frame.frame_ref}` so the
@@ -495,7 +553,86 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     end
   end
 
+  # The address bar's `?task=` (`PkpDrawerUrl`): "" — Back went over the
+  # entry the frame pushed, so the task's frames close (and whatever was
+  # opened over them); a ref — a reload or a link: that task's view opens,
+  # unless it is already the one on top.
+  # Off (no `"url_param"`): the address is not this host's to read.
+  def handle_event("pkp_url_task", _params, %{assigns: %{url_param: nil}} = socket),
+    do: {:noreply, socket}
+
+  def handle_event("pkp_url_task", %{"task" => ""}, socket) do
+    {:noreply, close_task_frames(socket)}
+  end
+
+  # The address may name the task another way than the frame does (its
+  # uuid, a former project key): the TASK is compared, not the spelling, so
+  # a link the page already opened is not opened a second time on top.
+  def handle_event("pkp_url_task", %{"task" => ref}, socket) when is_binary(ref) do
+    stack = socket.assigns.modal_stack
+
+    with false <- top_task_ref(stack) == ref,
+         true <- length(stack) < socket.assigns.max_stack_depth,
+         %Assignment{} = a <- url_task(ref),
+         false <- top_task_ref(stack) == (Assignment.row_ref(a) || a.uuid) do
+      {:noreply, push_frame(socket, AssignmentViewLive, task_view(socket, a))}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # A ref from the address bar, as any link names a task: `ACME-12` or a
+  # uuid. Who may see it is the view's own check when it mounts.
+  defp url_task(ref) when byte_size(ref) <= 80, do: Projects.get_assignment(ref)
+  defp url_task(_ref), do: nil
+
+  # The session the page's own rows open a view with — under a project
+  # page that runs the view's next steps, its `step_intents`.
+  defp task_view(socket, %Assignment{} = a) do
+    case socket.assigns.root_view do
+      %{lv: ProjectShowLive} ->
+        ProjectShowLive.view_session(%{project_uuid: a.project_uuid, uuid: a.uuid})
+
+      _ ->
+        %{"project_id" => a.project_uuid, "id" => a.uuid}
+    end
+  end
+
+  # Every frame from the lowest one showing a task up.
+  defp close_task_frames(socket) do
+    stack = socket.assigns.modal_stack
+
+    case Enum.find_index(stack, &is_binary(&1[:task_ref])) do
+      nil -> socket
+      i -> assign(socket, modal_stack: Enum.take(stack, i))
+    end
+  end
+
+  # The ref the address bar shows: the topmost frame showing a task.
+  defp top_task_ref(stack) do
+    stack |> Enum.reverse() |> Enum.find_value(& &1[:task_ref])
+  end
+
+  # A task's view, or its edit form: the task's `KEY-number` (its uuid
+  # when it has none). Anything else — a new task, a project form — none.
+  defp frame_task_ref(AssignmentFormLive, %{"live_action" => "edit", "id" => id}),
+    do: task_ref_of(id)
+
+  defp frame_task_ref(AssignmentViewLive, %{"id" => id}), do: task_ref_of(id)
+  defp frame_task_ref(_lv, _session), do: nil
+
+  defp task_ref_of(id) when is_binary(id) do
+    case Projects.get_assignment(id) do
+      %Assignment{} = a -> Assignment.row_ref(a) || a.uuid
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp task_ref_of(_id), do: nil
 
   # Tolerant decode — `phx-value-frame-ref` arrives as a string from the
   # DOM. Garbage values (adversarial or pre-stamp) degrade to nil so the
@@ -516,7 +653,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # `mx-auto max-w-xl` would otherwise stack a second 576px cap on top,
   # leaving most of the modal empty. Stamp a full-width wrapper for
   # children unless the host explicitly passed one.
-  @child_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
+  # Compact (the boss, 2026-10-31): the box's own padding is the margin;
+  # the wrapper adds none above the header.
+  @child_wrapper_class "flex flex-col w-full px-1 pb-1 gap-3"
 
   defp push_frame(socket, lv, child_session) do
     frame_ref = System.unique_integer([:positive, :monotonic])
@@ -534,7 +673,8 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       frame_ref: frame_ref,
       lv: lv,
       session: stamped_session,
-      id: "embed-#{frame_ref}-#{lv_slug(lv)}"
+      id: "embed-#{frame_ref}-#{lv_slug(lv)}",
+      task_ref: frame_task_ref(lv, child_session)
     }
 
     assign(socket, modal_stack: socket.assigns.modal_stack ++ [frame])
@@ -594,6 +734,18 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
         )}
       </:frame>
     </.popup_host>
+    <ConfirmAction.confirm_action_modal confirm={assigns[:confirm_action]} />
+    <%!-- The open task in the page's address (`PkpDrawerUrl`), only
+         when the host named the parameter. --%>
+    <div
+      :if={@url_param}
+      id={"pkp-drawer-url-#{topic_suffix(@host_topic)}"}
+      phx-hook="PkpDrawerUrl"
+      data-param={@url_param}
+      data-task={top_task_ref(@modal_stack) || ""}
+      hidden
+    >
+    </div>
     """
   end
 end

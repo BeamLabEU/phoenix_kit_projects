@@ -197,14 +197,22 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
                Projects.get_assignment(a.uuid)
     end
 
-    test "the row menu's Done step reads Mark done", %{conn: conn} do
+    # The row menu names no next step any more: "Change status ›" opens a
+    # side list of the statuses inside the menu (the boss, 2026-10-30 and
+    # 10-31 — no popup); one press runs that status.
+    test "the row menu changes the status from its side list", %{conn: conn} do
       project = fixture_project(%{"start_mode" => "immediate"})
       a = task(project, "Ready one", %{"status" => "todo"})
 
       {:ok, view, _html} = show(conn, project)
       menu = view |> element("#assignment-menu-#{a.uuid}") |> render()
-      assert menu =~ "Mark done"
-      assert menu =~ "phx-disable-with"
+      assert menu =~ "Change status"
+      refute menu =~ "Mark done"
+      assert menu =~ ~s(id="status-menu-#{a.uuid}-todo")
+      assert menu =~ ~r/id="status-menu-#{a.uuid}-todo"[^>]*aria-checked="true"/s
+
+      view |> element("#status-menu-#{a.uuid}-in_progress") |> render_click()
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
     end
   end
 
@@ -298,21 +306,23 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
 
     test "a drop the step refuses goes back, said in red", %{conn: conn} do
       project = fixture_project(%{"start_mode" => "immediate"})
+      # A sub-project that follows its tasks is only released or held back
+      # by hand; done is its tasks' doing.
       {:ok, %{assignment: row}} = Projects.create_subproject(project.uuid, %{"name" => "Inner"})
-      row = row |> Ecto.Changeset.change(status: "waiting") |> Repo.update!()
+      row = row |> Ecto.Changeset.change(status: "todo") |> Repo.update!()
 
       {:ok, view, _html} = show(conn, project)
 
       html =
         render_hook(view, "board_move", %{
           "moved_id" => row.uuid,
-          "status" => "todo",
+          "status" => "done",
           "ordered_ids" => [row.uuid]
         })
 
       assert_push_event(view, "sortable:flash", %{status: "error"})
       assert html =~ "This task cannot move there."
-      assert Projects.get_assignment(row.uuid).status == "waiting"
+      assert Projects.get_assignment(row.uuid).status == "todo"
       # The client moved the card already and nothing on the server
       # changed, so no patch would move it back: the hook is told to.
       uuid = row.uuid
@@ -412,15 +422,24 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
              )
     end
 
-    test "a path on this site opens in the same tab, as stored; no label says Open link",
+    # A new tab for a site path too (the boss, 2026-10-30): following the
+    # link must not take the project page away. An outlined button with
+    # the external-link icon, so it reads as one.
+    test "a path on this site opens in a new tab too, as stored; no label says Open link",
          %{conn: conn} do
       project = fixture_project()
       path = "/admin/andi/sub-orders/#{Ecto.UUID.generate()}"
       {:ok, project} = Projects.update_project(project, %{"external_url" => path})
 
       {:ok, view, _html} = show(conn, project)
-      assert has_element?(view, ~s(a[data-project-link][href="#{path}"]), "Open link")
-      refute has_element?(view, ~s(a[data-project-link][target]))
+
+      assert has_element?(
+               view,
+               ~s(a.btn-outline[data-project-link][href="#{path}"][target="_blank"][rel="noopener noreferrer"]),
+               "Open link"
+             )
+
+      assert has_element?(view, "a[data-project-link] .hero-arrow-top-right-on-square")
     end
 
     test "no address, no button", %{conn: conn} do

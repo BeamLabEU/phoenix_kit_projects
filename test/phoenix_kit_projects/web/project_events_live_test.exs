@@ -108,6 +108,32 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
     assert html =~ "09:30 Standup"
   end
 
+  test "the times are the site's clock, typed, and their parts are saved",
+       %{conn: conn, project: project} do
+    {:ok, view, _} = mount_tab(conn, project)
+    html = render_click(view, "open_new_event", %{})
+
+    # Not the browser's time field (it drew the device's 12/24-hour clock).
+    refute html =~ ~s(type="time")
+    assert has_element?(view, "input[name='start_time[time]']")
+    assert has_element?(view, "input[name='end_time[time]']")
+
+    render_submit(view, "create_event", %{
+      "title" => "Fitting",
+      "date" => "2026-08-21",
+      "end_date" => "",
+      "all_day" => "false",
+      "start_time" => %{"time" => "14:15"},
+      "end_time" => %{"time" => "15"},
+      "location" => "",
+      "description" => ""
+    })
+
+    assert [event] = ProjectEvents.list_for_project(project.uuid)
+    assert event.starts_at == elem(DateTime.from_iso8601("2026-08-21T14:15:00Z"), 1)
+    assert event.ends_at == elem(DateTime.from_iso8601("2026-08-21T15:00:00Z"), 1)
+  end
+
   test "a backwards range is refused with a flash, nothing written",
        %{conn: conn, project: project} do
     {:ok, view, _} = mount_tab(conn, project)

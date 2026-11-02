@@ -31,8 +31,8 @@ defmodule PhoenixKitProjects.Web.TemplateFormLiveTest do
 
       html =
         view
-        |> form("#template-form", project: %{name: "", description: "x"})
-        |> render_change()
+        |> form("#template-form", project: %{name: ""})
+        |> render_change(%{"project" => %{"description" => "x"}})
 
       assert html =~ "can&#39;t be blank" or html =~ "can't be blank"
     end
@@ -44,8 +44,8 @@ defmodule PhoenixKitProjects.Web.TemplateFormLiveTest do
 
       {:error, {:live_redirect, %{to: redirect_to}}} =
         view
-        |> form("#template-form", project: %{name: title, description: "d"})
-        |> render_submit()
+        |> form("#template-form", project: %{name: title})
+        |> render_submit(%{"project" => %{"description" => "d"}})
 
       assert redirect_to =~ "/templates/"
 
@@ -74,8 +74,8 @@ defmodule PhoenixKitProjects.Web.TemplateFormLiveTest do
 
       {:error, {:live_redirect, _}} =
         view
-        |> form("#template-form", project: %{name: new_name, description: "d2"})
-        |> render_submit()
+        |> form("#template-form", project: %{name: new_name})
+        |> render_submit(%{"project" => %{"description" => "d2"}})
 
       assert_activity_logged("projects.template_updated",
         actor_uuid: actor_uuid,
@@ -145,9 +145,9 @@ defmodule PhoenixKitProjects.Web.TemplateFormLiveTest do
       {:error, {:live_redirect, _}} =
         view
         |> form("#template-form",
-          project: %{name: template.name <> " v2", description: "Updated"}
+          project: %{name: template.name <> " v2"}
         )
-        |> render_submit()
+        |> render_submit(%{"project" => %{"description" => "Updated"}})
 
       reloaded = PhoenixKitProjects.Projects.get_project(template.uuid)
       assert reloaded.translations["et"]["name"] == "Mall"

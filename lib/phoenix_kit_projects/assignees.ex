@@ -29,8 +29,10 @@ defmodule PhoenixKitProjects.Assignees do
 
   import Ecto.Query
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
-  alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.AssigneeSet
+  alias PhoenixKitProjects.Schemas.{Assignment, AssignmentAssignee, Project}
   # SHADOW schemas + the People doorway (staff-optional seam) — the
   # direct Ecto queries below run over projects' own read-only mappings
   # of the core-owned staff tables; the staff PACKAGE is not required.
@@ -107,20 +109,26 @@ defmodule PhoenixKitProjects.Assignees do
   @spec match(Assignment.t(), scope()) ::
           :direct | {:team, String.t()} | {:department, String.t()} | nil
   def match(%Assignment{} = a, scope) do
-    cond do
-      a.assigned_person_uuid && a.assigned_person_uuid == scope.person_uuid ->
-        :direct
+    keys = AssigneeSet.keys(a)
 
-      a.assigned_team_uuid && Map.has_key?(scope.team_names, a.assigned_team_uuid) ->
-        {:team, Map.fetch!(scope.team_names, a.assigned_team_uuid)}
+    # The closest reach wins when a task names someone several ways (V29):
+    # the person themselves, then a team of theirs, then a department.
+    Enum.find_value(keys, fn
+      {"person", u} -> if u == scope.person_uuid, do: :direct
+      _ -> nil
+    end) ||
+      Enum.find_value(keys, fn
+        {"team", u} -> if Map.has_key?(scope.team_names, u), do: {:team, scope.team_names[u]}
+        _ -> nil
+      end) ||
+      Enum.find_value(keys, fn
+        {"department", u} ->
+          if Map.has_key?(scope.department_names, u),
+            do: {:department, scope.department_names[u]}
 
-      a.assigned_department_uuid &&
-          Map.has_key?(scope.department_names, a.assigned_department_uuid) ->
-        {:department, Map.fetch!(scope.department_names, a.assigned_department_uuid)}
-
-      true ->
-        nil
-    end
+        _ ->
+          nil
+      end)
   end
 
   @typedoc "Who an assignee is, as faces: up to `max` people and how many more."
@@ -139,16 +147,24 @@ defmodule PhoenixKitProjects.Assignees do
   """
   @spec faces([Assignment.t()], pos_integer()) :: %{optional(String.t()) => faces()}
   def faces(assignments, max \\ 4) do
-    persons = assignments |> Enum.map(& &1.assigned_person_uuid) |> Enum.reject(&is_nil/1)
-    teams = assignments |> Enum.map(& &1.assigned_team_uuid) |> Enum.reject(&is_nil/1)
-    depts = assignments |> Enum.map(& &1.assigned_department_uuid) |> Enum.reject(&is_nil/1)
+    assignments = AssigneeSet.ensure_loaded(assignments)
+    keys_of = Map.new(assignments, &{&1.uuid, People.assignee_keys(&1)})
+    all = keys_of |> Map.values() |> List.flatten()
 
-    by_person = people_by(:person, persons)
-    by_team = people_by(:team, teams)
-    by_dept = people_by(:department, depts)
+    by_person = people_by(:person, AssigneeSet.of_kind(all, "person") |> Enum.uniq())
+    by_team = people_by(:team, AssigneeSet.of_kind(all, "team") |> Enum.uniq())
+    by_dept = people_by(:department, AssigneeSet.of_kind(all, "department") |> Enum.uniq())
+    lookup = %{"person" => by_person, "team" => by_team, "department" => by_dept}
 
     Enum.reduce(assignments, %{}, fn a, acc ->
-      case assignee_people(a, by_person, by_team, by_dept) do
+      # Everyone on the task once, in chip order (V29: several assignees).
+      people =
+        keys_of
+        |> Map.get(a.uuid, [])
+        |> Enum.flat_map(fn {kind, u} -> lookup |> Map.fetch!(kind) |> Map.get(u, []) end)
+        |> Enum.uniq_by(&face_id/1)
+
+      case people do
         [] ->
           acc
 
@@ -163,16 +179,8 @@ defmodule PhoenixKitProjects.Assignees do
       %{}
   end
 
-  defp assignee_people(%{assigned_person_uuid: u}, by_person, _, _) when is_binary(u),
-    do: Map.get(by_person, u, [])
-
-  defp assignee_people(%{assigned_team_uuid: u}, _, by_team, _) when is_binary(u),
-    do: Map.get(by_team, u, [])
-
-  defp assignee_people(%{assigned_department_uuid: u}, _, _, by_dept) when is_binary(u),
-    do: Map.get(by_dept, u, [])
-
-  defp assignee_people(_, _, _, _), do: []
+  defp face_id(%{uuid: uuid}), do: uuid
+  defp face_id(face), do: face
 
   defp people_by(_kind, []), do: %{}
 
@@ -226,17 +234,14 @@ defmodule PhoenixKitProjects.Assignees do
     Enum.group_by(rows, &elem(&1, 0), fn {_key, p, u} -> face(p, u) end)
   end
 
-  defp face(%Person{name: name}, user),
-    do: %{name: name || (user && user.email) || "?", user: user}
+  defp face(%Person{uuid: uuid, name: name}, user),
+    do: %{uuid: uuid, name: name || (user && user.email) || "?", user: user}
 
   defp repo, do: PhoenixKit.RepoHelper.repo()
 
   @doc "Whether the assignment has no assignee at all (person/team/department)."
   @spec unassigned?(Assignment.t()) :: boolean()
-  def unassigned?(%Assignment{} = a) do
-    is_nil(a.assigned_person_uuid) and is_nil(a.assigned_team_uuid) and
-      is_nil(a.assigned_department_uuid)
-  end
+  def unassigned?(%Assignment{} = a), do: AssigneeSet.empty?(a)
 
   @doc """
   Searches people for the assignee picker (core `<.search_picker>` contract):
@@ -300,20 +305,7 @@ defmodule PhoenixKitProjects.Assignees do
 
     {page, rest} = Enum.split(rows, limit)
 
-    picker_rows =
-      Enum.map(page, fn r ->
-        label = r.name || r.email || "?"
-
-        %{
-          kind: "person",
-          uuid: r.uuid,
-          label: label,
-          sublabel: if(r.name && r.email, do: r.email),
-          icon: "hero-user"
-        }
-      end)
-
-    {picker_rows, rest != []}
+    {page |> Enum.map(&person_row/1) |> with_places(nil), rest != []}
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Assignees] people search failed: #{Exception.message(e)}")
@@ -363,6 +355,7 @@ defmodule PhoenixKitProjects.Assignees do
       end)
       |> repo().all()
       |> Enum.map(&person_row/1)
+      |> with_places(lang)
 
     teams =
       from(t in Team, order_by: [asc: t.name], limit: ^(limit + 1), preload: [:department])
@@ -420,6 +413,257 @@ defmodule PhoenixKitProjects.Assignees do
       {[], false}
   end
 
+  # ── Paged lists for the several-assignee picker ─────────────────────
+
+  # How many of a matched team's or department's people the pickers list
+  # under it.
+  @members_per_group 10
+
+  @typedoc """
+  Where a paged list stopped: the phase it is in (`"team"`,
+  `"department"`, `"person"`, `"user"`) and the sort key and uuid of the
+  last row given. `nil` is the start.
+  """
+  @type cursor :: {String.t(), String.t(), String.t()} | nil
+
+  @doc """
+  One page of the picker's lists (the boss, 2026-10-31: no "Load more"
+  every five people): `{:browse, kind}` lists one kind, name-sorted
+  (`"person"` then also accounts with no staff record yet, as `"user"`
+  rows); `{:search, text}` lists matching teams, then departments — each
+  followed by its people, labelled with where they come from — then
+  matching people, then matching accounts. Keyset paging on the lowercased
+  name and the uuid: a row added or renamed meanwhile never shifts a page.
+
+  Returns `{rows, next_cursor}`; `next_cursor` is nil at the end. Each row
+  has `:id` (unique in the list — a person under two groups is two rows)
+  besides the picker row's fields. `{[], nil}` on a failed read.
+  """
+  @spec page(
+          {:browse, String.t()} | {:search, String.t()},
+          cursor(),
+          pos_integer(),
+          String.t() | nil
+        ) :: {[map()], cursor()}
+  def page(mode, cursor, limit \\ 20, lang \\ nil) do
+    limit = limit |> max(1) |> min(100)
+    {phases, pattern, members?} = page_plan(mode)
+
+    phases =
+      case cursor do
+        {phase, _k, _u} -> Enum.drop_while(phases, &(&1 != phase))
+        nil -> phases
+      end
+
+    collect(phases, cursor, pattern, members?, limit, lang, [])
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] picker page failed: #{Exception.message(e)}")
+      {[], nil}
+  end
+
+  defp page_plan({:browse, "person"}), do: {~w(person user), nil, false}
+  defp page_plan({:browse, kind}) when kind in ~w(team department), do: {[kind], nil, false}
+  defp page_plan({:search, text}), do: {~w(team department person user), like_pattern(text), true}
+
+  defp collect([], _cursor, _pattern, _members?, _left, _lang, acc), do: {acc, nil}
+
+  defp collect([phase | rest], cursor, pattern, members?, left, lang, acc) do
+    after_key =
+      case cursor do
+        {^phase, k, u} -> {k, u}
+        _ -> nil
+      end
+
+    units = phase_units(phase, pattern, after_key, left + 1, lang)
+    {taken, more} = Enum.split(units, left)
+    rows = unit_rows(phase, taken, members?, lang)
+    acc = acc ++ rows
+
+    cond do
+      more != [] ->
+        {_row, k, u} = List.last(taken)
+        {acc, {phase, k, u}}
+
+      length(taken) < left ->
+        collect(rest, nil, pattern, members?, left - length(taken), lang, acc)
+
+      # Exactly filled: the next phase may still hold rows.
+      rest != [] ->
+        {_row, k, u} = List.last(taken)
+        {acc, {phase, k, u}}
+
+      true ->
+        {acc, nil}
+    end
+  end
+
+  # Up to `n` rows of one phase after `after_key`, each `{row, key, uuid}`.
+  defp phase_units("team", pattern, after_key, n, lang) do
+    from(t in Team, preload: [:department])
+    |> name_like(pattern)
+    |> keyset(
+      after_key,
+      &dynamic(
+        [t],
+        fragment(
+          "(lower(coalesce(?, '')), ?) > (?, ?)",
+          t.name,
+          t.uuid,
+          ^elem(&1, 0),
+          type(^elem(&1, 1), Ecto.UUID)
+        )
+      )
+    )
+    |> order_by([t], asc: fragment("lower(coalesce(?, ''))", t.name), asc: t.uuid)
+    |> limit(^n)
+    |> select([t], {t, fragment("lower(coalesce(?, ''))", t.name)})
+    |> repo().all()
+    |> Enum.map(fn {t, k} -> {team_row(t, lang), k, t.uuid} end)
+  end
+
+  defp phase_units("department", pattern, after_key, n, lang) do
+    from(d in Department)
+    |> name_like(pattern)
+    |> keyset(
+      after_key,
+      &dynamic(
+        [d],
+        fragment(
+          "(lower(coalesce(?, '')), ?) > (?, ?)",
+          d.name,
+          d.uuid,
+          ^elem(&1, 0),
+          type(^elem(&1, 1), Ecto.UUID)
+        )
+      )
+    )
+    |> order_by([d], asc: fragment("lower(coalesce(?, ''))", d.name), asc: d.uuid)
+    |> limit(^n)
+    |> select([d], {d, fragment("lower(coalesce(?, ''))", d.name)})
+    |> repo().all()
+    |> Enum.map(fn {d, k} -> {department_row(d, lang), k, d.uuid} end)
+  end
+
+  defp phase_units("person", pattern, after_key, n, lang) do
+    rows =
+      from(p in Person,
+        left_join: u in assoc(p, :user),
+        where: p.status != "trashed",
+        order_by: [asc: fragment("lower(coalesce(?, ?, ''))", p.name, u.email), asc: p.uuid],
+        limit: ^n,
+        select:
+          {%{uuid: p.uuid, name: p.name, email: u.email},
+           fragment("lower(coalesce(?, ?, ''))", p.name, u.email)}
+      )
+      |> then(fn q ->
+        if pattern,
+          do: where(q, [p, u], ilike(p.name, ^pattern) or ilike(u.email, ^pattern)),
+          else: q
+      end)
+      |> keyset(
+        after_key,
+        &dynamic(
+          [p, u],
+          fragment(
+            "(lower(coalesce(?, ?, '')), ?) > (?, ?)",
+            p.name,
+            u.email,
+            p.uuid,
+            ^elem(&1, 0),
+            type(^elem(&1, 1), Ecto.UUID)
+          )
+        )
+      )
+      |> repo().all()
+
+    placed = rows |> Enum.map(fn {r, _k} -> person_row(r) end) |> with_places(lang)
+
+    Enum.zip_with(rows, placed, fn {r, k}, row -> {row, k, r.uuid} end)
+  end
+
+  defp phase_units("user", pattern, after_key, n, _lang) do
+    from(u in User,
+      as: :user,
+      where: u.is_active == true and not coalesce(u.api_only, false),
+      where: not exists(from(p in Person, where: p.user_uuid == parent_as(:user).uuid)),
+      order_by: [
+        asc:
+          fragment(
+            "lower(coalesce(nullif(trim(concat_ws(' ', ?, ?)), ''), ?, ''))",
+            u.first_name,
+            u.last_name,
+            u.email
+          ),
+        asc: u.uuid
+      ],
+      limit: ^n,
+      select:
+        {u,
+         fragment(
+           "lower(coalesce(nullif(trim(concat_ws(' ', ?, ?)), ''), ?, ''))",
+           u.first_name,
+           u.last_name,
+           u.email
+         )}
+    )
+    |> then(fn q ->
+      if pattern,
+        do:
+          where(
+            q,
+            [u],
+            ilike(u.email, ^pattern) or ilike(u.first_name, ^pattern) or
+              ilike(u.last_name, ^pattern)
+          ),
+        else: q
+    end)
+    |> keyset(after_key, fn {k, id} ->
+      dynamic(
+        [u],
+        fragment(
+          "(lower(coalesce(nullif(trim(concat_ws(' ', ?, ?)), ''), ?, '')), ?) > (?, ?)",
+          u.first_name,
+          u.last_name,
+          u.email,
+          u.uuid,
+          ^k,
+          type(^id, Ecto.UUID)
+        )
+      )
+    end)
+    |> repo().all()
+    |> Enum.map(fn {u, k} -> {user_row(u), k, u.uuid} end)
+  end
+
+  defp keyset(query, nil, _cond), do: query
+  defp keyset(query, after_key, cond), do: where(query, ^cond.(after_key))
+
+  # A page's rows: each unit as one row, a matched group followed by its
+  # people. Ids are unique in the list (`group-kind-uuid`, a member's under
+  # its group's).
+  defp unit_rows(phase, units, members?, lang) when phase in ~w(team department) do
+    groups = Enum.map(units, &elem(&1, 0))
+
+    by_group =
+      if members?,
+        do: members_by(String.to_existing_atom(phase), Enum.map(groups, & &1.uuid), lang),
+        else: %{}
+
+    Enum.flat_map(groups, fn g ->
+      members =
+        by_group
+        |> Map.get(g.uuid, [])
+        |> Enum.take(@members_per_group)
+        |> Enum.map(&Map.put(&1, :id, "#{g.kind}-#{g.uuid}-person-#{&1.uuid}"))
+
+      [Map.put(g, :id, "#{g.kind}-#{g.uuid}") | members]
+    end)
+  end
+
+  defp unit_rows(_phase, units, _members?, _lang),
+    do: Enum.map(units, fn {row, _k, _u} -> Map.put(row, :id, "#{row.kind}-#{row.uuid}") end)
+
   @doc """
   One assignee as the picker shows it once chosen: its picker row plus its
   faces (`faces/2`), or nil for an unknown uuid, nothing chosen, or a failed
@@ -434,8 +678,9 @@ defmodule PhoenixKitProjects.Assignees do
     # the query (`Ecto.Query.CastError`) and take the form down with it.
     with {:ok, uuid} <- Ecto.UUID.cast(uuid),
          row when is_map(row) <- row_for(kind, uuid, lang) do
-      probe = struct(Assignment, [{:uuid, "chosen"}, {assignee_field(kind), uuid}])
-      Map.put(row, :faces, Map.get(faces([probe], 5), "chosen"))
+      # A stand-in task holding just this one assignee.
+      probe = %Assignment{uuid: uuid, assignee_keys: [{kind, uuid}]}
+      Map.put(row, :faces, Map.get(faces([probe], 5), uuid))
     else
       _ -> nil
     end
@@ -466,18 +711,193 @@ defmodule PhoenixKitProjects.Assignees do
 
   def recent_for_project(_project_uuid, _limit, _lang), do: []
 
-  defp in_project(nil), do: dynamic(true)
-  defp in_project(uuid), do: dynamic([a], a.project_uuid == ^uuid)
+  # ── The viewer's own recent picks ───────────────────────────────────
+  #
+  # The boss, 2026-10-30: he picked a person, removed them again, and had to
+  # search for them anew — "Recent" knew only whom tasks had been saved to.
+  # Every pick the viewer makes in an assignee picker is remembered on their
+  # account (core `custom_fields`, one internal key, merged — never a
+  # whole-map replace), newest first, so a removed pick stays one press
+  # away.
+
+  @recent_key "projects_recent_assignees"
+  @recent_cap 10
+
+  @doc "The `custom_fields` key the viewer's recent picks live under."
+  @spec recent_picks_key() :: String.t()
+  def recent_picks_key, do: @recent_key
+
+  @doc """
+  Remembers that `user_uuid` picked the `kind` (`"person"`, `"team"`,
+  `"department"`) with `uuid`: first in their list, once, at most
+  #{@recent_cap} kept. Written with `Auth.merge_user_custom_fields/3`, which
+  replaces this one key and leaves every other as it is. Never raises.
+  """
+  @spec remember_pick(String.t() | nil, String.t(), String.t()) :: :ok
+  def remember_pick(user_uuid, kind, uuid)
+      when is_binary(user_uuid) and kind in ~w(person team department) and is_binary(uuid) do
+    case Auth.get_user(user_uuid) do
+      %User{} = user ->
+        entry = %{"kind" => kind, "uuid" => uuid}
+
+        picks =
+          [entry | Enum.reject(stored_picks(user), &(&1 == entry))]
+          |> Enum.take(@recent_cap)
+
+        _ =
+          Auth.merge_user_custom_fields(
+            user,
+            %{@recent_key => picks},
+            ensure_definitions: false,
+            broadcast: false
+          )
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  rescue
+    e ->
+      Logger.warning("[Assignees] remembering a pick failed: #{Exception.message(e)}")
+      :ok
+  end
+
+  def remember_pick(_user_uuid, _kind, _uuid), do: :ok
+
+  @doc "The viewer's remembered picks as `{kind, uuid}`, newest first."
+  @spec remembered_picks(User.t() | String.t() | nil) :: [{String.t(), String.t()}]
+  def remembered_picks(%User{} = user),
+    do: for(%{"kind" => k, "uuid" => u} <- stored_picks(user), do: {k, u})
+
+  def remembered_picks(user_uuid) when is_binary(user_uuid) do
+    case Auth.get_user(user_uuid) do
+      %User{} = user -> remembered_picks(user)
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
+  def remembered_picks(_), do: []
+
+  defp stored_picks(%User{custom_fields: %{@recent_key => picks}}) when is_list(picks),
+    do:
+      Enum.filter(picks, fn
+        %{"kind" => k, "uuid" => u} when k in ~w(person team department) and is_binary(u) -> true
+        _ -> false
+      end)
+
+  defp stored_picks(_), do: []
+
+  @doc """
+  The "Recent" chips of an assignee picker for `user_uuid` on a project: the
+  viewer's own picks first (`remember_pick/3`), then whom this project's
+  tasks went to lately, then whom tasks went to lately anywhere — each
+  listed once, at most `limit`, a pick that no longer resolves (a trashed
+  person, a deleted team) left out. `[]` on a failed read.
+  """
+  @spec recent_for_viewer(String.t() | nil, String.t() | nil, pos_integer(), String.t() | nil) ::
+          [map()]
+  def recent_for_viewer(user_uuid, project_uuid, limit \\ 8, lang \\ nil) do
+    own = remembered_picks(user_uuid)
+    project = if is_binary(project_uuid), do: recent_keys(project_uuid), else: []
+    site = recent_keys(nil)
+
+    (own ++ project ++ site)
+    |> Enum.uniq()
+    |> rows_for(lang)
+    |> Enum.take(limit)
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] recent picks failed: #{Exception.message(e)}")
+      []
+  end
+
+  # `{kind, uuid}` keys as picker rows, in their order, in a fixed number
+  # of reads however many there are (one per kind, and the people's places
+  # once) — the picker asks on every mount and pick, so never a read per
+  # chip. A key that no longer resolves (a trashed person, a deleted team)
+  # is left out.
+  defp rows_for([], _lang), do: []
+
+  defp rows_for(keys, lang) do
+    wanted = Enum.group_by(keys, &elem(&1, 0), &elem(&1, 1))
+
+    people =
+      case Map.get(wanted, "person", []) |> Enum.flat_map(&cast_uuid/1) do
+        [] ->
+          []
+
+        uuids ->
+          from(p in Person,
+            left_join: u in assoc(p, :user),
+            where: p.uuid in ^uuids and p.status != "trashed",
+            select: %{uuid: p.uuid, name: p.name, email: u.email}
+          )
+          |> repo().all()
+          |> Enum.map(&person_row/1)
+          |> with_places(lang)
+      end
+
+    teams =
+      case Map.get(wanted, "team", []) |> Enum.flat_map(&cast_uuid/1) do
+        [] ->
+          []
+
+        uuids ->
+          from(t in Team, where: t.uuid in ^uuids, preload: [:department])
+          |> repo().all()
+          |> Enum.map(&team_row(&1, lang))
+      end
+
+    departments =
+      case Map.get(wanted, "department", []) |> Enum.flat_map(&cast_uuid/1) do
+        [] ->
+          []
+
+        uuids ->
+          from(d in Department, where: d.uuid in ^uuids)
+          |> repo().all()
+          |> Enum.map(&department_row(&1, lang))
+      end
+
+    found = Map.new(people ++ teams ++ departments, &{{&1.kind, to_string(&1.uuid)}, &1})
+    for {kind, uuid} <- keys, %{} = row <- [Map.get(found, {kind, to_string(uuid)})], do: row
+  end
+
+  defp cast_uuid(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, uuid} -> [uuid]
+      :error -> []
+    end
+  end
+
+  defp in_project_of_row(nil), do: dynamic(true)
+  defp in_project_of_row(uuid), do: dynamic([_r, a], a.project_uuid == ^uuid)
 
   defp recent_assignees(project_uuid, limit, lang) do
-    from(a in Assignment,
-      where: ^in_project(project_uuid),
-      where:
-        not is_nil(a.assigned_person_uuid) or not is_nil(a.assigned_team_uuid) or
-          not is_nil(a.assigned_department_uuid),
-      order_by: [desc: a.updated_at],
-      limit: 100,
-      select: {a.assigned_person_uuid, a.assigned_team_uuid, a.assigned_department_uuid}
+    project_uuid
+    |> recent_keys()
+    |> Enum.take(limit)
+    |> rows_for(lang)
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] recent assignees failed: #{Exception.message(e)}")
+      []
+  end
+
+  # `{kind, uuid}` of whom a project's (nil: any project's) tasks went to
+  # lately, newest first, each once.
+  defp recent_keys(project_uuid) do
+    # Every assignee of the recently changed tasks (V29), newest first.
+    from(r in AssignmentAssignee,
+      join: a in Assignment,
+      on: a.uuid == r.assignment_uuid,
+      where: ^in_project_of_row(project_uuid),
+      order_by: [desc: a.updated_at, asc: r.position],
+      limit: 200,
+      select: {r.person_uuid, r.team_uuid, r.department_uuid}
     )
     |> repo().all()
     |> Enum.map(fn
@@ -486,13 +906,6 @@ defmodule PhoenixKitProjects.Assignees do
       {_, _, d} -> {"department", d}
     end)
     |> Enum.uniq()
-    |> Enum.take(limit)
-    |> Enum.map(fn {kind, uuid} -> row_for(kind, uuid, lang) end)
-    |> Enum.reject(&is_nil/1)
-  rescue
-    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
-      Logger.warning("[Assignees] recent assignees failed: #{Exception.message(e)}")
-      []
   end
 
   @doc "The assignment field that holds an assignee of `kind`."
@@ -501,7 +914,7 @@ defmodule PhoenixKitProjects.Assignees do
   def assignee_field("team"), do: :assigned_team_uuid
   def assignee_field("department"), do: :assigned_department_uuid
 
-  defp row_for("person", uuid, _lang) do
+  defp row_for("person", uuid, lang) do
     from(p in Person,
       left_join: u in assoc(p, :user),
       where: p.uuid == ^uuid,
@@ -510,7 +923,7 @@ defmodule PhoenixKitProjects.Assignees do
     |> repo().one()
     |> case do
       nil -> nil
-      r -> person_row(r)
+      r -> [person_row(r)] |> with_places(lang) |> hd()
     end
   end
 
@@ -528,19 +941,112 @@ defmodule PhoenixKitProjects.Assignees do
     end
   end
 
+  # A person as the pickers list them: the name (the email when there is
+  # none), and under it the email and where they work. `email` and `place`
+  # stay on the row for `sublabel/1` to rebuild it.
   defp person_row(r) do
+    email = if r.name not in [nil, ""], do: r.email
+
     %{
       kind: "person",
       uuid: r.uuid,
-      label: r.name || r.email || "?",
-      sublabel: if(r.name && r.email, do: r.email),
+      label: if(r.name in [nil, ""], do: r.email || "?", else: r.name),
+      sublabel: email,
+      email: email,
+      place: nil,
       icon: "hero-user"
     }
   end
 
-  # How many of a matched team's or department's people the picker lists
-  # under it.
-  @members_per_group 10
+  @doc """
+  The second line of a person in the pickers (the boss, 2026-10-30: "show
+  their name, email, department, whatever makes the choice easier"):
+  `"ann@firm.ee · Tootmine › Paigaldus"`, either part alone, or nil. Core's
+  `<.search_picker>` draws one line under the label, so the two share it.
+  """
+  @spec sublabel(String.t() | nil, String.t() | nil) :: String.t() | nil
+  def sublabel(email, place) do
+    case Enum.reject([email, place], &(&1 in [nil, ""])) do
+      [] -> nil
+      parts -> Enum.join(parts, " · ")
+    end
+  end
+
+  # Where each listed person works — their primary department, else the
+  # first team they are on (with its department) — in two reads for the
+  # whole page, folded into the row's second line.
+  defp with_places([], _lang), do: []
+
+  defp with_places(rows, lang) do
+    uuids = for %{kind: "person", uuid: u} <- rows, do: u
+    places = places_by_person(uuids, lang)
+
+    Enum.map(rows, fn
+      %{kind: "person", uuid: u} = row ->
+        place = Map.get(places, u)
+        %{row | place: place, sublabel: sublabel(row.email, place)}
+
+      row ->
+        row
+    end)
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] places lookup failed: #{Exception.message(e)}")
+      rows
+  end
+
+  defp places_by_person([], _lang), do: %{}
+
+  defp places_by_person(uuids, lang) do
+    primary =
+      from(p in Person,
+        join: d in Department,
+        on: d.uuid == p.primary_department_uuid,
+        where: p.uuid in ^uuids,
+        select: {p.uuid, d}
+      )
+      |> repo().all()
+      |> Map.new()
+
+    teams =
+      from(m in TeamMembership,
+        join: t in Team,
+        on: t.uuid == m.team_uuid,
+        left_join: d in Department,
+        on: d.uuid == t.department_uuid,
+        where: m.staff_person_uuid in ^uuids,
+        order_by: [asc: t.name],
+        select: {m.staff_person_uuid, t, d}
+      )
+      |> repo().all()
+      |> Enum.group_by(&elem(&1, 0), fn {_, t, d} -> {t, d} end)
+
+    Map.new(uuids, fn uuid ->
+      path =
+        case {Map.get(primary, uuid), Map.get(teams, uuid, [])} do
+          {nil, [{t, d} | _]} ->
+            [d, t]
+
+          {%Department{uuid: dept} = d, list} ->
+            [
+              d
+              | list
+                |> Enum.filter(fn {_t, td} -> match?(%{uuid: ^dept}, td) end)
+                |> Enum.map(&elem(&1, 0))
+                |> Enum.take(1)
+            ]
+
+          _ ->
+            []
+        end
+
+      {uuid,
+       case Enum.reject(path, &is_nil/1) do
+         [] -> nil
+         parts -> Enum.map_join(parts, " › ", &(People.localized_name(&1, lang) || "?"))
+       end}
+    end)
+  end
 
   # Each matched team and department followed by its people, labelled with
   # where they come from ("Finance", "Finance › Payroll"); a person already
@@ -622,7 +1128,8 @@ defmodule PhoenixKitProjects.Assignees do
       |> Enum.reject(&is_nil/1)
       |> Enum.map_join(" › ", &(People.localized_name(&1, lang) || "?"))
 
-    %{person_row(r) | sublabel: where}
+    row = person_row(r)
+    %{row | place: where, sublabel: sublabel(row.email, where)}
   end
 
   # A user with no staff person yet: picking one makes the person
@@ -707,32 +1214,33 @@ defmodule PhoenixKitProjects.Assignees do
   # Mirrors `match/2`'s one-level inheritance: direct, a team the person
   # belongs to, or a department in their scope (primary + their teams').
   defp relevance_condition(project_uuids) do
-    assignments = relevant_assignments(project_uuids)
+    # Every assignee row of the relevant tasks (V29: a task has several).
+    rows =
+      from(r in AssignmentAssignee,
+        as: :row,
+        join: a in subquery(relevant_assignments(project_uuids)),
+        on: a.uuid == r.assignment_uuid
+      )
 
-    direct = where(assignments, [a], a.assigned_person_uuid == parent_as(:person).uuid)
+    direct = where(rows, [row: r], r.person_uuid == parent_as(:person).uuid)
 
-    # Named bindings throughout: `assignments` may already carry a joined
-    # Project, so positional `[a, m]` would silently bind m to it.
+    # Named bindings throughout, so a join never binds the wrong table.
     via_team =
-      assignments
-      |> join(:inner, [a], m in TeamMembership,
+      rows
+      |> join(:inner, [row: r], m in TeamMembership,
         as: :membership,
-        on: m.team_uuid == a.assigned_team_uuid
+        on: m.team_uuid == r.team_uuid
       )
       |> where([membership: m], m.staff_person_uuid == parent_as(:person).uuid)
 
     via_primary_department =
-      where(
-        assignments,
-        [a],
-        a.assigned_department_uuid == parent_as(:person).primary_department_uuid
-      )
+      where(rows, [row: r], r.department_uuid == parent_as(:person).primary_department_uuid)
 
     via_team_department =
-      assignments
-      |> join(:inner, [a], t in Team,
+      rows
+      |> join(:inner, [row: r], t in Team,
         as: :team,
-        on: t.department_uuid == a.assigned_department_uuid
+        on: t.department_uuid == r.department_uuid
       )
       |> join(:inner, [team: t], m in TeamMembership,
         as: :membership,
@@ -757,12 +1265,13 @@ defmodule PhoenixKitProjects.Assignees do
     from(a in Assignment,
       join: pr in Project,
       on: pr.uuid == a.project_uuid,
-      where: not pr.is_template
+      where: not pr.is_template,
+      select: %{uuid: a.uuid}
     )
   end
 
   defp relevant_assignments(uuids) when is_list(uuids) do
-    from(a in Assignment, where: a.project_uuid in ^uuids)
+    from(a in Assignment, where: a.project_uuid in ^uuids, select: %{uuid: a.uuid})
   end
 
   defp build_scope(person, lang) do

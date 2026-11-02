@@ -80,6 +80,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       totals = Ledger.totals_for_assignments(uuids)
       labels = Labels.labels_for_assignments(uuids)
       links = Projects.interactions_for_assignments(uuids)
+      Json.prefetch_images(tasks)
 
       json(conn, %{
         tasks:
@@ -1009,10 +1010,11 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       outline = OutlineApi.info(project.uuid)
       totals = Ledger.totals_for_assignments(uuids)
 
-      tasks =
-        for uuid <- uuids, MapSet.member?(wanted, uuid), a = by_uuid[uuid], not is_nil(a) do
-          Json.task(a, totals[uuid], [], [], outline)
-        end
+      rows =
+        for uuid <- uuids, MapSet.member?(wanted, uuid), a = by_uuid[uuid], not is_nil(a), do: a
+
+      Json.prefetch_images(rows)
+      tasks = Enum.map(rows, &Json.task(&1, totals[&1.uuid], [], [], outline))
 
       {201, %{tasks: tasks, count: length(tasks)}}
     else

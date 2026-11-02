@@ -1,17 +1,20 @@
 defmodule PhoenixKitProjects.Web.Api.Assignee do
   @moduledoc """
-  Who a task is for, over the API: reading it (`to_json/1`), setting it
-  from a request's `assignee` (`attrs/2`) and filtering a list by it
-  (`filter/3`).
+  Who a task is for, over the API: reading it (`to_json/1`,
+  `list_json/1`), setting it from a request's `assignee` or `assignees`
+  (`attrs/2`) and filtering a list by it (`filter/3`).
 
-  A task has ONE assignee, a staff person, a team or a department (the
-  schema's single-assignee rule), so a request names one and the other
-  two columns are cleared with it. `"me"` is the staff person of the user
-  a personal key acts for — made for them when they have none — and a
-  shared agent has none.
+  A task has any number of assignees (V29), each a staff person, a team or
+  a department, all equal. `assignees` (read and write) is the whole list;
+  `assignee` is kept for clients written when a task had one: it reads the
+  one assignee (null for none AND for several — an old client must not
+  take one of several for the owner), and writing it makes that one the
+  whole list. A request naming both is refused. `"me"` is the staff person
+  of the user a personal key acts for — made for them when they have none
+  — and a shared agent has none.
   """
 
-  alias PhoenixKitProjects.{Authz, People}
+  alias PhoenixKitProjects.{AssigneeSet, Authz, People}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment}
   alias PhoenixKitProjects.Web.Api.Json
 
@@ -23,12 +26,22 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
 
   @uuid ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i
 
-  @doc "The assignee of a task as `%{kind, uuid, name}`, or nil when it has none."
+  @doc """
+  The ONE assignee of a task as `%{kind, uuid, name}`; nil when it has none
+  or several (`list_json/1` lists them).
+  """
   @spec to_json(Assignment.t() | map()) :: map() | nil
   # a sub-project row carries no assignee of its own: the nested project does
   def to_json(%{child_project_uuid: uuid, child_project: %{uuid: uuid} = child})
       when is_binary(uuid),
       do: to_json(child)
+
+  def to_json(%Assignment{} = a) do
+    case list_json(a) do
+      [one] -> one
+      _ -> nil
+    end
+  end
 
   def to_json(%{assigned_person_uuid: uuid} = a) when is_binary(uuid),
     do: %{kind: "person", uuid: uuid, name: person_name(Map.get(a, :assigned_person))}
@@ -40,6 +53,34 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
     do: %{kind: "department", uuid: uuid, name: group_name(Map.get(a, :assigned_department))}
 
   def to_json(_), do: nil
+
+  @doc "Every assignee of a task as `[%{kind, uuid, name}]`, in chip order."
+  @spec list_json(Assignment.t() | map()) :: [map()]
+  def list_json(%{child_project_uuid: uuid, child_project: %{uuid: uuid} = child})
+      when is_binary(uuid),
+      do: List.wrap(to_json(child))
+
+  def list_json(%Assignment{assignee_links: links}) when is_list(links) do
+    Enum.map(links, fn
+      %{person_uuid: u} = l when is_binary(u) ->
+        %{kind: "person", uuid: u, name: person_name(loaded(l.person))}
+
+      %{team_uuid: u} = l when is_binary(u) ->
+        %{kind: "team", uuid: u, name: group_name(loaded(l.team))}
+
+      %{department_uuid: u} = l ->
+        %{kind: "department", uuid: u, name: group_name(loaded(l.department))}
+    end)
+  end
+
+  def list_json(%Assignment{} = a) do
+    a |> AssigneeSet.preload() |> list_json()
+  end
+
+  def list_json(other), do: List.wrap(to_json(other))
+
+  defp loaded(%Ecto.Association.NotLoaded{}), do: nil
+  defp loaded(other), do: other
 
   @doc "The uuid of the staff person a key acts for, or nil (a shared agent, or a user with no staff record)."
   @spec person_uuid(ApiKey.t()) :: String.t() | nil
@@ -69,18 +110,52 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   def ensure_person_uuid(_key), do: {:error, :no_user}
 
   @doc """
-  The assignment attrs a request's `assignee` asks for: `{:ok, %{}}` when
-  the request does not mention it, the three columns when it does, or the
-  refusal as `{:error, {status, body}}`. Needs the `assignees` feature and
-  the `assign_tasks` action, checked only when the field is there.
+  The assignment attrs a request's `assignee` or `assignees` asks for:
+  `{:ok, %{}}` when the request mentions neither, `{:ok, %{"assignees" =>
+  keys}}` (the whole new list) when it does, or the refusal as `{:error,
+  {status, body}}`. Needs the `assignees` feature and the `assign_tasks`
+  action, checked only when a field is there. Both fields at once: 422.
   """
   @spec attrs(Plug.Conn.t(), map()) :: {:ok, map()} | {:error, {integer(), map()}}
   def attrs(conn, params) do
-    case Map.fetch(params, "assignee") do
-      :error -> {:ok, %{}}
-      {:ok, value} -> with :ok <- allowed(conn), do: resolve(conn.assigns.pk_api_key, value)
+    case {Map.fetch(params, "assignee"), Map.fetch(params, "assignees")} do
+      {:error, :error} ->
+        {:ok, %{}}
+
+      {{:ok, _}, {:ok, _}} ->
+        invalid("Send `assignees` (the whole list) or `assignee` (one), not both.")
+
+      {{:ok, value}, :error} ->
+        with :ok <- allowed(conn),
+             {:ok, keys} <- resolve(conn.assigns.pk_api_key, value),
+             do: {:ok, %{"assignees" => keys}}
+
+      {:error, {:ok, list}} ->
+        with :ok <- allowed(conn), do: resolve_list(conn.assigns.pk_api_key, list)
     end
   end
+
+  defp resolve_list(_key, value) when value in [nil, []], do: {:ok, %{"assignees" => []}}
+
+  defp resolve_list(key, list) when is_list(list) and length(list) <= 50 do
+    Enum.reduce_while(list, {:ok, []}, fn entry, {:ok, acc} ->
+      case resolve(key, entry) do
+        {:ok, [one]} -> {:cont, {:ok, acc ++ [one]}}
+        {:ok, []} -> {:halt, invalid(list_message())}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, keys} -> {:ok, %{"assignees" => Enum.uniq(keys)}}
+      error -> error
+    end
+  end
+
+  defp resolve_list(_key, _value), do: invalid(list_message())
+
+  defp list_message,
+    do:
+      "assignees is a list (at most 50) of `me`, a person's uuid, `{\"person\": uuid}`, `{\"team\": uuid}` or `{\"department\": uuid}`; [] clears it."
 
   defp allowed(conn) do
     %{pk_api_key: key, pk_project: project, pk_fx: fx} = conn.assigns
@@ -109,12 +184,12 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
     end
   end
 
-  defp resolve(_key, value) when value in [nil, "", "none"], do: {:ok, columns(nil, nil)}
+  defp resolve(_key, value) when value in [nil, "", "none"], do: {:ok, []}
 
   defp resolve(key, "me") do
     case ensure_person_uuid(key) do
       {:ok, uuid} ->
-        {:ok, columns("person", uuid)}
+        {:ok, [{"person", uuid}]}
 
       {:error, :trashed_person} ->
         invalid(
@@ -139,7 +214,7 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
 
   defp named(kind, uuid) when is_binary(uuid) do
     if Regex.match?(@uuid, uuid) and exists?(kind, uuid),
-      do: {:ok, columns(kind, uuid)},
+      do: {:ok, [{kind, String.downcase(uuid)}]},
       else: invalid("No #{kind} with that uuid. GET /people lists who a task can be for.")
   end
 
@@ -151,10 +226,6 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
 
   defp exists?("team", uuid), do: Enum.any?(People.list_teams(), &(&1.uuid == uuid))
   defp exists?("department", uuid), do: Enum.any?(People.list_departments(), &(&1.uuid == uuid))
-
-  defp columns(kind, uuid) do
-    Map.new(@columns, fn {k, column} -> {column, if(k == kind, do: uuid)} end)
-  end
 
   defp shape_message,
     do:
@@ -173,20 +244,20 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   def filter(tasks, _key, nil), do: {:ok, tasks}
 
   def filter(tasks, _key, "none") do
-    {:ok, Enum.filter(tasks, &is_nil(to_json(&1)))}
+    {:ok, Enum.filter(tasks, &(list_json(&1) == []))}
   end
 
   def filter(tasks, key, "me") do
     # a key that acts for nobody has no tasks of its own
     case person_uuid(key) do
       nil -> {:ok, []}
-      uuid -> {:ok, Enum.filter(tasks, &(&1.assigned_person_uuid == uuid))}
+      uuid -> {:ok, Enum.filter(tasks, &has_person?(&1, uuid))}
     end
   end
 
   def filter(tasks, _key, value) when is_binary(value) do
     if Regex.match?(@uuid, value),
-      do: {:ok, Enum.filter(tasks, &(&1.assigned_person_uuid == value))},
+      do: {:ok, Enum.filter(tasks, &has_person?(&1, String.downcase(value)))},
       else: invalid("assignee is `me`, `none`, or a person's uuid.")
   end
 
@@ -210,4 +281,9 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
 
   defp group_name(%{name: name}) when is_binary(name), do: name
   defp group_name(_), do: nil
+
+  # The person among the task's assignees (any of several; a team's or a
+  # department's members are not "assigned" by this filter).
+  defp has_person?(%Assignment{} = a, uuid), do: {"person", uuid} in AssigneeSet.keys(a)
+  defp has_person?(_a, _uuid), do: false
 end

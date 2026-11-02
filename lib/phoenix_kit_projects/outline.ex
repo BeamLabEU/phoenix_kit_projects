@@ -29,6 +29,7 @@ defmodule PhoenixKitProjects.Outline do
   import Ecto.Query
 
   alias PhoenixKit.RepoHelper
+  alias PhoenixKitProjects.AssigneeSet
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
 
@@ -170,8 +171,7 @@ defmodule PhoenixKitProjects.Outline do
         parent_uuid: a.parent_uuid,
         status: a.status,
         position: a.position,
-        child_project_uuid: a.child_project_uuid,
-        assigned_person_uuid: a.assigned_person_uuid
+        child_project_uuid: a.child_project_uuid
       }
     )
     |> repo().all()
@@ -218,10 +218,19 @@ defmodule PhoenixKitProjects.Outline do
       |> descendants(uuid)
       |> Enum.filter(&(&1.status != "done" and is_nil(&1.child_project_uuid)))
 
+    # Someone else's: a task naming a person who is not `person_uuid`
+    # among its assignees (V29: several).
+    keys = open |> Enum.map(& &1.uuid) |> AssigneeSet.keys_by_task()
+
     %{
       count: length(open),
       others:
-        Enum.count(open, &(&1.assigned_person_uuid && &1.assigned_person_uuid != person_uuid))
+        Enum.count(open, fn row ->
+          keys
+          |> Map.get(row.uuid, [])
+          |> AssigneeSet.of_kind("person")
+          |> Enum.any?(&(&1 != person_uuid))
+        end)
     }
   end
 
@@ -591,11 +600,13 @@ defmodule PhoenixKitProjects.Outline do
 
   `{:error, :not_found}` for a parent or sibling that is not an accepted
   row of the same project, `{:error, :cycle}` for a place under itself.
-  Broadcasts `:assignment_reordered`.
+  Broadcasts `:assignment_reordered` — unless `broadcast: false`, for a
+  caller running the move inside its own transaction, who broadcasts once
+  that has committed.
   """
-  @spec move(Assignment.t(), binary() | nil, binary() | nil | :last) ::
+  @spec move(Assignment.t(), binary() | nil, binary() | nil | :last, keyword()) ::
           {:ok, Assignment.t()} | {:error, :not_found | :cycle | :subproject | term()}
-  def move(%Assignment{} = a, parent_uuid, after_uuid \\ :last) do
+  def move(%Assignment{} = a, parent_uuid, after_uuid \\ :last, opts \\ []) do
     result =
       with_project_lock(a.project_uuid, fn _project ->
         rows = shape(a.project_uuid)
@@ -614,9 +625,11 @@ defmodule PhoenixKitProjects.Outline do
       end)
 
     with {:ok, moved} <- result do
-      ProjectsPubSub.broadcast_assignment(:assignment_reordered, %{
-        project_uuid: moved.project_uuid
-      })
+      if Keyword.get(opts, :broadcast, true) do
+        ProjectsPubSub.broadcast_assignment(:assignment_reordered, %{
+          project_uuid: moved.project_uuid
+        })
+      end
 
       {:ok, moved}
     end
@@ -1059,17 +1072,15 @@ defmodule PhoenixKitProjects.Outline do
   defp has_words?(a), do: filled?(a.description) or filled?(a.waiting_on)
 
   defp has_owner_or_dates?(a) do
-    Enum.any?(
-      [
-        a.assigned_person_uuid,
-        a.assigned_team_uuid,
-        a.assigned_department_uuid,
-        a.start_date,
-        a.end_date,
-        a.estimated_duration
-      ],
-      &(not is_nil(&1))
-    )
+    not AssigneeSet.empty?(a) or
+      Enum.any?(
+        [
+          a.start_date,
+          a.end_date,
+          a.estimated_duration
+        ],
+        &(not is_nil(&1))
+      )
   end
 
   # A one-off task typed in here, not begun, not from the portal, not on a

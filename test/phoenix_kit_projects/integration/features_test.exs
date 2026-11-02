@@ -116,8 +116,12 @@ defmodule PhoenixKitProjects.Integration.FeaturesTest do
 
       gates = Features.gates(project)
       off = gates |> Enum.reject(fn {_k, v} -> v end) |> Enum.map(&elem(&1, 0))
-      # A hand-kept map once missed lifecycle, ledger and view_board.
-      assert off == []
+      # A hand-kept map once missed lifecycle, ledger and view_board. Time
+      # on the project and billable time stay a site's or a project's own
+      # choice (the boss, 2026-10-30).
+      # The two comment tabs belong to Discussions, which needs the comments
+      # module this test site does not register.
+      assert Enum.sort(off -- [:project_comments, :all_comments]) == [:billable, :project_time]
     end
   end
 

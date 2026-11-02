@@ -154,6 +154,22 @@ defmodule PhoenixKitProjects.BatchedListMetricsTest do
     assert Enum.all?(Map.values(result), &(&1 == %{}))
   end
 
+  test "a member is named as everywhere: an account with no name by its staff person's" do
+    user = user!()
+
+    Repo.insert!(%PhoenixKitStaff.Schemas.Person{
+      user_uuid: user.uuid,
+      status: "active",
+      name: "Kadri Tamm"
+    })
+
+    project = fixture_project()
+    {:ok, _} = Members.add_member(project, user.uuid, role: "member")
+
+    %{members: members} = ListMetrics.load([project], [:members])
+    assert [%{name: "Kadri Tamm"}] = members[project.uuid].people
+  end
+
   test "an unknown family is ignored" do
     assert ListMetrics.load([fixture_project()], [:nope, :due]) == %{due: %{}}
   end

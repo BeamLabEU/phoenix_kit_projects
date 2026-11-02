@@ -83,10 +83,10 @@ defmodule PhoenixKitProjects.Hours.Report do
 
   defp totals_lines(t) do
     [
-      "#{gettext("Total")}: #{Format.duration(t.minutes)} (#{Format.decimal_hours(t.minutes)} h)",
+      "#{gettext("Total")}: #{Format.duration(t.minutes)} (#{Format.hours_shown(t.minutes)} h)",
       if(t.billable_minutes > 0,
         do:
-          "#{gettext("Billable")}: #{Format.duration(t.billable_minutes)} (#{Format.decimal_hours(t.billable_minutes)} h)",
+          "#{gettext("Billable")}: #{Format.duration(t.billable_minutes)} (#{Format.hours_shown(t.billable_minutes)} h)",
         else: []
       ),
       if(t.ai_minutes > 0,

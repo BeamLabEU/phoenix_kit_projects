@@ -5,7 +5,9 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     * `POST /tasks/:id/time` and `POST /time` — minutes spent. Recorded as
       `kind: "time"` by the key (`actor_kind: "ai_agent"`), never billable:
       the project's totals show it as AI time, apart from people's time, and
-      invoicing bills people only.
+      invoicing bills people only. `POST /time` (no task) follows the
+      project's `project_time` feature: off (the default), it answers 422
+      `task_required`.
     * `POST /tasks/:id/usage` and `POST /usage` — tokens and cost
       (`cost_cents`, an integer), through `Ledger.record_ai/3`, the same
       path the kit's own AI calls take.
@@ -43,10 +45,30 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
 
   def project_time(conn, params) do
     with {:ok, conn} <- Json.scope_project(conn, params),
-         {:ok, conn} <- checks(conn, "time:write", :log_time) do
+         {:ok, conn} <- checks(conn, "time:write", :log_time),
+         {:ok, conn} <- require_project_time(conn) do
       Json.idempotent(conn, [required: true], fn -> record_time(conn, nil, params) end)
     else
       {:halt, conn} -> conn
+    end
+  end
+
+  # Time with no task follows the project's `project_time` switch, like
+  # the page's own "Log time" and the Hours page (Max, 2026-10-31: "A").
+  # Off — the default — the agent names a task: `POST /tasks/:id/time`.
+  defp require_project_time(conn) do
+    if Map.get(conn.assigns.pk_fx, :project_time, false) do
+      {:ok, conn}
+    else
+      {:halt,
+       Json.error(
+         conn,
+         :unprocessable_entity,
+         "task_required",
+         "Name a task — this project keeps time on its tasks only. " <>
+           "Log it with POST /tasks/:id/time.",
+         %{feature: :project_time}
+       )}
     end
   end
 

@@ -26,7 +26,7 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
   def derived_status_badge(assigns) do
     ~H"""
     <span class={"badge badge-sm gap-1 #{badge_class(@state)}"}>
-      <.icon name={icon_name(@state)} class="w-3 h-3" /> {label(@state)}
+      <.icon :if={icon_name(@state)} name={icon_name(@state)} class="w-3 h-3" /> {label(@state)}
     </span>
     """
   end
@@ -152,7 +152,9 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
   defp badge_class(:template), do: "badge-info badge-outline"
 
   defp icon_name(:running), do: "hero-play"
-  defp icon_name(:ongoing), do: "hero-arrow-path"
+  # No icon: "ongoing" says it (the boss, 2026-11-02 — a ↻ here and a ∞
+  # in the form's choice read as two different things).
+  defp icon_name(:ongoing), do: nil
   defp icon_name(:completed), do: "hero-check-circle"
   defp icon_name(:overdue), do: "hero-exclamation-triangle"
   defp icon_name(:scheduled), do: "hero-calendar"

@@ -39,6 +39,18 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
       gettext(
         "See and manage every project on the site, including ones this user is not a member of"
       ),
+      gettext("Create API keys"),
+      gettext("Make API keys that act for this user"),
+      gettext("Change their API keys' access"),
+      gettext("Add and remove projects and change what a key that acts for this user may do"),
+      gettext("Rotate their API keys"),
+      gettext("Get a new token for a key that acts for this user"),
+      gettext("Revoke their API keys"),
+      gettext("Turn off a key that acts for this user"),
+      gettext("Manage everyone's API keys"),
+      gettext(
+        "See every API key, make keys for anyone or for nobody (shared), and change, rotate or revoke any key"
+      ),
       gettext("Manage the task library"),
       gettext(
         "Create, edit, reorder and delete the shared library tasks, and add one-off tasks to the library"
@@ -70,6 +82,7 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
       gettext("Project Activity"),
       gettext("Project Members"),
       gettext("Project Modules"),
+      gettext("Your API key"),
 
       # Hidden subtabs (used for routing + page-header crumbs).
       gettext("New Task"),

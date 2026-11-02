@@ -11,6 +11,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.UserInfo, only: [user_avatar: 1]
+  import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
 
   attr(:faces, :map, default: nil, doc: "`%{faces: [...], extra: n}` or nil")
   attr(:size, :string, default: "xs", values: ~w(xs sm))
@@ -51,6 +52,49 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
     </span>
     """
   end
+
+  @doc """
+  An assignee shown: the faces (or, without them, the kind's icon) and the
+  name — the way the assignee picker's chip shows the one chosen. No
+  "Person:" / "Team:" before it (the boss, 2026-10-30): the face or the
+  icon already says which kind it is. Nothing when nobody is assigned.
+
+  `a` is an assignment (every one of its assignees, V29, names joined) or
+  a project (its one); `faces` is its entry from `Assignees.faces/2`.
+  """
+  attr(:a, :map, required: true)
+  attr(:faces, :map, default: nil)
+  attr(:size, :string, default: "xs", values: ~w(xs sm))
+  attr(:class, :any, default: nil)
+
+  def assignee_shown(assigns) do
+    assigns = assign(assigns, :kind, kind(assigns.a))
+
+    ~H"""
+    <span :if={@kind} class={["inline-flex items-center gap-1.5 min-w-0", @class]}>
+      <.assignee_faces faces={@faces} size={@size} />
+      <.icon :if={no_faces?(@faces)} name={kind_icon(@kind)} class="w-3.5 h-3.5 shrink-0 opacity-70" />
+      <span class="truncate">{PhoenixKitProjects.Web.Helpers.assignee_label(@a)}</span>
+    </span>
+    """
+  end
+
+  # From the keys, never from a translated label: the kind picks the icon
+  # in every language. Several assignees show the people icon.
+  defp kind(a) do
+    case PhoenixKitProjects.People.assignee_keys(a) do
+      [] -> nil
+      [{kind, _}] -> String.to_existing_atom(kind)
+      _several -> :team
+    end
+  end
+
+  defp kind_icon(:team), do: "hero-users"
+  defp kind_icon(:department), do: "hero-building-office"
+  defp kind_icon(_), do: "hero-user"
+
+  defp no_faces?(%{faces: [_ | _]}), do: false
+  defp no_faces?(_), do: true
 
   defp extra_title(0), do: ""
   defp extra_title(n), do: " " <> gettext("and %{count} more", count: n)

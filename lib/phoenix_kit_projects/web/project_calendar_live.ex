@@ -26,19 +26,24 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
+
   alias PhoenixKitProjects.{
     Assignees,
     CalendarDisplay,
+    Extensions,
     L10n,
     Paths,
+    ProjectEvents,
     Projects,
     ScheduleLayout
   }
 
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.Schemas.{Assignment, Project, ProjectEvent}
   alias PhoenixKitProjects.Web.AssigneeFilter
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixLiveCalendar.Utils.DateHelpers
 
   require Logger
 
@@ -165,6 +170,19 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # closed, else %{date: Date, rows: [row]} filled by a day-cell / "+N
       # more" click. The dialog itself opens client-side (PkDialogTrigger).
       day_popup: nil,
+      # The grid the calendar shows (Month / Week / Day), as its switcher
+      # reports it: a task planned over several days at set hours is one bar
+      # on the month and a block on each day of the week and day grids.
+      cal_view: :month,
+      # The view a switch to Week / Day came from, until its range report
+      # settles where the grid opens (`snap_to_today/4`).
+      snap_from: nil,
+      # Where Week and Day scroll to when they open (`PkpCalendarWorkday`).
+      workday_start: CalendarDisplay.workday_start(),
+      # The project's own events and what its extensions put on a calendar
+      # (meetings), as calendar events — drawn while no filter narrows the
+      # calendar to tasks.
+      happenings: [],
       today: Date.utc_today(),
       # Per-project PubSub topics already subscribed (the whole rendered tree;
       # grows as sub-projects appear). Avoids double-subscribing on reload.
@@ -188,6 +206,36 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   def handle_info({:calendar_event_click, assignment_uuid}, socket) do
     {:noreply, navigate_to_target(socket, assignment_uuid)}
   end
+
+  # The Month / Week / Day switcher. Week and Day open on TODAY when today
+  # is in what was on screen — they used to open on the grid's own date (the
+  # first day of a schedule that started earlier in the month; the
+  # walk-through, 2026-10-31). The switch is settled when the range report
+  # that follows it arrives (`{:calendar_range, …}`), which carries the date
+  # the component was on.
+  def handle_info({:calendar_view, view}, socket) when view in [:month, :week, :day] do
+    snap = if view in [:week, :day], do: socket.assigns.cal_view
+
+    {:noreply, socket |> assign(cal_view: view, snap_from: snap) |> apply_calendar_filter()}
+  end
+
+  def handle_info({:calendar_view, _view}, socket), do: {:noreply, socket}
+
+  # Where the grid is, as the component reports it after every move: the
+  # `date` prop follows it, so a later change of that prop (the snap to
+  # today) always reaches the component — it only takes a value that differs
+  # from the last one it was given.
+  def handle_info({:calendar_range, _view, %Date{} = date}, socket) do
+    target =
+      case socket.assigns[:snap_from] do
+        nil -> date
+        from -> snap_to_today(from, date, socket.assigns.today, socket.assigns.overdue_anim)
+      end
+
+    {:noreply, assign(socket, anchor_date: target, snap_from: nil)}
+  end
+
+  def handle_info({:calendar_range, _view, _date}, socket), do: {:noreply, socket}
 
   # A day cell or its "+N more" link was clicked — fill the whole-day popup
   # (the dialog already opened client-side in the same frame).
@@ -263,7 +311,13 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
 
   # A leaf task opens its assignment edit form; a sub-project drills into the
   # child project. Unknown id (stale render) is a no-op.
-  defp navigate_to_target(socket, assignment_uuid) do
+  # An event or a meeting opens the project's Events tab, where it is kept.
+  defp navigate_to_target(socket, "event:" <> _), do: open_events_tab(socket)
+  defp navigate_to_target(socket, "ext:" <> _), do: open_events_tab(socket)
+
+  defp navigate_to_target(socket, event_id) do
+    assignment_uuid = CalendarDisplay.task_uuid(event_id)
+
     case Map.get(socket.assigns.click_targets, assignment_uuid) do
       {:subproject, child_uuid} ->
         WebHelpers.navigate_or_open(socket,
@@ -283,6 +337,16 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       nil ->
         socket
     end
+  end
+
+  defp open_events_tab(socket) do
+    project = socket.assigns.project
+
+    WebHelpers.navigate_or_open(socket,
+      to: Paths.project_ext_tab(project.uuid, "events"),
+      open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => project.uuid}},
+      popup: false
+    )
   end
 
   defp view_session(socket, project_uuid, assignment_uuid) do
@@ -339,7 +403,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     # covers its children's walk. Click targets stay UNFILTERED so a stale
     # render can't route a click wrong.
     top_items = Enum.filter(items, &ScheduleLayout.own_bar?(&1, socket.assigns.project))
-    click_targets = Map.new(top_items, fn it -> {it.uuid, click_target(it.assignment)} end)
+    # Every task of the tree can be opened from here: a bar is a top-level
+    # row's, a deadline marker any task's (`CalendarDisplay.task_uuid/1`
+    # turns an event id into the assignment's).
+    click_targets = Map.new(items, fn it -> {it.uuid, click_target(it.assignment)} end)
 
     # Live updates: a sub-project's tasks broadcast on the CHILD project's
     # topic, and their edits change the parent bar's span — subscribe to every
@@ -354,6 +421,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     |> assign(overdue_anim: CalendarDisplay.read())
     |> assign(
       calendar_items: {items, layout},
+      happenings: happenings(project),
       click_targets: click_targets,
       today: Date.utc_today(),
       calendar_loading: false,
@@ -367,11 +435,16 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
         Enum.count(top_items, fn it ->
           Enum.all?(assignment_refs(it, items), &Assignees.unassigned?/1)
         end),
-      # Late bars in the RAW tree — the Overdue-only toggle hides at 0.
+      # Late bars and missed deadlines in the RAW tree — the Overdue-only
+      # toggle hides at 0.
       overdue_count:
         Enum.count(top_items, fn it ->
           CalendarDisplay.task_late?(it.assignment, Map.fetch!(layout, it.uuid), now)
-        end)
+        end) +
+          Enum.count(
+            deadline_items(items),
+            &CalendarDisplay.deadline_missed?(&1.assignment, DateTime.utc_now())
+          )
     )
     |> apply_calendar_filter()
   end
@@ -408,10 +481,12 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             if socket.assigns.overdue_only? and not late? do
               []
             else
-              [to_event(it, span.start, span.end, lang, late?, late_class, via)]
+              to_events(it, span, lang, late?, late_class, via, socket.assigns.cal_view)
             end
         end
       end)
+      |> Kernel.++(deadline_events(items, scopes, socket.assigns, lang))
+      |> Kernel.++(if filtered?(socket.assigns, scopes), do: [], else: socket.assigns.happenings)
 
     socket = socket |> assign(events: events) |> put_initial_anchor(events)
 
@@ -480,38 +555,141 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
 
   # ── Event mapping ───────────────────────────────────────────────
 
-  # One all-day bar per top-level assignment, spanning the schedule walk's
-  # calendar days. All-day (DATE-pair) rendering keeps the month grid honest
-  # for multi-day tasks and stacks same-day short tasks as chips — the
-  # hour-precise detail lives one tab over. `phoenix_live_calendar` ends are
-  # exclusive (`[start, end)`). Late bars get the shared red inset ring;
-  # `via` carries the filter provenance for the day popup.
-  # Lateness (data — drives the popup badge + Overdue-only) is independent
-  # of the marker class (dress — nil when the marker is off).
-  defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang, late?, late_class, via) do
+  # A top-level assignment's bar over the schedule walk's calendar days —
+  # all-day (DATE-pair) rendering keeps the month grid honest for multi-day
+  # tasks and stacks same-day short tasks as chips. A task with planned
+  # clock times shows them (`CalendarDisplay.planned_events/5`: a one-day
+  # task at its hours, a longer one with the times in its title).
+  # `phoenix_live_calendar` ends are exclusive (`[start, end)`). Late bars
+  # get the shared red inset ring; `via` carries the filter provenance for
+  # the day popup. Lateness (data — drives the popup badge + Overdue-only)
+  # is independent of the marker class (dress — nil when the marker is off).
+  defp to_events(it, span, lang, late?, late_class, via, view) do
     a = it.assignment
-    start_d = NaiveDateTime.to_date(s)
-    # UTC frame (nil offset) — Timeline-tab parity, unlike the Overview's
-    # viewer-local dates.
-    end_d = CalendarDisplay.exclusive_end_date(start_d, e)
 
-    PhoenixLiveCalendar.event(a.uuid, start_d,
-      title: Assignment.label(a, lang) || gettext("(untitled task)"),
-      end: end_d,
-      all_day: true,
-      color: status_color(a.status),
+    CalendarDisplay.planned_events(a, title(a, lang), span_days(span), view,
+      color: AssignmentStatusBadge.bar_color(a.status),
       class: if(late?, do: late_class),
       extra: %{status: a.status, late: late?, via: via}
     )
   end
 
-  # Status → bar color, matching the Timeline tab's bars (NOT the list badges:
-  # a light `bg-base-300` todo chip would wash out on the month grid). The
-  # calendar lib infers a readable text color for daisyUI semantic classes.
-  defp status_color("done"), do: "bg-success"
-  defp status_color("in_progress"), do: "bg-warning"
-  defp status_color("waiting"), do: "bg-neutral"
-  defp status_color(_), do: "bg-primary"
+  # The days a bar covers, inclusive: a task's own dates as they are, a
+  # computed span in the UTC frame — Timeline-tab parity, unlike the
+  # Overview's viewer-local dates.
+  defp span_days(%{pinned: {from, to}}), do: {from, to}
+
+  defp span_days(%{start: %NaiveDateTime{} = s, end: %NaiveDateTime{} = e}) do
+    start_d = NaiveDateTime.to_date(s)
+    {start_d, Date.add(CalendarDisplay.exclusive_end_date(start_d, e), -1)}
+  end
+
+  defp title(a, lang), do: Assignment.label(a, lang) || gettext("(untitled task)")
+
+  # Every task of the tree with a deadline (a subtask's too — its bar is its
+  # parent's), at its day and time in the viewer's zone, through the same
+  # person filter as the bars; Overdue-only keeps the missed ones.
+  defp deadline_events(items, scopes, assigns, lang) do
+    now = DateTime.utc_now()
+
+    items
+    |> deadline_items()
+    |> Enum.flat_map(fn it ->
+      a = it.assignment
+
+      case bar_match([a], scopes, assigns.include_unassigned?, assigns.assignee_direct_only?) do
+        :drop ->
+          []
+
+        via ->
+          missed? = CalendarDisplay.deadline_missed?(a, now)
+
+          if assigns.overdue_only? and not missed? do
+            []
+          else
+            local = a.deadline |> L10n.local() |> DateTime.to_naive()
+            event = CalendarDisplay.deadline_event(a, title(a, lang), local, missed?)
+            [%{event | extra: Map.put(event.extra, :via, via)}]
+          end
+      end
+    end)
+  end
+
+  # A person picked, Unassigned or Overdue-only: the calendar is narrowed
+  # to tasks, so events and meetings (nobody's tasks) step aside.
+  defp filtered?(assigns, scopes),
+    do: scopes != [] or assigns.include_unassigned? or assigns.overdue_only?
+
+  # The project's events (the Events extension) and its extensions'
+  # calendar items (a client meeting), when the Events tab is on: what the
+  # day holds besides tasks. A year either side of today.
+  defp happenings(%Project{uuid: uuid} = project) do
+    if Extensions.enabled?(project, "events") do
+      now = DateTime.utc_now()
+      from = DateTime.add(now, -366 * 86_400)
+      until = DateTime.add(now, 366 * 86_400)
+
+      Enum.map(ProjectEvents.list_for_project(uuid, from: from, until: until), &happening/1) ++
+        Enum.map(Extensions.calendar_items(uuid, from, until), &ext_happening/1)
+    else
+      []
+    end
+  end
+
+  defp happening(%ProjectEvent{all_day: true} = e) do
+    start_d = DateTime.to_date(e.starts_at)
+    last = if e.ends_at, do: DateTime.to_date(e.ends_at), else: start_d
+
+    PhoenixLiveCalendar.event("event:" <> e.uuid, start_d,
+      title: e.title,
+      end: Date.add(Enum.max([last, start_d], Date), 1),
+      all_day: true,
+      color: "bg-info",
+      extra: %{kind: :event}
+    )
+  end
+
+  defp happening(%ProjectEvent{} = e) do
+    timed_happening("event:" <> e.uuid, e.title, e.starts_at, e.ends_at, "bg-info")
+  end
+
+  defp ext_happening(item) do
+    cancelled? = Map.get(item, :status) == "cancelled"
+    title = if cancelled?, do: "✕ " <> item.title, else: item.title
+    color = if cancelled?, do: "bg-neutral", else: "bg-accent"
+    id = "ext:#{item.source}:#{item.id}"
+    timed_happening(id, title, item.starts_at, Map.get(item, :ends_at), color)
+  end
+
+  # A timed happening at the viewer's wall clock; with no end, an hour.
+  defp timed_happening(id, title, %DateTime{} = starts_at, ends_at, color) do
+    start = starts_at |> L10n.local() |> DateTime.to_naive()
+
+    finish =
+      case ends_at do
+        %DateTime{} = e -> e |> L10n.local() |> DateTime.to_naive()
+        _ -> NaiveDateTime.add(start, 3600)
+      end
+
+    finish =
+      if NaiveDateTime.compare(finish, start) == :gt,
+        do: finish,
+        else: NaiveDateTime.add(start, 3600)
+
+    PhoenixLiveCalendar.event(id, start,
+      title: title,
+      end: finish,
+      all_day: false,
+      color: color,
+      extra: %{kind: :event}
+    )
+  end
+
+  defp deadline_items(items) do
+    Enum.filter(items, fn it ->
+      not Assignment.subproject?(it.assignment) and match?(%DateTime{}, it.assignment.deadline)
+    end)
+  end
 
   defp click_target(%Assignment{} = a) do
     if Assignment.subproject?(a),
@@ -530,12 +708,27 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     end
   end
 
+  @doc false
+  # Today when it was on screen in the view being left, else where the
+  # grid was. Public for its test.
+  def snap_to_today(from_view, date, today, anim \\ %{}) do
+    week_start = Map.get(anim, :week_start) || 1
+
+    {first, last} =
+      DateHelpers.visible_range(from_view, date, week_start: week_start)
+
+    # `last` is exclusive.
+    if Date.compare(today, first) != :lt and Date.compare(today, last) == :lt,
+      do: today,
+      else: date
+  end
+
   defp initial_anchor([], today), do: today
 
   defp initial_anchor(events, today) do
-    first = events |> Enum.map(& &1.start) |> Enum.min(Date)
-    # Exclusive ends: the last occupied day is `end - 1`.
-    last = events |> Enum.map(&Date.add(&1.end, -1)) |> Enum.max(Date)
+    days = Enum.map(events, &CalendarDisplay.event_days/1)
+    first = days |> Enum.map(&elem(&1, 0)) |> Enum.min(Date)
+    last = days |> Enum.map(&elem(&1, 1)) |> Enum.max(Date)
 
     if Date.compare(today, first) != :lt and Date.compare(today, last) != :gt,
       do: today,
@@ -620,11 +813,22 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
               if(@overdue_anim, do: CalendarDisplay.animation_style(@overdue_anim), else: "")
             )}
             <div id={"project-calendar-sync-#{@project.uuid}"} phx-hook="SyncAnimations">
+            <%!-- Week and Day open at the start of the work day, not at
+                 midnight (`PkpCalendarWorkday`): their time grid scrolls
+                 inside its own box, so the toolbar stays in sight. --%>
+            <div
+              id={"project-calendar-workday-#{@project.uuid}"}
+              phx-hook="PkpCalendarWorkday"
+              data-start={@workday_start}
+            >
             <.live_component
               module={PhoenixLiveCalendar.CalendarComponent}
+              class={CalendarDisplay.time_grid_class()}
+              translations={CalendarDisplay.translations()}
               id={"project-calendar-#{@project.uuid}"}
               events={@events}
-              views={[:month]}
+              views={[:month, :week, :day]}
+              time_format={CalendarDisplay.time_format()}
               date={@anchor_date}
               today={@today}
               week_start={@overdue_anim.week_start}
@@ -638,6 +842,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
               on_event_click={fn id -> send(self(), {:calendar_event_click, id}) end}
               on_date_select={fn date -> send(self(), {:calendar_date_click, date}) end}
               on_more_click={fn date -> send(self(), {:calendar_more_click, date}) end}
+              on_view_change={fn %{view: view} -> send(self(), {:calendar_view, view}) end}
+              on_date_range_change={fn %{view: view, date: date} -> send(self(), {:calendar_range, view, date}) end}
             >
               <%!-- Same shared Filters popup as the Overview calendar (person
                    chips with descendant-aware sub-project matching, Unassigned,
@@ -667,28 +873,20 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                   {gettext("Each task spans the days it is scheduled to run, in the project's task order — the same schedule as the Timeline tab.")}
                 </p>
                 <p class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-neutral"></span>
-                    {gettext("waiting")}
+                  <span :for={status <- ~w(waiting todo in_progress done)} class="inline-flex items-center gap-1.5">
+                    <span class={["inline-block w-2.5 h-2.5 rounded-full", AssignmentStatusBadge.bar_color(status)]}></span>
+                    {AssignmentStatusBadge.label(status)}
                   </span>
-                  <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-primary"></span>
-                    {gettext("can be started")}
-                  </span>
-                  <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>
-                    {gettext("in progress")}
-                  </span>
-                  <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-success"></span>
-                    {gettext("done")}
-                  </span>
+                </p>
+                <p class="mt-1.5">
+                  {gettext("⚑ marks a task's deadline at its time, red once it has passed. A task with planned times shows them.")}
                 </p>
                 <p class="mt-1.5 text-base-content/50">
                   {gettext("Click a task to edit it; a sub-project opens the child project.")}
                 </p>
               </:info>
             </.live_component>
+            </div>
             </div>
           </div>
 

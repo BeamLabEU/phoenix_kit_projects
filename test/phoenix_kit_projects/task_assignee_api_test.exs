@@ -108,6 +108,52 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       assert json_response(resp, 200)["task"]["assignee"]["uuid"] == me.person.uuid
     end
 
+    test "several assignees: `assignees` sets the list, `assignee` is null for several", %{
+      conn: conn,
+      me: me,
+      colleague: colleague
+    } do
+      {:ok, team} = Teams.create(%{"name" => "Team-#{uniq()}", "department_uuid" => me.dept.uuid})
+
+      resp =
+        create(conn, %{
+          title: "Ours",
+          assignees: ["me", colleague.person.uuid, %{team: team.uuid}]
+        })
+
+      assert %{"uuid" => uuid, "assignee" => nil, "assignees" => list} =
+               json_response(resp, 201)["task"]
+
+      assert Enum.map(list, & &1["uuid"]) == [me.person.uuid, colleague.person.uuid, team.uuid]
+
+      # the colleague finds it among their tasks
+      assert Enum.any?(
+               conn
+               |> get("#{@base}/tasks?assignee=#{colleague.person.uuid}")
+               |> json_response(200)
+               |> Map.get("tasks"),
+               &(&1["uuid"] == uuid)
+             )
+
+      # `assignee` makes one the whole list again
+      resp = patch(conn, "#{@base}/tasks/#{uuid}", Jason.encode!(%{assignee: "me"}))
+      task = json_response(resp, 200)["task"]
+      assert task["assignee"]["uuid"] == me.person.uuid
+      assert length(task["assignees"]) == 1
+
+      resp = patch(conn, "#{@base}/tasks/#{uuid}", Jason.encode!(%{assignees: []}))
+      assert json_response(resp, 200)["task"]["assignees"] == []
+
+      resp =
+        patch(
+          conn,
+          "#{@base}/tasks/#{uuid}",
+          Jason.encode!(%{assignee: "me", assignees: ["me"]})
+        )
+
+      assert json_response(resp, 422)
+    end
+
     test "a team or a department, one at a time", %{conn: conn, me: me} do
       {:ok, team} = Teams.create(%{"name" => "Team-#{uniq()}", "department_uuid" => me.dept.uuid})
 
@@ -335,17 +381,22 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
   end
 
   describe "an ongoing project's page" do
-    test "has no start bar: no Ongoing tag, no setup line, nothing to start", %{conn: conn} do
+    test "has no start bar: no setup line, nothing to start; Ongoing beside its name", %{
+      conn: conn
+    } do
       conn = put_test_scope(conn, fake_scope())
       project = fixture_project()
 
       {:ok, project} =
-        Projects.update_project(project, %{"settings" => %{"completion" => "manual"}})
+        Projects.update_project(project, %{
+          "settings" => %{"completion" => "manual", "header" => %{"ongoing" => true}}
+        })
 
       _ = task(project, "One")
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      refute html =~ "Ongoing"
+      # The "∞ Ongoing" badge beside the name (item 33), and nothing else.
+      assert html =~ ~s(data-id="project-ongoing-#{project.uuid}")
       refute html =~ "Start project"
       refute html =~ "set up tasks, then start"
 
@@ -393,8 +444,10 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       assert Project.derived_status(waiting) == :scheduled
       assert fixture_project(%{"settings" => ongoing, "is_template" => true}).started_at == nil
 
+      # A plain project not yet started is offered its Start (on the header
+      # line since the boss's review of 2026-10-30).
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{fixture_project().uuid}")
-      assert html =~ "set up tasks, then start"
+      assert html =~ "Start project"
     end
   end
 end

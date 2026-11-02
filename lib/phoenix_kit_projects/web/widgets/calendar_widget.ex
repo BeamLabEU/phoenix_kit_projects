@@ -27,7 +27,6 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
   import PhoenixKitProjects.Web.Widgets.Helpers
 
   alias PhoenixKitProjects.{CalendarDisplay, L10n, Paths, Projects, RunningTiers, ScheduleLayout}
-  alias PhoenixKitProjects.Schemas.Assignment
 
   @impl true
   def update(assigns, socket) do
@@ -92,20 +91,12 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
 
     # Batched: the whole forest's assignments in one read per depth level
     # (this runs every 60 s, per viewer — the #40 review).
+    # Every task with a chip of its own, and every deadline to mark.
     items =
       projects
       |> Enum.uniq_by(& &1.uuid)
       |> ScheduleLayout.trees()
-      |> Enum.flat_map(fn {items, layout} ->
-        items
-        |> Enum.reject(&Assignment.subproject?(&1.assignment))
-        # A subtask is on the calendar only with a date of its own; the
-        # task it sits under covers its days otherwise.
-        |> Enum.filter(
-          &(is_nil(&1.assignment.parent_uuid) or ScheduleLayout.dated?(&1.assignment))
-        )
-        |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
-      end)
+      |> CalendarDisplay.calendar_items()
       |> only_mine(settings, scope)
 
     now = DateTime.utc_now() |> DateTime.to_naive()
@@ -195,6 +186,7 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
         <div id={"#{@id}-sync"} phx-hook="SyncAnimations" class="h-full min-h-0 overflow-hidden text-xs">
           <.live_component
             module={PhoenixLiveCalendar.CalendarComponent}
+            translations={CalendarDisplay.translations()}
             id={"#{@id}-calendar"}
             events={@events}
             views={[String.to_existing_atom(@view)]}
@@ -209,6 +201,7 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
             max_events={@anim.max_events}
             max_multiday={@anim.max_multiday}
             show_header={true}
+            time_format={CalendarDisplay.time_format()}
           />
         </div>
       </.frame>

@@ -27,12 +27,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
         |> form("#project-form",
           project: %{
             name: "",
-            description: "",
             start_mode: "immediate",
             counts_weekends: "false"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"project" => %{"description" => ""}})
 
       # Form re-renders, no redirect, error visible.
       assert html =~ "can&#39;t be blank" or html =~ "can't be blank"
@@ -50,12 +49,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
         |> form("#project-form",
           project: %{
             name: "",
-            description: "",
             start_mode: "immediate",
             counts_weekends: "false"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"project" => %{"description" => ""}})
 
       assert html =~ "can&#39;t be blank" or html =~ "can't be blank"
     end
@@ -138,12 +136,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
         |> form("#project-form",
           project: %{
             name: "X",
-            description: "",
             start_mode: "scheduled",
             counts_weekends: "false"
           }
         )
-        |> render_change()
+        |> render_change(%{"project" => %{"description" => ""}})
 
       assert html =~ "scheduled" or html =~ "Scheduled"
     end

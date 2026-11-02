@@ -67,11 +67,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       # Create new is the default tab; these cases pick from the library.
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+      # A library pick is a tick in the picker (item 27).
+      render_click(view, "library_toggle", %{"uuid" => task.uuid})
 
       _ =
         view
         |> form("#assignment-form",
-          assignment: %{task_uuid: task.uuid, status: "todo"},
+          assignment: %{status: "todo"},
           task_mode: "existing"
         )
         |> render_change()
@@ -91,11 +93,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       # Create new is the default tab; these cases pick from the library.
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+      # A library pick is a tick in the picker (item 27).
+      render_click(view, "library_toggle", %{"uuid" => task.uuid})
 
       {:error, {:live_redirect, %{to: redirect_to}}} =
         view
         |> form("#assignment-form",
-          assignment: %{task_uuid: task.uuid, status: "todo"},
+          assignment: %{status: "todo"},
           task_mode: "existing"
         )
         |> render_submit()
@@ -147,14 +151,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
         |> form("#assignment-form",
           assignment: %{
             status: "todo",
-            description: "x",
             estimated_duration: "1",
             estimated_duration_unit: "hours"
           },
           task_mode: "new",
           task: %{title: title}
         )
-        |> render_submit()
+        |> render_submit(%{"assignment" => %{"description" => "x"}})
 
       assert_activity_logged("projects.assignment_created",
         actor_uuid: actor_uuid,
@@ -282,11 +285,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       view
       |> form("#assignment-form",
         assignment: %{
-          status: "in_progress",
-          description: "updated description"
+          status: "in_progress"
         }
       )
-      |> render_submit()
+      |> render_submit(%{"assignment" => %{"description" => "updated description"}})
 
       assert PhoenixKitProjects.Projects.get_assignment(assignment.uuid).description ==
                "updated description"

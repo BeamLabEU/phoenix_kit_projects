@@ -61,6 +61,9 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
          has_more: false,
          total: 0
        )
+       # Opened as a popup, the browser tab keeps its page's title (LiveView
+       # applies every LV's page_title, nested ones too).
+       |> WebHelpers.keep_host_title()
        |> load_page()}
     else
       :not_found -> bounce(socket, gettext("Project not found."))

@@ -44,7 +44,6 @@ defmodule PhoenixKitProjects.Hours do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKitProjects.{Authz, L10n, Members, Projects}
   alias PhoenixKitProjects.People.Person
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task, WorkEntry}
@@ -926,21 +925,9 @@ defmodule PhoenixKitProjects.Hours do
 
   defp users_by_uuid([]), do: %{}
 
-  defp users_by_uuid(uuids) do
-    uuids
-    |> Enum.uniq()
-    |> UsersAuth.get_users_by_uuids()
-    |> Map.new(&{&1.uuid, user_name(&1)})
-  rescue
-    _ -> %{}
-  end
-
-  defp user_name(user) do
-    case UsersAuth.User.full_name(user) do
-      name when is_binary(name) and name != "" -> name
-      _ -> user.email
-    end
-  end
+  # An account without a first and last name showed as its email in the
+  # time logs although its staff person was named: that name comes first.
+  defp users_by_uuid(uuids), do: PhoenixKitProjects.People.user_display_names(uuids)
 
   defp people_by_uuid([]), do: %{}
 

@@ -138,7 +138,8 @@ defmodule PhoenixKitProjects.Web.ApiReview48Test do
   end
 
   describe "figures past the column are a 422, never a 500" do
-    test "minutes, tokens, cost and an amendment", %{conn: conn, token: token} do
+    test "minutes, tokens, cost and an amendment", %{conn: conn, token: token, project: project} do
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"project_time" => true})
       c = api(conn, token)
       t = new_task(c)
 

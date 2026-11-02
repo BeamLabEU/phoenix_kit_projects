@@ -22,7 +22,7 @@ defmodule PhoenixKitProjects.ExpectedSchema do
   @schema_token "__SCHEMA__"
   @name_marker_exempt "__PK_NAME_EXEMPT__"
   @name_marker_always "__PK_NAME_ALWAYS__"
-  @chain_hash "875b748fcb7c67fa88453751de9a78947276332f068e2299a2aa7a42b4631840"
+  @chain_hash "a4a41f511d72f0555efd1752f45c390acd8b25f7054b748018f778f4530911de"
 
   def objects(prefix) do
     prefix = normalize_prefix!(prefix)
@@ -98,6 +98,547 @@ defmodule PhoenixKitProjects.ExpectedSchema do
   defp raw_objects do
     [
       %{
+        id: "table:phoenix_kit_project_assignment_assignees",
+        owner: :phoenix_kit_projects,
+        check: {:catalog, %{name: "phoenix_kit_project_assignment_assignees", kind: :table}},
+        create:
+          "CREATE TABLE IF NOT EXISTS __SCHEMA__.phoenix_kit_project_assignment_assignees ()",
+        since: 1,
+        class: :table,
+        revisions: [{1, %{}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_assignees.uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignment_assignees", column: "uuid", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD COLUMN IF NOT EXISTS \"uuid\" uuid DEFAULT __SCHEMA__.uuid_generate_v7() NOT NULL",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: "__SCHEMA__.uuid_generate_v7()", type: "uuid", pos: 1, not_null: true}}
+        ],
+        presence: :required,
+        backfill: :default
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_assignees.assignment_uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             column: "assignment_uuid",
+             kind: :column
+           }},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD COLUMN IF NOT EXISTS \"assignment_uuid\" uuid NOT NULL",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "uuid", pos: 2, not_null: true}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_assignees.person_uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             column: "person_uuid",
+             kind: :column
+           }},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD COLUMN IF NOT EXISTS \"person_uuid\" uuid",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "uuid", pos: 3, not_null: false}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_assignees.team_uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             column: "team_uuid",
+             kind: :column
+           }},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD COLUMN IF NOT EXISTS \"team_uuid\" uuid",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "uuid", pos: 4, not_null: false}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_assignees.department_uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             column: "department_uuid",
+             kind: :column
+           }},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD COLUMN IF NOT EXISTS \"department_uuid\" uuid",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "uuid", pos: 5, not_null: false}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_assignees.position",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignment_assignees", column: "position", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD COLUMN IF NOT EXISTS \"position\" integer DEFAULT 0 NOT NULL",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: "0", type: "integer", pos: 6, not_null: true}}],
+        presence: :required,
+        backfill: :default
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_assignees.inserted_at",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             column: "inserted_at",
+             kind: :column
+           }},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD COLUMN IF NOT EXISTS \"inserted_at\" timestamp with time zone DEFAULT now() NOT NULL",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: "now()", type: "timestamp with time zone", pos: 7, not_null: true}}
+        ],
+        presence: :required,
+        backfill: :default
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_assignees_assignment_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_assignment_index",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :index
+           }},
+        create:
+          "CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_assignment_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, \"position\")",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             keys: ["assignment_uuid", "\"position\""],
+             unique: false,
+             definition:
+               "CREATE INDEX phoenix_kit_project_assignment_assignees_assignment_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, \"position\")",
+             method: "btree",
+             predicate: nil,
+             opclasses: ["uuid_ops", "int4_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_assignees_person_pair_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_person_pair_index",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :index
+           }},
+        create:
+          "CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_person_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, person_uuid) WHERE (person_uuid IS NOT NULL)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             keys: ["assignment_uuid", "person_uuid"],
+             unique: true,
+             definition:
+               "CREATE UNIQUE INDEX phoenix_kit_project_assignment_assignees_person_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, person_uuid) WHERE (person_uuid IS NOT NULL)",
+             method: "btree",
+             predicate: "(person_uuid IS NOT NULL)",
+             opclasses: ["uuid_ops", "uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_assignees_person_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_person_index",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :index
+           }},
+        create:
+          "CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_person_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (person_uuid) WHERE (person_uuid IS NOT NULL)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             keys: ["person_uuid"],
+             unique: false,
+             definition:
+               "CREATE INDEX phoenix_kit_project_assignment_assignees_person_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (person_uuid) WHERE (person_uuid IS NOT NULL)",
+             method: "btree",
+             predicate: "(person_uuid IS NOT NULL)",
+             opclasses: ["uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_assignees_team_pair_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_team_pair_index",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :index
+           }},
+        create:
+          "CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_team_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, team_uuid) WHERE (team_uuid IS NOT NULL)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             keys: ["assignment_uuid", "team_uuid"],
+             unique: true,
+             definition:
+               "CREATE UNIQUE INDEX phoenix_kit_project_assignment_assignees_team_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, team_uuid) WHERE (team_uuid IS NOT NULL)",
+             method: "btree",
+             predicate: "(team_uuid IS NOT NULL)",
+             opclasses: ["uuid_ops", "uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_assignees_team_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_team_index",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :index
+           }},
+        create:
+          "CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_team_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (team_uuid) WHERE (team_uuid IS NOT NULL)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             keys: ["team_uuid"],
+             unique: false,
+             definition:
+               "CREATE INDEX phoenix_kit_project_assignment_assignees_team_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (team_uuid) WHERE (team_uuid IS NOT NULL)",
+             method: "btree",
+             predicate: "(team_uuid IS NOT NULL)",
+             opclasses: ["uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_assignees_department_pair_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_department_pair_index",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :index
+           }},
+        create:
+          "CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_department_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, department_uuid) WHERE (department_uuid IS NOT NULL)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             keys: ["assignment_uuid", "department_uuid"],
+             unique: true,
+             definition:
+               "CREATE UNIQUE INDEX phoenix_kit_project_assignment_assignees_department_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (assignment_uuid, department_uuid) WHERE (department_uuid IS NOT NULL)",
+             method: "btree",
+             predicate: "(department_uuid IS NOT NULL)",
+             opclasses: ["uuid_ops", "uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_assignees_department_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_department_index",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :index
+           }},
+        create:
+          "CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_assignees_department_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (department_uuid) WHERE (department_uuid IS NOT NULL)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_assignees",
+             keys: ["department_uuid"],
+             unique: false,
+             definition:
+               "CREATE INDEX phoenix_kit_project_assignment_assignees_department_index ON __SCHEMA__.phoenix_kit_project_assignment_assignees USING btree (department_uuid) WHERE (department_uuid IS NOT NULL)",
+             method: "btree",
+             predicate: "(department_uuid IS NOT NULL)",
+             opclasses: ["uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_assignees.phoenix_kit_project_assignment_assignees_pkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_pkey",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_assignees_pkey'\n      AND t.relname = 'phoenix_kit_project_assignment_assignees'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD CONSTRAINT phoenix_kit_project_assignment_assignees_pkey PRIMARY KEY (uuid);\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "p",
+             columns: ["uuid"],
+             definition: "PRIMARY KEY (uuid)",
+             name_template: nil,
+             foreign_table: nil,
+             foreign_columns: nil,
+             on_delete: nil,
+             on_update: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_assignees.phoenix_kit_project_assignment_assignees_one_subject",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_one_subject",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_assignees_one_subject'\n      AND t.relname = 'phoenix_kit_project_assignment_assignees'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD CONSTRAINT phoenix_kit_project_assignment_assignees_one_subject CHECK ((num_nonnulls(person_uuid, team_uuid, department_uuid) = 1));\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "c",
+             columns: ["person_uuid", "team_uuid", "department_uuid"],
+             definition: "CHECK ((num_nonnulls(person_uuid, team_uuid, department_uuid) = 1))",
+             name_template: nil,
+             foreign_table: nil,
+             foreign_columns: nil,
+             on_delete: nil,
+             on_update: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_assignees.phoenix_kit_project_assignment_assignees_assignment_uuid_fkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_assignment_uuid_fkey",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_assignees_assignment_uuid_fkey'\n      AND t.relname = 'phoenix_kit_project_assignment_assignees'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD CONSTRAINT phoenix_kit_project_assignment_assignees_assignment_uuid_fkey FOREIGN KEY (assignment_uuid) REFERENCES __SCHEMA__.phoenix_kit_project_assignments(uuid) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "f",
+             columns: ["assignment_uuid"],
+             definition:
+               "FOREIGN KEY (assignment_uuid) REFERENCES __SCHEMA__.phoenix_kit_project_assignments(uuid) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED",
+             name_template: nil,
+             foreign_table: "phoenix_kit_project_assignments",
+             foreign_columns: ["uuid"],
+             on_delete: "c",
+             on_update: "a"
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_assignees.phoenix_kit_project_assignment_assignees_person_uuid_fkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_person_uuid_fkey",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_assignees_person_uuid_fkey'\n      AND t.relname = 'phoenix_kit_project_assignment_assignees'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD CONSTRAINT phoenix_kit_project_assignment_assignees_person_uuid_fkey FOREIGN KEY (person_uuid) REFERENCES __SCHEMA__.phoenix_kit_staff_people(uuid) ON DELETE CASCADE;\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "f",
+             columns: ["person_uuid"],
+             definition:
+               "FOREIGN KEY (person_uuid) REFERENCES __SCHEMA__.phoenix_kit_staff_people(uuid) ON DELETE CASCADE",
+             name_template: nil,
+             foreign_table: "phoenix_kit_staff_people",
+             foreign_columns: ["uuid"],
+             on_delete: "c",
+             on_update: "a"
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_assignees.phoenix_kit_project_assignment_assignees_team_uuid_fkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_team_uuid_fkey",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_assignees_team_uuid_fkey'\n      AND t.relname = 'phoenix_kit_project_assignment_assignees'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD CONSTRAINT phoenix_kit_project_assignment_assignees_team_uuid_fkey FOREIGN KEY (team_uuid) REFERENCES __SCHEMA__.phoenix_kit_staff_teams(uuid) ON DELETE CASCADE;\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "f",
+             columns: ["team_uuid"],
+             definition:
+               "FOREIGN KEY (team_uuid) REFERENCES __SCHEMA__.phoenix_kit_staff_teams(uuid) ON DELETE CASCADE",
+             name_template: nil,
+             foreign_table: "phoenix_kit_staff_teams",
+             foreign_columns: ["uuid"],
+             on_delete: "c",
+             on_update: "a"
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_assignees.phoenix_kit_project_assignment_assignees_department_uuid_fkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_assignees_department_uuid_fkey",
+             table: "phoenix_kit_project_assignment_assignees",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_assignees_department_uuid_fkey'\n      AND t.relname = 'phoenix_kit_project_assignment_assignees'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_assignees ADD CONSTRAINT phoenix_kit_project_assignment_assignees_department_uuid_fkey FOREIGN KEY (department_uuid) REFERENCES __SCHEMA__.phoenix_kit_staff_departments(uuid) ON DELETE CASCADE;\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "f",
+             columns: ["department_uuid"],
+             definition:
+               "FOREIGN KEY (department_uuid) REFERENCES __SCHEMA__.phoenix_kit_staff_departments(uuid) ON DELETE CASCADE",
+             name_template: nil,
+             foreign_table: "phoenix_kit_staff_departments",
+             foreign_columns: ["uuid"],
+             on_delete: "c",
+             on_update: "a"
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
         id: "table:phoenix_kit_project_api_idempotency",
         owner: :phoenix_kit_projects,
         check: {:catalog, %{name: "phoenix_kit_project_api_idempotency", kind: :table}},
@@ -135,6 +676,17 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         owner: :phoenix_kit_projects,
         check: {:catalog, %{name: "phoenix_kit_project_api_keys", kind: :table}},
         create: "CREATE TABLE IF NOT EXISTS __SCHEMA__.phoenix_kit_project_api_keys ()",
+        since: 1,
+        class: :table,
+        revisions: [{1, %{}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "table:phoenix_kit_project_assignment_files",
+        owner: :phoenix_kit_projects,
+        check: {:catalog, %{name: "phoenix_kit_project_assignment_files", kind: :table}},
+        create: "CREATE TABLE IF NOT EXISTS __SCHEMA__.phoenix_kit_project_assignment_files ()",
         since: 1,
         class: :table,
         revisions: [{1, %{}}],
@@ -857,6 +1409,102 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         backfill: :default
       },
       %{
+        id: "column:phoenix_kit_project_assignment_files.added_by_uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             table: "phoenix_kit_project_assignment_files",
+             column: "added_by_uuid",
+             kind: :column
+           }},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD COLUMN IF NOT EXISTS \"added_by_uuid\" uuid",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "uuid", pos: 5, not_null: false}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_files.assignment_uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             table: "phoenix_kit_project_assignment_files",
+             column: "assignment_uuid",
+             kind: :column
+           }},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD COLUMN IF NOT EXISTS \"assignment_uuid\" uuid",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "uuid", pos: 2, not_null: true}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_files.file_uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignment_files", column: "file_uuid", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD COLUMN IF NOT EXISTS \"file_uuid\" uuid",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "uuid", pos: 3, not_null: true}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_files.inline",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignment_files", column: "inline", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD COLUMN IF NOT EXISTS \"inline\" boolean DEFAULT false NOT NULL",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: "false", type: "boolean", pos: 4, not_null: true}}],
+        presence: :required,
+        backfill: :default
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_files.inserted_at",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignment_files", column: "inserted_at", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD COLUMN IF NOT EXISTS \"inserted_at\" timestamp with time zone DEFAULT now() NOT NULL",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: "now()", type: "timestamp with time zone", pos: 6, not_null: true}}
+        ],
+        presence: :required,
+        backfill: :default
+      },
+      %{
+        id: "column:phoenix_kit_project_assignment_files.uuid",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignment_files", column: "uuid", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD COLUMN IF NOT EXISTS \"uuid\" uuid DEFAULT __SCHEMA__.uuid_generate_v7() NOT NULL",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: "__SCHEMA__.uuid_generate_v7()", type: "uuid", pos: 1, not_null: true}}
+        ],
+        presence: :required,
+        backfill: :default
+      },
+      %{
         id: "column:phoenix_kit_project_assignment_labels.assignment_uuid",
         owner: :phoenix_kit_projects,
         check:
@@ -1284,6 +1932,20 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         revisions: [{1, %{default: "false", type: "boolean", pos: 22, not_null: true}}],
         presence: :required,
         backfill: :default
+      },
+      %{
+        id: "column:phoenix_kit_project_assignments.repeat_rule",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignments", column: "repeat_rule", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignments ADD COLUMN IF NOT EXISTS \"repeat_rule\" jsonb",
+        since: 1,
+        class: :column,
+        revisions: [{1, %{default: nil, type: "jsonb", pos: 42, not_null: false}}],
+        presence: :required,
+        backfill: nil
       },
       %{
         id: "column:phoenix_kit_project_assignments.review_status",
@@ -4024,6 +4686,68 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         backfill: nil
       },
       %{
+        id: "index:phoenix_kit_project_assignment_files_file_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_files_file_index",
+             table: "phoenix_kit_project_assignment_files",
+             kind: :index
+           }},
+        create:
+          "CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_files_file_index ON __SCHEMA__.phoenix_kit_project_assignment_files USING btree (file_uuid)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_files",
+             keys: ["file_uuid"],
+             unique: false,
+             definition:
+               "CREATE INDEX phoenix_kit_project_assignment_files_file_index ON __SCHEMA__.phoenix_kit_project_assignment_files USING btree (file_uuid)",
+             method: "btree",
+             predicate: nil,
+             opclasses: ["uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignment_files_pair_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_files_pair_index",
+             table: "phoenix_kit_project_assignment_files",
+             kind: :index
+           }},
+        create:
+          "CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_assignment_files_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_files USING btree (assignment_uuid, file_uuid)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignment_files",
+             keys: ["assignment_uuid", "file_uuid"],
+             unique: true,
+             definition:
+               "CREATE UNIQUE INDEX phoenix_kit_project_assignment_files_pair_index ON __SCHEMA__.phoenix_kit_project_assignment_files USING btree (assignment_uuid, file_uuid)",
+             method: "btree",
+             predicate: nil,
+             opclasses: ["uuid_ops", "uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
         id: "index:phoenix_kit_project_assignment_labels_label_index",
         owner: :phoenix_kit_projects,
         check:
@@ -5693,6 +6417,37 @@ defmodule PhoenixKitProjects.ExpectedSchema do
       },
       %{
         id:
+          "constraint:phoenix_kit_project_assignment_files.phoenix_kit_project_assignment_files_pkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_files_pkey",
+             table: "phoenix_kit_project_assignment_files",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_files_pkey'\n      AND t.relname = 'phoenix_kit_project_assignment_files'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD CONSTRAINT phoenix_kit_project_assignment_files_pkey PRIMARY KEY (uuid);\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "p",
+             columns: ["uuid"],
+             definition: "PRIMARY KEY (uuid)",
+             name_template: nil,
+             foreign_table: nil,
+             foreign_columns: nil,
+             on_delete: nil,
+             on_update: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
           "constraint:phoenix_kit_project_assignment_labels.phoenix_kit_project_assignment_labels_pkey",
         owner: :phoenix_kit_projects,
         check:
@@ -7017,6 +7772,70 @@ defmodule PhoenixKitProjects.ExpectedSchema do
              foreign_table: "phoenix_kit_projects",
              foreign_columns: ["uuid"],
              on_delete: "n",
+             on_update: "a"
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_files.phoenix_kit_project_assignment_files_assignment_uuid_fkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_files_assignment_uuid_fkey",
+             table: "phoenix_kit_project_assignment_files",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_files_assignment_uuid_fkey'\n      AND t.relname = 'phoenix_kit_project_assignment_files'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD CONSTRAINT phoenix_kit_project_assignment_files_assignment_uuid_fkey FOREIGN KEY (assignment_uuid) REFERENCES __SCHEMA__.phoenix_kit_project_assignments(uuid) ON DELETE CASCADE;\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "f",
+             columns: ["assignment_uuid"],
+             definition:
+               "FOREIGN KEY (assignment_uuid) REFERENCES __SCHEMA__.phoenix_kit_project_assignments(uuid) ON DELETE CASCADE",
+             name_template: nil,
+             foreign_table: "phoenix_kit_project_assignments",
+             foreign_columns: ["uuid"],
+             on_delete: "c",
+             on_update: "a"
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id:
+          "constraint:phoenix_kit_project_assignment_files.phoenix_kit_project_assignment_files_file_uuid_fkey",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignment_files_file_uuid_fkey",
+             table: "phoenix_kit_project_assignment_files",
+             kind: :constraint
+           }},
+        create:
+          "DO $$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1\n    FROM pg_constraint c\n    JOIN pg_class t ON t.oid = c.conrelid\n    JOIN pg_namespace n ON n.oid = t.relnamespace\n    WHERE c.conname = 'phoenix_kit_project_assignment_files_file_uuid_fkey'\n      AND t.relname = 'phoenix_kit_project_assignment_files'\n      AND n.nspname = '__SCHEMA__'\n  ) THEN\n    ALTER TABLE __SCHEMA__.phoenix_kit_project_assignment_files ADD CONSTRAINT phoenix_kit_project_assignment_files_file_uuid_fkey FOREIGN KEY (file_uuid) REFERENCES __SCHEMA__.phoenix_kit_files(uuid) ON DELETE CASCADE;\n  END IF;\nEND\n$$",
+        since: 1,
+        class: :constraint,
+        revisions: [
+          {1,
+           %{
+             type: "f",
+             columns: ["file_uuid"],
+             definition:
+               "FOREIGN KEY (file_uuid) REFERENCES __SCHEMA__.phoenix_kit_files(uuid) ON DELETE CASCADE",
+             name_template: nil,
+             foreign_table: "phoenix_kit_files",
+             foreign_columns: ["uuid"],
+             on_delete: "c",
              on_update: "a"
            }}
         ],

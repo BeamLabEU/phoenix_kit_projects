@@ -64,12 +64,11 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
         |> form("#task-form",
           task: %{
             title: "",
-            description: "",
             estimated_duration: "1",
             estimated_duration_unit: "hours"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"task" => %{"description" => ""}})
 
       # `validate_required(:title)` fires + form re-renders.
       assert html =~ "task-form"
@@ -87,12 +86,11 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
         |> form("#task-form",
           task: %{
             title: "",
-            description: "",
             estimated_duration: "1",
             estimated_duration_unit: "hours"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"task" => %{"description" => ""}})
 
       assert html =~ "task-form"
     end
@@ -110,10 +108,10 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
             title: task.title,
             estimated_duration: "1",
             estimated_duration_unit: "hours"
-          },
-          default_assign_type: "team"
+          }
         )
-        |> render_submit()
+        # The kind rides the shared picker's hidden input.
+        |> render_submit(%{"default_assign_type" => "team"})
     end
 
     test "save with default_assign_type=department triggers the dept clear branch",
@@ -129,10 +127,10 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
             title: task.title,
             estimated_duration: "1",
             estimated_duration_unit: "hours"
-          },
-          default_assign_type: "department"
+          }
         )
-        |> render_submit()
+        # The kind rides the shared picker's hidden input.
+        |> render_submit(%{"default_assign_type" => "department"})
     end
 
     test "save with default_assign_type=person triggers the person clear branch",
@@ -148,10 +146,10 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
             title: task.title,
             estimated_duration: "1",
             estimated_duration_unit: "hours"
-          },
-          default_assign_type: "person"
+          }
         )
-        |> render_submit()
+        # The kind rides the shared picker's hidden input.
+        |> render_submit(%{"default_assign_type" => "person"})
     end
 
     test "save with default_assign_type='' triggers the catch-all clear branch",

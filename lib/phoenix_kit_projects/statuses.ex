@@ -30,6 +30,8 @@ defmodule PhoenixKitProjects.Statuses do
   mirrors `PhoenixKitProjects.Translations`.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   import Ecto.Query
 
   require Logger
@@ -389,8 +391,8 @@ defmodule PhoenixKitProjects.Statuses do
             |> Enum.split_with(&status_tagged?/1)
 
           [
-            {"Status lists", Enum.map(tagged, &{entity_label(&1), &1.uuid})},
-            {"Other entities", Enum.map(others, &{entity_label(&1), &1.uuid})}
+            {gettext("Status lists"), Enum.map(tagged, &{entity_label(&1), &1.uuid})},
+            {gettext("Other entities"), Enum.map(others, &{entity_label(&1), &1.uuid})}
           ]
           |> Enum.reject(fn {_group, items} -> items == [] end)
         end,

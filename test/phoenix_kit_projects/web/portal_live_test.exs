@@ -418,7 +418,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       {:ok, view, _html} = live(conn, issue_path(portal, assignment))
       {:ok, _} = Projects.update_assignment_status(assignment, %{status: "in_progress"})
 
-      assert has_element?(view, "header", "in progress")
+      assert has_element?(view, "header", "In progress")
     end
 
     test "deleting an issue removes its open discussion", %{

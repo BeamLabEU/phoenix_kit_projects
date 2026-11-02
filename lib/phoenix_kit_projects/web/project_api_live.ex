@@ -62,6 +62,9 @@ defmodule PhoenixKitProjects.Web.ProjectApiLive do
          can_manage:
            Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :manage_modules)
        )
+       # Opened as a popup, the browser tab keeps its page's title (LiveView
+       # applies every LV's page_title, nested ones too).
+       |> WebHelpers.keep_host_title()
        |> load_keys()}
     else
       :not_found -> bounce(socket, gettext("Project not found."))
@@ -142,6 +145,15 @@ defmodule PhoenixKitProjects.Web.ProjectApiLive do
       if key == preset, do: label
     end)
   end
+
+  @doc "A project role's name, translated — the word an \"acts as\" line shows."
+  @spec role_name(String.t() | atom() | nil) :: String.t()
+  def role_name(role) when is_atom(role) and not is_nil(role), do: role_name(Atom.to_string(role))
+  def role_name("owner"), do: gettext("Owner")
+  def role_name("manager"), do: gettext("Manager")
+  def role_name("member"), do: gettext("Member")
+  def role_name("viewer"), do: gettext("Viewer")
+  def role_name(other), do: to_string(other)
 
   @doc false
   def source_label(:direct), do: gettext("set on this project")
@@ -226,7 +238,7 @@ defmodule PhoenixKitProjects.Web.ProjectApiLive do
               <dd>
                 {access_label(row.access)}
                 <span :if={row.access} class="text-base-content/60">
-                  · {gettext("acts as %{role}", role: row.access.role)} · {source_label(row.source)}
+                  · {gettext("acts as %{role}", role: role_name(row.access.role))} · {source_label(row.source)}
                 </span>
               </dd>
               <dt class="text-base-content/60">{gettext("Home project")}</dt>

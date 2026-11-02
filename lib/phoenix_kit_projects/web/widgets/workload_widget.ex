@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
 
   alias PhoenixKitProjects.{Paths, Projects}
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
 
   @impl true
   def update(assigns, socket) do
@@ -115,10 +116,10 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
             {gettext("Tasks")}
           </p>
           <div class="grid min-h-0 flex-1 grid-cols-4 gap-1.5">
-            <.kpi small label={gettext("Waiting")} value={@tasks["waiting"] || 0} tone="text-base-content/60" />
-            <.kpi small label={gettext("Can be started")} value={@tasks["todo"] || 0} tone="text-info" />
-            <.kpi small label={gettext("Active")} value={@tasks["in_progress"] || 0} tone="text-warning" />
-            <.kpi small label={gettext("Done")} value={@tasks["done"] || 0} tone="text-success" />
+            <.kpi small label={AssignmentStatusBadge.label("waiting")} value={@tasks["waiting"] || 0} tone="text-base-content/60" />
+            <.kpi small label={AssignmentStatusBadge.label("todo")} value={@tasks["todo"] || 0} tone="text-info" />
+            <.kpi small label={AssignmentStatusBadge.label("in_progress")} value={@tasks["in_progress"] || 0} tone="text-warning" />
+            <.kpi small label={AssignmentStatusBadge.label("done")} value={@tasks["done"] || 0} tone="text-success" />
           </div>
         </div>
       </div>

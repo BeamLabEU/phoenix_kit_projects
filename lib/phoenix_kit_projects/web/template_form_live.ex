@@ -12,11 +12,18 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   use PhoenixKitProjects.Web.Components
 
   import PhoenixKitWeb.Components.MultilangForm
+  import PhoenixKitProjects.Web.Components.FormParts, only: [form_header: 1, words_block: 1]
 
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.{ConfirmAction, DescriptionEditor}
   alias PhoenixKitProjects.Web.Crumbs
+  alias PhoenixKitProjects.Web.DescriptionImages
+
+  import PhoenixKitProjects.Web.Components.DescriptionEditor,
+    only: [description_editor: 1, description_value: 4]
+
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.WriteGate
 
@@ -51,6 +58,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       |> assign_status_init()
       |> assign_ai_translate()
       |> assign(dirty?: false)
+      |> DescriptionImages.allow(&description_image_target/1)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -264,6 +272,22 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     end
   end
 
+  # Close with unsaved changes asks first in the module's own dialog
+  # (`Components.ConfirmAction`), never the browser's box; only Close may
+  # be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(cancel))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {%{event: "cancel" = event, params: params}, socket} -> handle_event(event, params, socket)
+      {_none, socket} -> {:noreply, socket}
+    end
+  end
+
   def handle_event("cancel", _params, socket) do
     {:noreply, WebHelpers.close_or_navigate(socket, Paths.templates())}
   end
@@ -274,6 +298,71 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   # so the changeset writes both the primary column (when on the
   # primary tab) and the JSONB `translations` map (when on a secondary
   # tab). Mirrors `ProjectFormLive.merge_attrs/2`.
+
+  # The description editor (Leaf): its text into the form, as if the field
+  # had posted it; `@` and `#` suggestions as the textarea offered them.
+  @impl true
+  def handle_info({:leaf_changed, _} = msg, socket) do
+    case DescriptionEditor.changed(msg) do
+      {"template-description", lang, markdown} ->
+        {:noreply, put_description(socket, lang, markdown)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_info({:leaf_suggest, _} = msg, socket),
+    do: {:noreply, DescriptionEditor.suggest(socket, msg, nil)}
+
+  # The editor's own image button: opens the description picture upload's
+  # file chooser (`DescriptionImages.pick/1`).
+  def handle_info(
+        {:leaf_insert_request, %{editor_id: "template-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
+  # An image pasted into the description: kept in the template's folder
+  # and placed at the cursor (the boss, 2026-10-31).
+  def handle_info(
+        {:leaf_paste_image, %{editor_id: "template-description--" <> _ = id} = paste},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.paste(socket, id, paste)}
+
+  def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Where a picture for the description goes (`DescriptionImages`): the
+  # saved template's folder; nowhere before it is saved.
+  defp description_image_target(
+         %{assigns: %{live_action: :edit, project: %Project{uuid: uuid} = holder}} = socket
+       )
+       when is_binary(uuid),
+       do:
+         {holder,
+          DescriptionEditor.editor_id("template-description", socket.assigns[:current_lang])}
+
+  defp description_image_target(_socket), do: nil
+
+  defp put_description(%{assigns: %{form: form}} = socket, lang, markdown) do
+    %{primary_language: primary, multilang_enabled: multi?} = socket.assigns
+
+    if description_value(form, lang, primary, multi?) == markdown do
+      socket
+    else
+      attrs =
+        form.params
+        |> Map.merge(DescriptionEditor.params(markdown, lang, primary, multi?))
+        |> Map.put("is_template", "true")
+        |> merge_attrs(socket)
+
+      socket
+      |> assign_form(Projects.change_project(socket.assigns.project, attrs))
+      |> WebHelpers.mark_dirty()
+    end
+  end
+
   defp merge_attrs(attrs, socket) do
     in_flight = WebHelpers.in_flight_record(socket, :form, :project)
     WebHelpers.merge_translations_attrs(attrs, in_flight, Project.translatable_fields())
@@ -343,49 +432,59 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     end
   end
 
+  # The template's name as typed, in the language whose tab is open.
+  defp typed_name(assigns) do
+    typed =
+      assigns.form.source
+      |> Ecto.Changeset.apply_changes()
+      |> Project.localized_name(assigns[:current_lang])
+
+    case typed && String.trim(typed) do
+      name when is_binary(name) and name != "" -> name
+      _ -> ""
+    end
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@heading} embed_mode={@embed_mode}>
-        <:back_link>
-          <.link :if={@embed_mode == :navigate} navigate={Paths.templates()} class="link link-hover text-sm">
-            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Templates")}
-          </.link>
-          <button
-            :if={@embed_mode != :navigate}
-            type="button"
-            phx-click="cancel"
-            data-confirm={@dirty? && gettext("Discard your changes?")}
-            class="link link-hover text-sm"
+      <.form_header
+        id="template-form-header"
+        title={typed_name(assigns)}
+        untitled={@live_action != :edit && (assigns[:heading] || gettext("New template"))}
+        mode={if @live_action == :edit, do: gettext("Editing")}
+        close_event={@embed_mode not in [:navigate, :emit] && "cancel"}
+        close_confirm={@dirty? && gettext("Discard your changes?")}
+      >
+        <:context>
+          <.link
+            :if={@embed_mode == :navigate}
+            navigate={Paths.templates()}
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={gettext("Templates")}
+            aria-label={gettext("Templates")}
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Templates")}
-          </button>
-        </:back_link>
-      </.page_header>
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
+          </.link>
+          <%!-- In a popup no lone "← Templates" line above the title, as in the
+               project popup: the popup closes with its ✕ and Close. --%>
+        </:context>
+      </.form_header>
 
-      <.form for={@form} id="template-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
+      <.form for={@form} id="template-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
         <%!-- Translatable card: name + description with language tabs.
              Wrapper id keys on @current_lang so morphdom re-mounts the
              inputs when the user switches languages — that's what swaps
              primary-column inputs for JSONB-backed secondary inputs.
              Matches `ProjectFormLive`'s shape. --%>
-        <div class="card bg-base-100 shadow">
-          <%!-- Bundled tabs + AI row (phoenix_kit_ai's canonical placement;
-            the border-b separator converges away — see the PR note). --%>
-          <.ai_multilang_tabs
-            multilang_enabled={@multilang_enabled}
-            language_tabs={@language_tabs}
-            current_lang={@current_lang}
-            ai_translate={FormGlue.ai_translate_config(assigns)}
-          />
-
-          <.multilang_fields_wrapper
-            multilang_enabled={@multilang_enabled}
-            current_lang={@current_lang}
-            skeleton_class="card-body pt-4 space-y-4"
-            fields_class="card-body pt-4 space-y-4"
-          >
+        <.words_block
+          id="template-words"
+          multilang_enabled={@multilang_enabled}
+          language_tabs={@language_tabs}
+          current_lang={@current_lang}
+          ai_translate={FormGlue.ai_translate_config(assigns)}
+        >
 
             <.translatable_field
               field_name="name"
@@ -398,29 +497,33 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               lang_data={WebHelpers.lang_data(@form, @current_lang)}
               secondary_name={"project[translations][#{@current_lang}][name]"}
               lang_data_key="name"
-              label={gettext("Name")}
+              label=""
+              placeholder={gettext("Template name")}
+              aria-label={gettext("Template name")}
               disabled={@current_lang in @ai_in_flight}
-              required
             />
 
-            <.translatable_field
-              field_name="description"
-              form_prefix="project"
-              changeset={@form.source}
-              schema_field={:description}
-              multilang_enabled={@multilang_enabled}
-              current_lang={@current_lang}
-              primary_language={@primary_language}
-              lang_data={WebHelpers.lang_data(@form, @current_lang)}
-              secondary_name={"project[translations][#{@current_lang}][description]"}
-              lang_data_key="description"
-              label={gettext("Description")}
-              type="textarea"
-              rows={4}
-              disabled={@current_lang in @ai_in_flight}
-            />
-          </.multilang_fields_wrapper>
-        </div>
+            <%!-- Pictures are intercepted (`uploads`): pasted or added with
+                 the button, kept in the template's folder and placed by file
+                 (`DescriptionImages`); never a `data:` address in the text. --%>
+            <.description_editor
+                id={DescriptionEditor.editor_id("template-description", @current_lang)}
+                name={DescriptionEditor.field_name("project", @current_lang, @primary_language, @multilang_enabled)}
+                value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
+                content={
+                  PhoenixKitProjects.InlineImages.resolve(
+                    description_value(@form, @current_lang, @primary_language, @multilang_enabled),
+                    assigns[:phoenix_kit_current_scope],
+                    keep_missing: true
+                  )
+                }
+                placeholder={gettext("Description…")}
+                readonly={@current_lang in @ai_in_flight}
+                uploads
+                image_button={@live_action == :edit}
+              />
+              <DescriptionImages.file_input :if={@live_action == :edit} uploads={@uploads} />
+        </.words_block>
 
         <%!-- Non-translatable settings stay outside the wrapper so they
              don't lose state when the user switches languages. --%>
@@ -453,11 +556,10 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               <:cancel>
               <button
                 type="button"
-                phx-click="cancel"
-                data-confirm={@dirty? && gettext("Discard your changes?")}
+                {ConfirmAction.close("cancel", @dirty?)}
                 class="btn btn-ghost btn-sm"
               >
-                {gettext("Cancel")}
+                {gettext("Close")}
               </button>
           </:cancel>
             </.form_actions>
@@ -467,6 +569,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
 
       <%!-- Modal lives outside the form — see project_form_live.ex. --%>
       <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

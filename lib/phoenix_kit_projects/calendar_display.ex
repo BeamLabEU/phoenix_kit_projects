@@ -35,6 +35,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  alias PhoenixKitProjects.{L10n, ScheduleLayout}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixLiveCalendar.Event
 
@@ -193,9 +194,16 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   doesn't occupy that day, and a zero-length span still shows as a one-day
   chip.
 
-  Returns `{events, meta}` — `meta` keyed by assignment uuid with
-  `:project_uuid` / `:project_name` / `:status` / `:late` for the day popup's
-  rows, the overdue filter, and click navigation.
+  A task with planned clock times shows them (`planned_events/5`), and a
+  task with a deadline gets a marker at its day and time
+  (`deadline_event/4`, in the viewer's `offset`) — also a subtask with no
+  bar of its own (`bar_item?/1`): the boss set a deadline and looked for it
+  on the calendar (2026-10-30).
+
+  Returns `{events, meta}` — `meta` keyed by EVENT id (a deadline marker is
+  `"deadline:<uuid>"`) with `:assignment_uuid` / `:project_uuid` /
+  `:project_name` / `:status` / `:late` for the day popup's rows, the
+  overdue filter, and click navigation. A deadline's `:late` is "missed".
 
   Options:
 
@@ -206,6 +214,8 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     * `:late_class` — the marker class for late chips/bars (defaults to the
       red inset ring; pass `late_marker_class(read())` to honor
       the configured marker).
+    * `:deadline_now` — the UTC `DateTime` deadlines are missed against
+      (defaults to `:now`; none: no deadline reads as missed).
   """
   @spec task_events(
           [{map(), PhoenixKitProjects.ScheduleLayout.span()}],
@@ -217,44 +227,380 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   def task_events(items_with_spans, lang, offset \\ "0", opts \\ []) do
     now = Keyword.get(opts, :now)
     late_class = Keyword.get(opts, :late_class, @late_class)
+    deadline_now = Keyword.get(opts, :deadline_now, now && DateTime.from_naive!(now, "Etc/UTC"))
 
-    Enum.map_reduce(items_with_spans, %{}, fn {item, span}, meta ->
+    items_with_spans
+    |> Enum.flat_map(fn {item, span} ->
       %{assignment: a, project: project} = item
-
-      # a task with its own dates occupies those days wherever the viewer
-      # sits; a computed span is an instant, read in the viewer's frame
-      {start_d, end_d} =
-        case span do
-          %{pinned: {from, to}} ->
-            {from, Date.add(to, 1)}
-
-          _ ->
-            start_d = to_date(naive_to_utc(span.start), offset)
-            {start_d, exclusive_end_date(start_d, span.end, offset)}
-        end
-
       {bg, text} = color_for(project.uuid)
       late? = task_late?(a, span, now)
-
-      event =
-        PhoenixLiveCalendar.event(a.uuid, start_d,
-          title: Assignment.label(a, lang) || gettext("(untitled task)"),
-          end: end_d,
-          all_day: true,
-          color: bg,
-          text_color: text,
-          class: if(late?, do: late_class)
-        )
+      title = Assignment.label(a, lang) || gettext("(untitled task)")
 
       entry = %{
+        assignment_uuid: a.uuid,
         project_uuid: project.uuid,
         project_name: Project.localized_name(project, lang),
-        status: a.status,
-        late: late?
+        status: a.status
       }
 
-      {event, Map.put(meta, a.uuid, entry)}
+      bars =
+        if bar_item?(item) do
+          # a task with its own dates occupies those days wherever the viewer
+          # sits; a computed span is an instant, read in the viewer's frame
+          days =
+            case span do
+              %{pinned: {from, to}} ->
+                {from, to}
+
+              _ ->
+                start_d = to_date(naive_to_utc(span.start), offset)
+                {start_d, Date.add(exclusive_end_date(start_d, span.end, offset), -1)}
+            end
+
+          a
+          |> planned_events(title, days, :month,
+            color: bg,
+            text_color: text,
+            class: if(late?, do: late_class)
+          )
+          |> Enum.map(&{&1, Map.put(entry, :late, late?)})
+        else
+          []
+        end
+
+      deadline =
+        case a do
+          %Assignment{deadline: %DateTime{} = at} ->
+            local = at |> PhoenixKit.Utils.Date.shift_to_offset(offset) |> DateTime.to_naive()
+            missed? = deadline_missed?(a, deadline_now)
+            [{deadline_event(a, title, local, missed?), Map.put(entry, :late, missed?)}]
+
+          _ ->
+            []
+        end
+
+      bars ++ deadline
     end)
+    |> Enum.map_reduce(%{}, fn {event, entry}, meta -> {event, Map.put(meta, event.id, entry)} end)
+  end
+
+  # ── Deadlines and planned times ─────────────────────────────────────────────
+
+  @doc """
+  Whether a flattened item has a bar of its own on a calendar of many
+  projects: a top-level row always, a subtask only with a date of its own —
+  otherwise the task it sits under already covers its days.
+  """
+  @spec bar_item?(map()) :: boolean()
+  def bar_item?(%{assignment: %Assignment{parent_uuid: nil}}), do: true
+  def bar_item?(%{assignment: %Assignment{} = a}), do: ScheduleLayout.dated?(a)
+  def bar_item?(_item), do: true
+
+  @doc """
+  The `{item, span}` pairs a calendar of many projects draws from
+  `ScheduleLayout.trees/1` output: every task (never a sub-project's own
+  row) that has a bar (`bar_item?/1`) or a deadline to mark.
+  """
+  @spec calendar_items([{[map()], map()}]) :: [{map(), ScheduleLayout.span()}]
+  def calendar_items(trees) do
+    Enum.flat_map(trees, fn {items, layout} ->
+      items
+      |> Enum.reject(&Assignment.subproject?(&1.assignment))
+      |> Enum.filter(&(bar_item?(&1) or match?(%DateTime{}, &1.assignment.deadline)))
+      |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
+    end)
+  end
+
+  @doc """
+  A deadline missed: the moment is past and the task is not done.
+  (`nil` for `now` misses nothing.)
+  """
+  @spec deadline_missed?(map(), DateTime.t() | nil) :: boolean()
+  def deadline_missed?(%{deadline: %DateTime{} = at, status: status}, %DateTime{} = now),
+    do: status != "done" and DateTime.compare(at, now) == :lt
+
+  def deadline_missed?(_a, _now), do: false
+
+  @doc """
+  A task's deadline as a marker at its day and time: `local` is the moment
+  as the viewer's wall clock. Red once missed (`missed?`), outlined in red
+  while still ahead, greyed once the task is done. A short timed event, so
+  a month cell shows it as a chip with its time and a day view puts it in
+  its hour. Its id is `"deadline:<assignment uuid>"` (`task_uuid/1`).
+  """
+  @spec deadline_event(Assignment.t(), String.t(), NaiveDateTime.t(), boolean()) :: Event.t()
+  def deadline_event(%Assignment{} = a, title, %NaiveDateTime{} = local, missed?) do
+    {color, text, class} =
+      cond do
+        a.status == "done" -> {"bg-base-200", "text-base-content/60", "line-through"}
+        missed? -> {"bg-error", "text-error-content", nil}
+        true -> {"bg-error/10", "text-error", "ring-1 ring-inset ring-error/60"}
+      end
+
+    {start, finish} = within_day(local, 30 * 60)
+
+    PhoenixLiveCalendar.event("deadline:" <> a.uuid, start,
+      title: gettext("Deadline: %{title}", title: title),
+      end: finish,
+      icon: "⚑",
+      color: color,
+      text_color: text,
+      class: class,
+      # Above everything else in a crowded month cell.
+      priority: :high,
+      extra: %{kind: :deadline, status: a.status, late: missed?}
+    )
+  end
+
+  @doc """
+  A task's planned days (`{first, last}`, inclusive) as calendar events,
+  with its planned clock times when it has them (`start_time` / `end_time`,
+  wall clock on each planned day).
+
+    * no times — one all-day bar, as before;
+    * one day with times — a timed event at those hours;
+    * several days with times — on a `:month` grid one all-day bar whose
+      title carries the times ("09:00–17:00 Fit the worktop"); on a `:week`
+      or `:day` grid a timed block on each planned day (ids
+      `"<uuid>@<date>"`).
+
+  `opts` are passed to every event (`:color`, `:text_color`, `:class`,
+  `:extra`).
+  """
+  @spec planned_events(Assignment.t(), String.t(), {Date.t(), Date.t()}, atom(), keyword()) ::
+          [Event.t()]
+  def planned_events(%Assignment{} = a, title, {from, to}, view, opts \\ []) do
+    to = if Date.compare(to, from) == :lt, do: from, else: to
+
+    case {timed?(a), Date.compare(from, to), view} do
+      {false, _, _} ->
+        [
+          PhoenixLiveCalendar.event(
+            a.uuid,
+            from,
+            [title: title, end: Date.add(to, 1), all_day: true] ++ opts
+          )
+        ]
+
+      {true, :eq, _} ->
+        [timed_event(a.uuid, a, from, title, opts)]
+
+      {true, _, view} when view in [:week, :day] ->
+        if Date.diff(to, from) > 92 do
+          [
+            PhoenixLiveCalendar.event(
+              a.uuid,
+              from,
+              [title: times_title(a, title), end: Date.add(to, 1), all_day: true] ++ opts
+            )
+          ]
+        else
+          for d <- Date.range(from, to), do: timed_event("#{a.uuid}@#{d}", a, d, title, opts)
+        end
+
+      {true, _, _} ->
+        [
+          PhoenixLiveCalendar.event(
+            a.uuid,
+            from,
+            [title: times_title(a, title), end: Date.add(to, 1), all_day: true] ++ opts
+          )
+        ]
+    end
+  end
+
+  @doc """
+  The assignment uuid behind a calendar event id — the bar's own id, a
+  deadline marker's (`"deadline:<uuid>"`) or a planned day's
+  (`"<uuid>@<date>"`).
+  """
+  @spec task_uuid(term()) :: term()
+  def task_uuid("deadline:" <> rest), do: task_uuid(rest)
+
+  def task_uuid(id) when is_binary(id) do
+    case String.split(id, "@", parts: 2) do
+      [uuid, _date] -> uuid
+      _ -> id
+    end
+  end
+
+  def task_uuid(id), do: id
+
+  @doc """
+  A clock time as the site writes it (`L10n.format_time/1`, which follows
+  the site's time format).
+  """
+  @spec clock(Time.t()) :: String.t()
+  def clock(%Time{} = t), do: L10n.format_time(DateTime.new!(~D[2000-01-01], t))
+
+  @doc """
+  The calendar component's hour labels (`:h12` / `:h24`), read off how the
+  site writes a time: one that does not write 13:00 as "13…" uses a 12-hour
+  clock.
+  """
+  @spec time_format() :: :h12 | :h24
+  def time_format do
+    if String.starts_with?(clock(~T[13:00:00]), "13"), do: :h24, else: :h12
+  end
+
+  @doc """
+  Where the Week and Day grids open: the start of the work day
+  (`TimeBoard.work_hours/0`, 08:00) as `"HH:MM:SS"`, the grid's own
+  `data-slot` spelling — the `PkpCalendarWorkday` hook scrolls the grid to
+  that slot instead of leaving it at midnight.
+  """
+  @spec workday_start() :: String.t()
+  def workday_start do
+    {start, _end} = PhoenixKitProjects.TimeBoard.work_hours()
+    Time.to_iso8601(start)
+  end
+
+  @doc """
+  The class a calendar with Week / Day views takes: their time grid scrolls
+  inside a box of its own (at most most of the window), so opening at the
+  work day's start scrolls the grid and not the page, and the toolbar stays
+  in sight. The hour labels must not shrink inside that shorter box: the
+  label column is a flex column, and without `shrink-0` its 3rem rows were
+  squeezed to fit, so 08:00's slot sat beside the "20:00" label.
+  """
+  @spec time_grid_class() :: String.t()
+  def time_grid_class,
+    do: "[&_.cal-week-body]:max-h-[70vh] [&_.cal-time-gutter>.cal-time-slot]:shrink-0"
+
+  @doc """
+  The calendar's words in the page's language, for
+  `PhoenixLiveCalendar.CalendarComponent`'s `translations` attr: the
+  headings' month and day names, the weekday row and the Month / Week /
+  Day / Today buttons. Without it every calendar printed English on an
+  Estonian or Russian page (the walk-through, 2026-10-31).
+
+  The library still writes the heading in English ORDER ("October 2026",
+  "Tuesday, October 27, 2026", "Oct 26 – Nov 1, 2026") — with these names
+  but the month before the day; it has no hook for the order yet.
+  """
+  @spec translations() :: map()
+  def translations do
+    short = %{
+      1 => gettext("Mon"),
+      2 => gettext("Tue"),
+      3 => gettext("Wed"),
+      4 => gettext("Thu"),
+      5 => gettext("Fri"),
+      6 => gettext("Sat"),
+      7 => gettext("Sun")
+    }
+
+    %{
+      day_names: %{
+        1 => gettext("Monday"),
+        2 => gettext("Tuesday"),
+        3 => gettext("Wednesday"),
+        4 => gettext("Thursday"),
+        5 => gettext("Friday"),
+        6 => gettext("Saturday"),
+        7 => gettext("Sunday")
+      },
+      day_names_short: short,
+      # A weekday's initial is its short name's first letter in every
+      # language this module speaks (E T K N R L P; П В С Ч П С В).
+      day_names_narrow: Map.new(short, fn {day, name} -> {day, String.first(name)} end),
+      month_names: %{
+        1 => gettext("January"),
+        2 => gettext("February"),
+        3 => gettext("March"),
+        4 => gettext("April"),
+        5 => pgettext("month name", "May"),
+        6 => gettext("June"),
+        7 => gettext("July"),
+        8 => gettext("August"),
+        9 => gettext("September"),
+        10 => gettext("October"),
+        11 => gettext("November"),
+        12 => gettext("December")
+      },
+      month_names_short: Map.new(1..12, &{&1, L10n.short_month(&1)}),
+      labels: %{
+        today: gettext("Today"),
+        month: gettext("Month"),
+        week: gettext("Week"),
+        day: gettext("Day"),
+        year: gettext("Year"),
+        agenda: gettext("Agenda"),
+        timeline: gettext("Timeline"),
+        activity: gettext("Activity"),
+        # The library fills in the count itself: the placeholder goes back
+        # in as it is.
+        more: pgettext("calendar", "+%{count} more", count: "%{count}"),
+        no_events: gettext("No events"),
+        all_day: gettext("All day"),
+        ongoing: gettext("Ongoing"),
+        prev: gettext("Previous"),
+        next: gettext("Next"),
+        prev_month: gettext("Previous month"),
+        next_month: gettext("Next month"),
+        prev_week: gettext("Previous week"),
+        next_week: gettext("Next week"),
+        prev_day: gettext("Previous day"),
+        next_day: gettext("Next day"),
+        prev_year: gettext("Previous year"),
+        next_year: gettext("Next year"),
+        go_to_today: gettext("Go to today"),
+        layers: gettext("Calendars")
+      }
+    }
+  end
+
+  defp timed?(%Assignment{start_time: %Time{}}), do: true
+  defp timed?(%Assignment{end_time: %Time{}}), do: true
+  defp timed?(_a), do: false
+
+  # One planned day at its hours: start..end; a start alone is an hour long,
+  # an end alone the hour before it — kept inside the day either way.
+  defp timed_event(id, %Assignment{start_time: s, end_time: e}, %Date{} = day, title, opts) do
+    {start, finish} =
+      case {s, e} do
+        {%Time{}, %Time{}} ->
+          if Time.compare(e, s) == :gt,
+            do: {NaiveDateTime.new!(day, s), NaiveDateTime.new!(day, e)},
+            else: within_day(NaiveDateTime.new!(day, s), 3600)
+
+        {%Time{}, nil} ->
+          within_day(NaiveDateTime.new!(day, s), 3600)
+
+        {nil, %Time{}} ->
+          finish = NaiveDateTime.new!(day, e)
+
+          {Enum.max(
+             [NaiveDateTime.add(finish, -3600), NaiveDateTime.new!(day, ~T[00:00:00])],
+             NaiveDateTime
+           ), finish}
+      end
+
+    finish =
+      if NaiveDateTime.compare(finish, start) == :gt,
+        do: finish,
+        else: NaiveDateTime.add(start, 60)
+
+    PhoenixLiveCalendar.event(id, start, [title: title, end: finish, all_day: false] ++ opts)
+  end
+
+  # `seconds` from `start`, but never past the end of its day (a timed event
+  # crossing midnight would turn into a bar over two days).
+  defp within_day(%NaiveDateTime{} = start, seconds) do
+    last = NaiveDateTime.new!(NaiveDateTime.to_date(start), ~T[23:59:59])
+    start = Enum.min([start, NaiveDateTime.add(last, -60)], NaiveDateTime)
+    {start, Enum.min([NaiveDateTime.add(start, seconds), last], NaiveDateTime)}
+  end
+
+  defp times_title(%Assignment{start_time: s, end_time: e}, title) do
+    times =
+      case {s, e} do
+        {%Time{}, %Time{}} -> "#{clock(s)}–#{clock(e)}"
+        {%Time{}, nil} -> clock(s)
+        {nil, %Time{}} -> "–" <> clock(e)
+      end
+
+    "#{times} #{title}"
   end
 
   @doc """
@@ -277,10 +623,46 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   def events_on(events, date) do
     events
     |> Enum.filter(fn e ->
-      Date.compare(e.start, date) != :gt and Date.compare(date, Date.add(e.end, -1)) != :gt
+      {first, last} = event_days(e)
+      Date.compare(first, date) != :gt and Date.compare(date, last) != :gt
     end)
-    |> Enum.sort_by(&{&1.start, &1.title})
+    |> Enum.sort_by(fn e ->
+      {Date.to_gregorian_days(elem(event_days(e), 0)), clock_secs(e.start), e.title}
+    end)
   end
+
+  @doc """
+  The days an event covers, `{first, last}` inclusive. An all-day end is
+  exclusive; a timed event covers the day it ends in unless it ends at
+  midnight.
+  """
+  @spec event_days(Event.t()) :: {Date.t(), Date.t()}
+  def event_days(%Event{start: %Date{} = s, end: %Date{} = e}),
+    do: {s, Enum.max([Date.add(e, -1), s], Date)}
+
+  def event_days(%Event{start: %Date{} = s}), do: {s, s}
+
+  def event_days(%Event{start: s, end: e}) do
+    first = NaiveDateTime.to_date(s)
+
+    last =
+      case e do
+        nil ->
+          first
+
+        e ->
+          e_date = NaiveDateTime.to_date(e)
+          if NaiveDateTime.to_time(e) == ~T[00:00:00], do: Date.add(e_date, -1), else: e_date
+      end
+
+    {first, Enum.max([last, first], Date)}
+  end
+
+  # All-day first, then by the hour.
+  defp clock_secs(%Date{}), do: -1
+
+  defp clock_secs(dt),
+    do: dt |> NaiveDateTime.to_time() |> Time.to_seconds_after_midnight() |> elem(0)
 
   @doc """
   A task is late when it isn't done and its scheduled span ended before

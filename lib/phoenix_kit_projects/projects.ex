@@ -9,8 +9,8 @@ defmodule PhoenixKitProjects.Projects do
 
   alias PhoenixKit.Activity.Entry, as: ActivityEntry
   alias PhoenixKit.Mentions.Token
-  alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKit.Utils.Reorder
+  alias PhoenixKitProjects.AssigneeSet
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
 
@@ -1173,9 +1173,59 @@ defmodule PhoenixKitProjects.Projects do
   the project inside a larger transaction (template clone) and emit a single
   event once the transaction commits, so a rollback can't leak a
   `:project_created` for a project that never persisted.
+
+  Two creation choices may ride in `attrs` beside the schema fields:
+
+    * `"preset"` — a `Features` preset key (`"embedded"`, `"simple"`, …):
+      its flags are written into the new row's `settings["features"]`
+      (flags the caller passes there win) and the extensions it names are
+      turned on or off after the insert. An unknown key is ignored.
+    * `"ongoing"` — `true` makes it ongoing work (`settings["completion"]
+      = "manual"`); with `"start_mode" => "immediate"` (the default) such
+      a project is started at once, so a host gets a started, ongoing
+      project from one call.
   """
   @spec create_project(map(), keyword()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def create_project(attrs, opts \\ []) do
+    {attrs, preset} = take_creation_choices(attrs)
+
+    with {:ok, project} <- do_create_project(attrs, opts) do
+      if preset && not repo().in_transaction?() do
+        PhoenixKitProjects.Features.apply_preset_extensions(project, preset,
+          actor_uuid: Keyword.get(opts, :actor_uuid)
+        )
+      end
+
+      start_ongoing({:ok, project})
+    end
+  end
+
+  # The creation choices that are not schema fields (`create_project/2`):
+  # a preset's flags and "ongoing" folded into `settings`, the preset
+  # returned so its extensions can be set once the row exists.
+  defp take_creation_choices(attrs) when is_map(attrs) do
+    {preset_key, attrs} = Map.pop(attrs, "preset")
+    {ongoing, attrs} = Map.pop(attrs, "ongoing")
+    preset = if is_binary(preset_key), do: PhoenixKitProjects.Features.get_preset(preset_key)
+    ongoing? = ongoing in [true, "true"]
+
+    if preset || ongoing? do
+      settings =
+        (Map.get(attrs, "settings") || %{})
+        |> then(fn s ->
+          if preset,
+            do: Map.put(s, "features", Map.merge(preset.flags, Map.get(s, "features") || %{})),
+            else: s
+        end)
+        |> then(fn s -> if ongoing?, do: Map.put(s, "completion", "manual"), else: s end)
+
+      {Map.put(attrs, "settings", settings), preset}
+    else
+      {attrs, nil}
+    end
+  end
+
+  defp do_create_project(attrs, opts) do
     # Auto-assign the next position scoped to the project's
     # `is_template` bucket so a new row lands at the bottom of either
     # the project list or the template list (whichever the row
@@ -1199,7 +1249,7 @@ defmodule PhoenixKitProjects.Projects do
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
       end
 
-      start_ongoing({:ok, project})
+      {:ok, project}
     end
   end
 
@@ -1790,12 +1840,12 @@ defmodule PhoenixKitProjects.Projects do
         {resource_uuid, actor_uuid}
       end)
 
+    # Named as everywhere else a person is: full name, else staff name,
+    # else email (`People.user_display_names/1`).
     names_by_user =
       earliest_actor_by_resource
       |> Map.values()
-      |> Enum.uniq()
-      |> UsersAuth.get_users_by_uuids()
-      |> Map.new(&{&1.uuid, creator_display_name(&1)})
+      |> PhoenixKitProjects.People.user_display_names()
 
     for {resource_uuid, actor_uuid} <- earliest_actor_by_resource,
         name = Map.get(names_by_user, actor_uuid),
@@ -1841,13 +1891,6 @@ defmodule PhoenixKitProjects.Projects do
     |> Map.new(fn {task_uuid, count, last_used} ->
       {task_uuid, %{count: count, last_used: last_used}}
     end)
-  end
-
-  defp creator_display_name(user) do
-    case UsersAuth.User.full_name(user) do
-      name when is_binary(name) and name != "" -> name
-      _ -> user.email
-    end
   end
 
   @doc """
@@ -2026,9 +2069,10 @@ defmodule PhoenixKitProjects.Projects do
         from(a in Assignment,
           join: p in Project,
           on: p.uuid == a.project_uuid,
+          # The person among the task's assignees (V29: several).
+          where: ^AssigneeSet.subject_exists("person", person.uuid),
           where:
-            a.assigned_person_uuid == ^person.uuid and a.status != "done" and
-              a.review_status == "accepted" and
+            a.status != "done" and a.review_status == "accepted" and
               p.is_template == false and is_nil(p.archived_at),
           order_by: [asc: a.status, asc: a.inserted_at],
           # `parent: :task` — a subtask reads as "parent / title" on a plate.
@@ -2372,21 +2416,39 @@ defmodule PhoenixKitProjects.Projects do
     # clone an arbitrary project — with settings/extensions now carried,
     # the copied payload got wider.
     case get_project(template_uuid) do
-      %Project{is_template: true} = template -> clone_template(template, project_attrs, opts)
-      _ -> {:error, :template_not_found}
+      %Project{is_template: true} = template ->
+        # The creation choices (`create_project/2`) are the caller's: a
+        # preset's flags and "ongoing" overlay the template's settings.
+        {project_attrs, preset} = take_creation_choices(stringify_top_keys(project_attrs))
+        clone_template(template, project_attrs, Keyword.put(opts, :preset, preset))
+
+      _ ->
+        {:error, :template_not_found}
     end
   end
+
+  defp stringify_top_keys(attrs) when is_map(attrs),
+    do: Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
 
   defp clone_template(template, project_attrs, opts) do
     # Capability carry (the creation-page brainstorm's union rule): the
     # TEMPLATE's own settings — feature flags, authz overrides, status
     # translation mode — are the base layer; caller-provided settings
-    # overlay them (explicit choices win); the back-link key is forced.
-    # It makes the clone countable by `template_usage/1` long after the
-    # activity log's retention window has pruned the event.
+    # overlay them (explicit choices win, flag by flag); the back-link key
+    # is forced. It makes the clone countable by `template_usage/1` long
+    # after the activity log's retention window has pruned the event.
+    caller_settings = Map.get(project_attrs, "settings") || %{}
+
+    features =
+      Map.merge(
+        Map.get(template.settings, "features") || %{},
+        Map.get(caller_settings, "features") || %{}
+      )
+
     settings =
       template.settings
-      |> Map.merge(Map.get(project_attrs, "settings", %{}))
+      |> Map.merge(caller_settings)
+      |> then(fn s -> if features == %{}, do: s, else: Map.put(s, "features", features) end)
       |> Map.put("created_from_template_uuid", template.uuid)
 
     # The form's explicit status-set choice wins; blank/absent inherits
@@ -2434,6 +2496,14 @@ defmodule PhoenixKitProjects.Projects do
         # the whole tree has committed, so a rollback leaks nothing and
         # subscribers still learn the new project exists.
         carry_template_extensions(template, project, opts)
+
+        # After the carry, so a preset's "off" wins over the template's "on".
+        if preset = Keyword.get(opts, :preset) do
+          PhoenixKitProjects.Features.apply_preset_extensions(project, preset,
+            actor_uuid: Keyword.get(opts, :actor_uuid)
+          )
+        end
+
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
         start_ongoing({:ok, project})
 
@@ -2523,9 +2593,7 @@ defmodule PhoenixKitProjects.Projects do
              "estimated_duration" => a.estimated_duration,
              "estimated_duration_unit" => a.estimated_duration_unit,
              "counts_weekends" => a.counts_weekends,
-             "assigned_team_uuid" => a.assigned_team_uuid,
-             "assigned_department_uuid" => a.assigned_department_uuid,
-             "assigned_person_uuid" => a.assigned_person_uuid
+             "assignees" => AssigneeSet.keys(a)
            },
            broadcast: false
          ) do
@@ -2797,25 +2865,95 @@ defmodule PhoenixKitProjects.Projects do
         :ok
 
       link ->
-        case child_project_rollup(child_project_uuid) do
+        case child_project_rollup(child_project_uuid, link) do
           nil ->
             :ok
 
           rollup ->
-            case link |> Assignment.subproject_changeset(rollup) |> repo().update() do
-              {:ok, updated} ->
-                ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
-                  uuid: updated.uuid,
-                  project_uuid: updated.project_uuid
-                })
-
-                broadcast_status_changed(updated, link.status, :auto)
-                recompute_project_completion(updated.project_uuid, depth + 1)
-
-              {:error, _cs} ->
-                :ok
-            end
+            write_rollup(link, rollup, depth)
         end
+    end
+  end
+
+  defp write_rollup(link, rollup, depth) do
+    # What its finish unlocks, read before the write as the page's "next
+    # up" reads it for a task ticked by hand.
+    next_up = subproject_next_up(link, rollup)
+
+    case link |> Assignment.subproject_changeset(rollup) |> repo().update() do
+      {:ok, updated} ->
+        ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+          uuid: updated.uuid,
+          project_uuid: updated.project_uuid
+        })
+
+        PhoenixKitProjects.Handoffs.batch(fn ->
+          broadcast_status_changed(updated, link.status, :auto)
+        end)
+
+        note_finished_subproject(updated, next_up)
+
+        recompute_project_completion(updated.project_uuid, depth + 1)
+
+      {:error, _cs} ->
+        :ok
+    end
+  end
+
+  # A sub-project that finishes by itself (`subproject_auto`) releases
+  # nothing on its own (Max, 2026-10-31: "go with b"). What its finish
+  # unlocks — the not-started rows nothing else holds up any more — is
+  # noted for the page that handled the last Done (`collect_finished_subprojects/1`),
+  # which opens the usual "next up" dialog for the person in front of it.
+  # A process with no page (the API, a job) notes nothing: the rows stay
+  # where they are until a person starts them.
+  defp subproject_next_up(%Assignment{status: "done"}, _rollup), do: []
+
+  defp subproject_next_up(%Assignment{} = link, %{status: "done"}),
+    do: PhoenixKitProjects.Handoffs.would_ready(link.project_uuid, link.uuid)
+
+  defp subproject_next_up(_link, _rollup), do: []
+
+  @finished_subprojects :pkp_finished_subprojects
+
+  @doc """
+  Runs `fun` and returns `{result, finished}`: every sub-project row that
+  finished by itself while it ran (its last task done, `subproject_auto`)
+  and unlocked rows that still wait — `[%{link_uuid, project_uuid,
+  row_uuids}]`, deepest first. A page wraps the step a person took in it
+  and offers the "next up" dialog for those rows; nothing is released
+  without that. Outside a wrapper nothing is collected.
+  """
+  @spec collect_finished_subprojects((-> result)) :: {result, [map()]} when result: term()
+  def collect_finished_subprojects(fun) when is_function(fun, 0) do
+    previous = Process.get(@finished_subprojects)
+    Process.put(@finished_subprojects, [])
+
+    try do
+      result = fun.()
+      {result, Enum.reverse(Process.get(@finished_subprojects) || [])}
+    after
+      if is_nil(previous),
+        do: Process.delete(@finished_subprojects),
+        else: Process.put(@finished_subprojects, previous)
+    end
+  end
+
+  defp note_finished_subproject(_link, []), do: :ok
+
+  defp note_finished_subproject(%Assignment{} = link, rows) do
+    case Process.get(@finished_subprojects) do
+      noted when is_list(noted) ->
+        entry = %{
+          link_uuid: link.uuid,
+          project_uuid: link.project_uuid,
+          row_uuids: Enum.map(rows, & &1.uuid)
+        }
+
+        Process.put(@finished_subprojects, [entry | noted])
+
+      _ ->
+        :ok
     end
   end
 
@@ -2824,11 +2962,25 @@ defmodule PhoenixKitProjects.Projects do
   # progress/hours/completion into the shape `subproject_changeset/2` casts.
   # Hours are stored in MINUTES (`round(total_hours * 60)`) so sub-hour child
   # totals survive the integer `estimated_duration` column without drift.
-  defp child_project_rollup(child_project_uuid) do
+  # Without a linking row yet (one being made): nothing to keep.
+  defp child_project_rollup(child_project_uuid), do: child_project_rollup(child_project_uuid, nil)
+
+  defp child_project_rollup(child_project_uuid, link) do
     case get_project(child_project_uuid) do
       nil -> nil
-      child -> build_child_rollup(child, project_summary(child))
+      child -> child |> build_child_rollup(project_summary(child), link) |> keep_hand_status(link)
     end
+  end
+
+  # "Sub-project status follows its tasks" (`subproject_auto`, on by
+  # default — Max, 2026-10-30) is the PARENT's switch: off, the row's status
+  # is set by hand like a task's and only the figures follow the child.
+  defp keep_hand_status(rollup, nil), do: rollup
+
+  defp keep_hand_status(rollup, link) do
+    if PhoenixKitProjects.Features.on?(link.project_uuid, "subproject_auto"),
+      do: rollup,
+      else: Map.drop(rollup, [:status, :completed_at])
   end
 
   # The linking row's `estimated_duration` is an int4 of MINUTES; a child whose
@@ -2836,9 +2988,9 @@ defmodule PhoenixKitProjects.Projects do
   # ceiling rather than raising from the database and leaving the parent stale.
   @max_rollup_minutes 2_147_483_647
 
-  defp build_child_rollup(child, summary) do
+  defp build_child_rollup(child, summary, link) do
     total_hours = rollup_val(summary, :total_hours, 0.0)
-    status = rollup_status(child, summary)
+    status = rollup_status(child, summary, link)
 
     # A completed sub-project reads as 100% even though the module's
     # `progress_pct` is the average of the per-task sliders (completing a task
@@ -2863,11 +3015,15 @@ defmodule PhoenixKitProjects.Projects do
     }
   end
 
-  # A sub-project's denormalized status: "done" once the child is completed,
-  # "in_progress" once any work exists/has started, else "todo".
-  defp rollup_status(%{completed_at: %DateTime{}}, _summary), do: "done"
+  # A sub-project's denormalized status, the way a task's moves: "done" once
+  # the child is completed or every one of its tasks is done (an ongoing
+  # child never finishes), "in_progress" once any work has started, and
+  # before that it stays where its row is — "waiting" until someone
+  # releases it, then "can be started" (the boss, 2026-10-30: sub-projects
+  # get the same statuses as tasks, Waiting included).
+  defp rollup_status(%{completed_at: %DateTime{}}, _summary, _link), do: "done"
 
-  defp rollup_status(child, summary) do
+  defp rollup_status(child, summary, link) do
     total = rollup_val(summary, :total, 0)
     done = rollup_val(summary, :done, 0)
     in_progress = rollup_val(summary, :in_progress, 0)
@@ -2877,9 +3033,12 @@ defmodule PhoenixKitProjects.Projects do
     # a task begun (a template's row describes nothing live).
     under_way? = Project.ongoing?(child) and Map.get(child, :is_template) != true
 
-    if under_way? or (total > 0 and (done > 0 or in_progress > 0 or progress > 0)),
-      do: "in_progress",
-      else: "todo"
+    cond do
+      not Project.ongoing?(child) and total > 0 and done == total -> "done"
+      under_way? or (total > 0 and (done > 0 or in_progress > 0 or progress > 0)) -> "in_progress"
+      match?(%{status: "waiting"}, link) -> "waiting"
+      true -> "todo"
+    end
   end
 
   @doc "Whether an ongoing project has every task done — nothing open, nothing ended."
@@ -2999,6 +3158,10 @@ defmodule PhoenixKitProjects.Projects do
     assigned_person: [:user]
   ]
 
+  # Every assignee (V29), with what names it, in one statement per list.
+  defp assignment_preloads,
+    do: @assignment_preloads ++ [assignee_links: AssigneeSet.link_query()]
+
   @assignee_preloads [:assigned_team, :assigned_department, assigned_person: [:user]]
 
   @doc "Fetches a project with its assignee associations preloaded (V128)."
@@ -3016,7 +3179,7 @@ defmodule PhoenixKitProjects.Projects do
     Assignment
     |> where([a], a.project_uuid == ^project_uuid and a.review_status == "accepted")
     |> order_by([a], asc: a.position, asc: a.inserted_at)
-    |> preload(^@assignment_preloads)
+    |> preload(^assignment_preloads())
     |> repo().all()
   end
 
@@ -3047,7 +3210,7 @@ defmodule PhoenixKitProjects.Projects do
       Assignment
       |> where([a], a.project_uuid in ^uuids and a.review_status == "accepted")
       |> order_by([a], asc: a.position, asc: a.inserted_at)
-      |> preload(^@assignment_preloads)
+      |> preload(^assignment_preloads())
       |> repo().all()
 
     # Every asked-for uuid gets an entry, so a later lookup never re-queries.
@@ -3130,7 +3293,7 @@ defmodule PhoenixKitProjects.Projects do
     Assignment
     |> where([a], a.project_uuid == ^project_uuid and a.review_status == "pending")
     |> order_by([a], desc: a.inserted_at)
-    |> preload(^@assignment_preloads)
+    |> preload(^assignment_preloads())
     |> repo().all()
   end
 
@@ -3139,13 +3302,13 @@ defmodule PhoenixKitProjects.Projects do
   def get_assignment(id) do
     case Refs.parse(id) do
       {:uuid, uuid} ->
-        Assignment |> preload(^@assignment_preloads) |> repo().get(uuid)
+        Assignment |> preload(^assignment_preloads()) |> repo().get(uuid)
 
       {:task, key, number} ->
         with %Project{uuid: project_uuid} <- project_by_key(key) do
           Assignment
           |> where([a], a.project_uuid == ^project_uuid and a.number == ^number)
-          |> preload(^@assignment_preloads)
+          |> preload(^assignment_preloads())
           |> repo().one()
         end
 
@@ -4766,6 +4929,73 @@ defmodule PhoenixKitProjects.Projects do
         total + n
       end)
     end)
+  end
+
+  @doc """
+  Whether `assignment` (as stored now) holds nothing but its title: a task
+  row with no description in any language, no subtasks, no comments, no
+  files and no time. The outline deletes its draft row when the person
+  clears its title (Backspace on the blank line, or leaving it blank) only
+  if this holds — the client's say-so is not enough, a row may have been
+  filled in since (the task's popup, another tab, the API). The title is
+  not asked: clearing it is the act itself, and the hook sends the drop
+  instead of saving the blank title first.
+  """
+  @spec empty_draft?(Assignment.t()) :: boolean()
+  def empty_draft?(%Assignment{child_project_uuid: nil, uuid: uuid}) when is_binary(uuid) do
+    case repo().one(from(a in Assignment, where: a.uuid == ^uuid, preload: [:task])) do
+      %Assignment{child_project_uuid: nil} = a ->
+        blank_texts?(a, [:description]) and
+          (is_nil(a.task) or (a.task.ad_hoc and blank_texts?(a.task, [:description]))) and
+          not holds_anything?(uuid)
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  def empty_draft?(_), do: false
+
+  defp blank_texts?(record, fields) do
+    translated =
+      for {_lang, %{} = t} <- record.translations || %{},
+          field <- fields,
+          do: t[Atom.to_string(field)]
+
+    Enum.all?(Enum.map(fields, &Map.get(record, &1)) ++ translated, &blank_text?/1)
+  end
+
+  defp blank_text?(nil), do: true
+  defp blank_text?(text) when is_binary(text), do: String.trim(text) == ""
+  defp blank_text?(_), do: false
+
+  defp holds_anything?(uuid) do
+    repo().exists?(from(a in Assignment, where: a.parent_uuid == ^uuid)) or
+      repo().exists?(
+        from(f in PhoenixKitProjects.Schemas.AssignmentFile, where: f.assignment_uuid == ^uuid)
+      ) or
+      repo().exists?(
+        from(w in PhoenixKitProjects.Schemas.WorkEntry, where: w.assignment_uuid == ^uuid)
+      ) or
+      Map.get(comment_rows(uuid), uuid, 0) > 0
+  end
+
+  # Any comment, published or not: a draft row with a held comment is not
+  # empty either. Without the comments module there are none.
+  defp comment_rows(uuid) do
+    if Code.ensure_loaded?(PhoenixKitComments.Comment) do
+      from(c in PhoenixKitComments.Comment,
+        where: c.resource_type == "assignment" and c.resource_uuid == ^uuid,
+        group_by: c.resource_uuid,
+        select: {c.resource_uuid, count(c.uuid)}
+      )
+      |> repo().all()
+      |> Map.new()
+    else
+      %{}
+    end
   end
 
   @doc """

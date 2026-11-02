@@ -13,6 +13,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveExtrasTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitStaff.Schemas.Department
 
   setup %{conn: conn} do
     scope = fake_scope()
@@ -31,12 +33,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveExtrasTest do
         |> form("#task-form",
           task: %{
             title: title,
-            description: "",
             estimated_duration: "1",
             estimated_duration_unit: "hours"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"task" => %{"description" => ""}})
 
       assert_activity_logged("projects.task_created",
         actor_uuid: actor_uuid,
@@ -68,12 +69,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveExtrasTest do
         |> form("#task-form",
           task: %{
             title: new_title,
-            description: "d",
             estimated_duration: "2",
             estimated_duration_unit: "hours"
           }
         )
-        |> render_submit()
+        |> render_submit(%{"task" => %{"description" => "d"}})
 
       assert_activity_logged("projects.task_updated",
         actor_uuid: actor_uuid,
@@ -137,58 +137,42 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveExtrasTest do
   end
 
   describe "validate event toggles assign_type" do
-    test "validate with default_assign_type=team picks the team branch", %{conn: conn} do
-      task = fixture_task()
+    # The default assignee is the task popup's picker now: the kind rides a
+    # hidden input, so these drive the event as the picker posts it.
+    for kind <- ~w(team department person) do
+      test "validate with default_assign_type=#{kind}", %{conn: conn} do
+        task = fixture_task()
+        {:ok, view, _html} = live(conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
-
-      # `clear_other_default_assignees/2` runs on save, but the validate
-      # path only re-renders the form. Submit with assign_type=team and
-      # the save path nullifies the other two FK fields.
-      _ =
-        view
-        |> form("#task-form",
-          task: %{
-            title: task.title,
-            description: "d",
-            estimated_duration: "1",
-            estimated_duration_unit: "hours"
+        render_change(view, "validate", %{
+          "task" => %{
+            "title" => task.title,
+            "estimated_duration" => "1",
+            "estimated_duration_unit" => "hours"
           },
-          default_assign_type: "team"
-        )
-        |> render_change()
+          "default_assign_type" => unquote(kind)
+        })
 
-      assert Process.alive?(view.pid)
+        assert Process.alive?(view.pid)
+      end
     end
 
-    test "validate with default_assign_type=department picks dept branch", %{conn: conn} do
+    test "the default assignee is picked with the shared picker and saved", %{conn: conn} do
       task = fixture_task()
+
+      dept =
+        Repo.insert!(%Department{
+          name: "Paigaldus #{System.unique_integer([:positive])}"
+        })
+
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
 
-      _ =
-        view
-        |> form("#task-form",
-          task: %{title: task.title, estimated_duration: "1", estimated_duration_unit: "hours"},
-          default_assign_type: "department"
-        )
-        |> render_change()
+      assert has_element?(view, "#task-default-assignee-search")
+      render_click(view, "assignee_pick", %{"kind" => "department", "uuid" => dept.uuid})
+      assert has_element?(view, "#task-default-assignee-chips", dept.name)
 
-      assert Process.alive?(view.pid)
-    end
-
-    test "validate with default_assign_type=person picks person branch", %{conn: conn} do
-      task = fixture_task()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
-
-      _ =
-        view
-        |> form("#task-form",
-          task: %{title: task.title, estimated_duration: "1", estimated_duration_unit: "hours"},
-          default_assign_type: "person"
-        )
-        |> render_change()
-
-      assert Process.alive?(view.pid)
+      view |> form("#task-form") |> render_submit()
+      assert Projects.get_task(task.uuid).default_assigned_department_uuid == dept.uuid
     end
   end
 end

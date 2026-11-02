@@ -215,11 +215,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
 
     form
     |> form("#assignment-form",
-      assignment: %{status: "todo", description: "keep me out of the next one"},
+      assignment: %{status: "todo"},
       task_mode: "new",
       task: %{title: first}
     )
-    |> render_change()
+    |> render_change(%{"assignment" => %{"description" => "keep me out of the next one"}})
 
     assert eventually(fn -> if render(host) =~ ~s(data-closeable="false"), do: true end)
 

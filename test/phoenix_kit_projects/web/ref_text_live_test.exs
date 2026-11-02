@@ -48,15 +48,15 @@ defmodule PhoenixKitProjects.Web.RefTextLiveTest do
     # Typing does not turn the ref into a token under the cursor.
     html =
       view
-      |> form("#assignment-form", assignment: %{description: "Now after ##{ctx.ref}!"})
-      |> render_change()
+      |> form("#assignment-form", assignment: %{})
+      |> render_change(%{"assignment" => %{"description" => "Now after ##{ctx.ref}!"}})
 
     assert html =~ "Now after ##{ctx.ref}!"
     refute html =~ "project_task:#{ctx.target.uuid}"
 
     view
-    |> form("#assignment-form", assignment: %{description: "Now after ##{ctx.ref}!"})
-    |> render_submit()
+    |> form("#assignment-form", assignment: %{})
+    |> render_submit(%{"assignment" => %{"description" => "Now after ##{ctx.ref}!"}})
 
     assert Projects.get_assignment(ctx.editing.uuid).description == "Now after #{token}!"
   end
@@ -117,8 +117,8 @@ defmodule PhoenixKitProjects.Web.RefTextLiveTest do
     {:ok, view, _html} = live(ctx.conn, path)
 
     view
-    |> form("#assignment-form", assignment: %{description: "After ##{ctx.ref}."})
-    |> render_submit()
+    |> form("#assignment-form", assignment: %{})
+    |> render_submit(%{"assignment" => %{"description" => "After ##{ctx.ref}."}})
 
     a = Projects.get_assignment(a.uuid)
     assert a.description == nil
