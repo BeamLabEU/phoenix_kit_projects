@@ -2460,7 +2460,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             />
           </div>
           <div class="flex items-center justify-between gap-2">
-            <button type="submit" name="clear" value="1" class="btn btn-ghost btn-xs text-error">
+            <%!-- Not a submit button: Enter in a field submits the form with
+                 its first submit button, which must be Save (panel review). --%>
+            <button
+              type="button"
+              phx-click="save_deadline"
+              phx-value-uuid={@a.uuid}
+              phx-value-clear="1"
+              class="btn btn-ghost btn-xs text-error"
+            >
               {gettext("Clear")}
             </button>
             <button type="submit" class="btn btn-primary btn-xs">{gettext("Save")}</button>
@@ -2478,9 +2486,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # link to their staff page (a person, a team, a department); several open
   # a list of links.
   defp row_assignees(assigns) do
-    keys = PhoenixKitProjects.AssigneeSet.keys(assigns.a)
-    names = PhoenixKitProjects.AssigneeSet.names(assigns.a)
-    assigns = assign(assigns, entries: Enum.zip(keys, names ++ List.duplicate("", length(keys))))
+    entries =
+      assigns.a
+      |> PhoenixKitProjects.AssigneeSet.named()
+      |> Enum.map(fn {key, name} -> {key, name || ""} end)
+
+    assigns = assign(assigns, entries: entries)
 
     ~H"""
     <%= case @entries do %>
@@ -2703,7 +2714,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # here (rather than passing nil) is what keeps "assignees can update
   # their own status" true through the interceptor.
   @record_param_events ~w(set_status complete next_up_confirm make_ready ask_ready make_idle start_task reopen ask_reopen change_workflow_status
-                          update_progress toggle_tracking remove_assignment save_duration)
+                          update_progress toggle_tracking remove_assignment save_duration save_deadline)
+
+  @doc false
+  # For the tests: the events checked against a record's own project.
+  def __record_param_events__, do: @record_param_events
 
   @impl true
   # A destructive action asks first through core's confirm modal
@@ -7401,7 +7416,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         role="menu"
         data-pkp-submenu-list
         class={[
-          "hidden absolute right-full top-0 mr-1 min-w-[11rem] rounded-box bg-base-100",
+          "hidden absolute right-full top-0 min-w-[11rem] rounded-box bg-base-100",
           "border border-base-200 shadow-xl p-1 z-10",
           "group-hover/pkpsub:block group-has-[:focus-visible]/pkpsub:block group-data-[open]/pkpsub:block"
         ]}
@@ -7422,7 +7437,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <button
         type="button"
         id={"#{@id_prefix}-#{@a.uuid}-#{status}"}
-        role="menuitemradio"
+        role="menuitem"
         aria-checked={to_string(status == @a.status)}
         disabled={status == @a.status}
         phx-click="set_status"

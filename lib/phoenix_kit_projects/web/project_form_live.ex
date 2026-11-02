@@ -1024,6 +1024,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          Map.get(params, "status_translation_mode", socket.assigns.status_translation_mode)
      )
      |> assign_completion_choice(params["completion"])
+     |> assign_posted_header(params["header"])
      |> track_creation_state(params)
      |> assign_form(cs)
      |> assign_status_preview()
@@ -1564,6 +1565,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp put_outline(settings, _), do: settings
+
+  # What the header settings say as typed, so a validate of another field
+  # does not redraw them from the saved project (panel review, grok).
+  defp assign_posted_header(socket, %{} = posted) do
+    settings = (socket.assigns[:project] && socket.assigns.project.settings) || %{}
+    assign(socket, posted_header: Project.header(%{settings: put_header(settings, posted)}))
+  end
+
+  defp assign_posted_header(socket, _), do: socket
 
   # The header's settings (`Project.header/1`): only known keys and values.
   defp put_header(settings, %{} = posted) do
@@ -3228,7 +3238,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 <%!-- When the button shows, its icon, how it opens (the boss,
                      2026-11-02): inside a host page it points where the
                      reader already is, so "Auto" hides it there. --%>
-                <% header = Project.header(@project) %>
+                <% header = assigns[:posted_header] || Project.header(@project) %>
                 <div class="grid gap-2 sm:grid-cols-3">
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="font-semibold">{gettext("Show the button")}</span>

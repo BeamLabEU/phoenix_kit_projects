@@ -71,10 +71,24 @@ defmodule PhoenixKitProjects.AssigneeSet do
   otherwise each is read.
   """
   @spec names(map()) :: [String.t()]
-  def names(%{assignee_keys: keys}) when is_list(keys), do: names_of(keys)
+  def names(a), do: a |> named() |> Enum.map(&elem(&1, 1)) |> Enum.reject(&is_nil/1)
 
-  def names(%{assignee_links: links}) when is_list(links) do
-    Enum.map(links, fn
+  @doc """
+  Each assignee's key with its own name (nil for a subject that is gone),
+  in chip order — a list of links never pairs a key with another's name.
+  """
+  @spec named(map()) :: [{key(), String.t() | nil}]
+  def named(%{assignee_keys: keys}) when is_list(keys),
+    do: Enum.map(keys, &{&1, PhoenixKitProjects.People.key_name(&1)})
+
+  def named(%{assignee_links: links}) when is_list(links) do
+    Enum.map(links, fn link -> {link_key(link), link_name(link)} end)
+  end
+
+  def named(a), do: a |> keys() |> Enum.map(&{&1, PhoenixKitProjects.People.key_name(&1)})
+
+  defp link_name(link) do
+    case link do
       %AssignmentAssignee{person: %PhoenixKitProjects.People.Person{} = p} ->
         PhoenixKitProjects.People.display_name(p)
 
@@ -86,14 +100,8 @@ defmodule PhoenixKitProjects.AssigneeSet do
 
       link ->
         PhoenixKitProjects.People.key_name(link_key(link))
-    end)
-    |> Enum.reject(&is_nil/1)
+    end
   end
-
-  def names(a), do: a |> keys() |> names_of()
-
-  defp names_of(keys),
-    do: keys |> Enum.map(&PhoenixKitProjects.People.key_name/1) |> Enum.reject(&is_nil/1)
 
   @doc "True when the task has nobody on it."
   @spec empty?(map()) :: boolean()
