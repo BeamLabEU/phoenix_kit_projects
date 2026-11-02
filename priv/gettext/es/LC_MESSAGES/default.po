@@ -10657,3 +10657,45 @@ msgstr "Resultados de búsqueda"
 
 msgid "is not a list of assignees"
 msgstr "no es una lista de responsables"
+
+msgid "Show the button"
+msgstr "Mostrar el botón"
+
+msgid "On its own page only"
+msgstr "Solo en su propia página"
+
+msgid "Icon"
+msgstr "Icono"
+
+msgid "↗ Opens elsewhere"
+msgstr "↗ Abre en otro sitio"
+
+msgid "↖ Back"
+msgstr "↖ Volver"
+
+msgid "← Arrow"
+msgstr "← Flecha"
+
+msgid "Opens"
+msgstr "Se abre"
+
+msgid "In a new tab"
+msgstr "En una pestaña nueva"
+
+msgid "Here, without a reload"
+msgstr "Aquí, sin recargar"
+
+msgid "Header"
+msgstr "Encabezado"
+
+msgid "“Ongoing” beside the name"
+msgstr "«Continuo» junto al nombre"
+
+msgid "Since when it runs"
+msgstr "Desde cuándo está en marcha"
+
+msgid "How many tasks are open"
+msgstr "Cuántas tareas están abiertas"
+
+msgid "Started %{date}"
+msgstr "Iniciado %{date}"

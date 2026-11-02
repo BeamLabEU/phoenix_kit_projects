@@ -1294,6 +1294,15 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               <p class="text-sm">
                 <span class="font-medium">{@period_info.label}</span>
                 <span class="text-base-content/50">· {tz_label(@offset)}</span>
+                <%!-- The project's start, off the project page's header and
+                     here, beside its time (the boss, 2026-11-02). --%>
+                <span
+                  :if={@mode == :project and @project && @project.started_at}
+                  class="text-base-content/50"
+                  title={L10n.format_datetime(@project.started_at)}
+                >
+                  · {gettext("Started %{date}", date: L10n.format_date(@project.started_at))}
+                </span>
               </p>
             </div>
             <div class="flex items-center gap-2">

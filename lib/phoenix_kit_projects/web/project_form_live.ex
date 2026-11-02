@@ -1473,6 +1473,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> put_completion(Map.get(params, "completion"))
       |> put_agent_policy(Map.get(params, "agents"))
       |> put_outline(Map.get(params, "outline"))
+      |> put_header(Map.get(params, "header"))
 
     if settings == base and not Map.has_key?(attrs, "settings"),
       do: attrs,
@@ -1546,6 +1547,33 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp put_outline(settings, _), do: settings
+
+  # The header's settings (`Project.header/1`): only known keys and values.
+  defp put_header(settings, %{} = posted) do
+    current = Project.header(%{settings: settings})
+    choices = Project.header_choices()
+
+    header =
+      Map.new(current, fn {key, value} ->
+        case {Map.get(choices, key), Map.get(posted, key)} do
+          {nil, nil} ->
+            {key, value}
+
+          {nil, posted_value} ->
+            {key, posted_value == "true"}
+
+          {_allowed, nil} ->
+            {key, value}
+
+          {allowed, posted_value} ->
+            {key, if(posted_value in allowed, do: posted_value, else: value)}
+        end
+      end)
+
+    Map.put(settings, "header", header)
+  end
+
+  defp put_header(settings, _), do: settings
 
   # The features whose value a task row can show, for "show on the row".
   @doc false
@@ -3172,9 +3200,41 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   label={gettext("Button text")}
                   placeholder={gettext("Open link")}
                 />
-                <p class="text-xs opacity-60">
-                  {gettext("A web address and a path on this site (/…) both open in a new tab.")}
-                </p>
+                <%!-- When the button shows, its icon, how it opens (the boss,
+                     2026-11-02): inside a host page it points where the
+                     reader already is, so "Auto" hides it there. --%>
+                <% header = Project.header(@project) %>
+                <div class="grid gap-2 sm:grid-cols-3">
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="font-semibold">{gettext("Show the button")}</span>
+                    <select name="header[link_show]" class="select select-sm w-full">
+                      <option :for={{v, l} <- [{"auto", gettext("On its own page only")}, {"always", gettext("Always")}, {"never", gettext("Never")}]} value={v} selected={header["link_show"] == v}>{l}</option>
+                    </select>
+                  </label>
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="font-semibold">{gettext("Icon")}</span>
+                    <select name="header[link_icon]" class="select select-sm w-full">
+                      <option :for={{v, l} <- [{"external", gettext("↗ Opens elsewhere")}, {"back", gettext("↖ Back")}, {"left", gettext("← Arrow")}, {"none", gettext("None")}]} value={v} selected={header["link_icon"] == v}>{l}</option>
+                    </select>
+                  </label>
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="font-semibold">{gettext("Opens")}</span>
+                    <select name="header[link_target]" class="select select-sm w-full">
+                      <option :for={{v, l} <- [{"new_tab", gettext("In a new tab")}, {"here", gettext("Here, without a reload")}]} value={v} selected={header["link_target"] == v}>{l}</option>
+                    </select>
+                  </label>
+                </div>
+              </fieldset>
+
+              <%!-- What the header shows beside the name: off unless switched
+                   on (the boss, 2026-11-02). --%>
+              <fieldset id="project-header-settings" class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+                <legend class="px-1 text-sm font-medium">{gettext("Header")}</legend>
+                <label :for={{key, label} <- [{"ongoing", gettext("“Ongoing” beside the name")}, {"since", gettext("Since when it runs")}, {"open_tasks", gettext("How many tasks are open")}]} class="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="hidden" name={"header[#{key}]"} value="false" />
+                  <input type="checkbox" class="toggle toggle-sm" name={"header[#{key}]"} value="true" checked={header[key] == true} />
+                  <span>{label}</span>
+                </label>
               </fieldset>
 
               <%!-- How the task list looks (`Web.OutlineList`): typed like a

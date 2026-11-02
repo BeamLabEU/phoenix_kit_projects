@@ -10714,3 +10714,45 @@ msgstr "Результаты поиска"
 
 msgid "is not a list of assignees"
 msgstr "не является списком исполнителей"
+
+msgid "Show the button"
+msgstr "Показывать кнопку"
+
+msgid "On its own page only"
+msgstr "Только на странице проекта"
+
+msgid "Icon"
+msgstr "Значок"
+
+msgid "↗ Opens elsewhere"
+msgstr "↗ Открывается в другом месте"
+
+msgid "↖ Back"
+msgstr "↖ Назад"
+
+msgid "← Arrow"
+msgstr "← Стрелка"
+
+msgid "Opens"
+msgstr "Открывается"
+
+msgid "In a new tab"
+msgstr "В новой вкладке"
+
+msgid "Here, without a reload"
+msgstr "Здесь, без перезагрузки"
+
+msgid "Header"
+msgstr "Заголовок"
+
+msgid "“Ongoing” beside the name"
+msgstr "«Бессрочный» рядом с названием"
+
+msgid "Since when it runs"
+msgstr "С какого времени идёт"
+
+msgid "How many tasks are open"
+msgstr "Сколько задач открыто"
+
+msgid "Started %{date}"
+msgstr "Начат %{date}"

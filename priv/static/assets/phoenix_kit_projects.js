@@ -1718,6 +1718,9 @@
       return id ? document.getElementById(id) : null;
     },
     fill: function () {
+      // A tab that is not open has no place to measure from (the project
+      // page's other tabs carry this hook too): sized when it shows.
+      if (this.el.offsetParent === null) return;
       var top = this.el.getBoundingClientRect().top + window.scrollY;
       var height = window.innerHeight - top - FILL_GAP_PX;
       this.el.style.height = height < FILL_MIN_PX ? "" : height + "px";

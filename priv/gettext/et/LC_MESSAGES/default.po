@@ -10657,3 +10657,45 @@ msgstr "Otsingutulemused"
 
 msgid "is not a list of assignees"
 msgstr "ei ole vastutajate loend"
+
+msgid "Show the button"
+msgstr "Nupu näitamine"
+
+msgid "On its own page only"
+msgstr "Ainult projekti enda lehel"
+
+msgid "Icon"
+msgstr "Ikoon"
+
+msgid "↗ Opens elsewhere"
+msgstr "↗ Avaneb mujal"
+
+msgid "↖ Back"
+msgstr "↖ Tagasi"
+
+msgid "← Arrow"
+msgstr "← Nool"
+
+msgid "Opens"
+msgstr "Avaneb"
+
+msgid "In a new tab"
+msgstr "Uuel vahekaardil"
+
+msgid "Here, without a reload"
+msgstr "Siin, ilma lehte uuesti laadimata"
+
+msgid "Header"
+msgstr "Päis"
+
+msgid "“Ongoing” beside the name"
+msgstr "„Käimasolev“ nime kõrval"
+
+msgid "Since when it runs"
+msgstr "Millest alates see käib"
+
+msgid "How many tasks are open"
+msgstr "Mitu ülesannet on avatud"
+
+msgid "Started %{date}"
+msgstr "Alustatud %{date}"

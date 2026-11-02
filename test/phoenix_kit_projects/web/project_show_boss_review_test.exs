@@ -126,11 +126,87 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
     end
   end
 
+  # The boss's third list, items 2, 3, 10.
+  describe "the header as the project's settings say" do
+    defp with_header(project, header) do
+      {:ok, project} =
+        Projects.update_project(project, %{
+          "external_url" => "/admin/orders/1",
+          "external_label" => "Order 1",
+          "settings" => Map.put(project.settings || %{}, "header", header)
+        })
+
+      project
+    end
+
+    test "the link hides by default inside a host page and shows on the project's own page",
+         %{conn: conn, actor_uuid: actor} do
+      project = started_project() |> with_header(%{})
+      {:ok, _view, html} = embed(conn, project, actor)
+      refute html =~ "data-project-link"
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      assert has_element?(view, "[data-project-link]")
+    end
+
+    test "shown with the back arrow, it opens here without a reload",
+         %{conn: conn, actor_uuid: actor} do
+      project =
+        started_project()
+        |> with_header(%{"link_show" => "always", "link_icon" => "back", "link_target" => "here"})
+
+      {:ok, _view, html} = embed(conn, project, actor)
+      [link] = Regex.run(~r/<a[^>]*data-project-link[^>]*>.*?<\/a>/s, html)
+      assert link =~ ~s(data-phx-link="redirect")
+      refute link =~ "_blank"
+      assert link =~ "hero-arrow-up-left"
+      refute link =~ "hero-arrow-top-right-on-square"
+    end
+
+    test "Ongoing, since and open tasks are off unless switched on",
+         %{conn: conn, actor_uuid: actor} do
+      project = started_project()
+
+      {:ok, project} =
+        Projects.update_project(project, %{
+          "settings" => Map.put(project.settings || %{}, "completion", "manual")
+        })
+
+      _ = assignment!(project)
+
+      {:ok, _view, html} = embed(conn, project, actor)
+      refute html =~ "project-ongoing-"
+      refute html =~ "open task"
+
+      project = with_header(project, %{"ongoing" => true, "open_tasks" => true, "since" => true})
+      {:ok, _view, html} = embed(conn, project, actor)
+      assert html =~ "project-ongoing-"
+      assert html =~ "1 open task"
+      assert html =~ "since "
+    end
+
+    test "unknown header values read as the defaults" do
+      header =
+        PhoenixKitProjects.Schemas.Project.header(%{
+          settings: %{"header" => %{"link_show" => "bogus", "ongoing" => "yes"}}
+        })
+
+      assert header["link_show"] == "auto"
+      assert header["ongoing"] == false
+    end
+  end
+
   describe "the header line (item 19)" do
     test "an embed puts the name, key, link and ⋮ on one centred line",
          %{conn: conn, actor_uuid: actor} do
       project = started_project()
-      {:ok, project} = Projects.update_project(project, %{"external_url" => "/somewhere"})
+
+      {:ok, project} =
+        Projects.update_project(project, %{
+          "external_url" => "/somewhere",
+          "settings" => Map.put(project.settings || %{}, "header", %{"link_show" => "always"})
+        })
+
       {:ok, _view, html} = embed(conn, project, actor)
 
       [line] =
@@ -227,8 +303,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       refute html =~ "Not started — set up tasks, then start"
     end
 
+    # Off by default since the third list (item 3); switched on, it shows.
     test "a started project says since when, quietly, in the header", %{conn: conn} do
       project = started_project()
+
+      {:ok, project} =
+        Projects.update_project(project, %{
+          "settings" => Map.put(project.settings || %{}, "header", %{"since" => true})
+        })
+
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       [crumbs] = Regex.run(~r/<div id="test-breadcrumb".*?<div id="test-flashes"/s, html)

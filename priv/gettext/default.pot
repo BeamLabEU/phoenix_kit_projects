@@ -10654,3 +10654,45 @@ msgstr ""
 
 msgid "is not a list of assignees"
 msgstr ""
+
+msgid "Show the button"
+msgstr ""
+
+msgid "On its own page only"
+msgstr ""
+
+msgid "Icon"
+msgstr ""
+
+msgid "↗ Opens elsewhere"
+msgstr ""
+
+msgid "↖ Back"
+msgstr ""
+
+msgid "← Arrow"
+msgstr ""
+
+msgid "Opens"
+msgstr ""
+
+msgid "In a new tab"
+msgstr ""
+
+msgid "Here, without a reload"
+msgstr ""
+
+msgid "Header"
+msgstr ""
+
+msgid "“Ongoing” beside the name"
+msgstr ""
+
+msgid "Since when it runs"
+msgstr ""
+
+msgid "How many tasks are open"
+msgstr ""
+
+msgid "Started %{date}"
+msgstr ""

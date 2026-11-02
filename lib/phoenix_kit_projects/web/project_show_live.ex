@@ -1015,7 +1015,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              page, written as stored since it is not one of the kit's
              routes; either opens in a new tab, so the project stays open
              here. --%>
-        <.project_link project={@project} embed_mode={@embed_mode} />
+        <.project_link project={@project} embedded={assigns[:router_mounted?] != true} />
         <%!-- What full-width bars above the list used to say, as quiet
              items of this line (the boss, 2026-10-30): since when it runs,
              how it stands against its plan, a small Start for a project
@@ -4645,7 +4645,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   attr(:project, :map, required: true)
-  attr(:embed_mode, :atom, default: nil)
+  attr(:embedded, :boolean, default: false, doc: "inside a host page, not the project's own page")
 
   # The link out (V26), as the project's Settings → Header says (the boss,
   # 2026-11-02): shown always, never, or — the default — only on the
@@ -4656,7 +4656,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp project_link(%{project: %{external_url: url}} = assigns)
        when is_binary(url) and url != "" do
     header = Project.header(assigns.project)
-    embedded? = assigns.embed_mode in [:emit, :embed, :embedded]
 
     # Read again, not trusted from the row: only a path on this site or a
     # web address is ever an href (a row written before the changeset
@@ -4675,7 +4674,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           case header["link_show"] do
             "always" -> true
             "never" -> false
-            _auto -> not embedded?
+            _auto -> not assigns.embedded
           end,
         here?: header["link_target"] == "here",
         icon: header["link_icon"]
@@ -4720,7 +4719,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     do: ~H|<.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" />|
 
   defp link_icon(%{icon: "external", before: false} = assigns),
-    do: ~H|<.icon name="hero-arrow-top-right-on-square" class="w-4 h-4 shrink-0 -translate-y-px" />|
+    do:
+      ~H|<.icon name="hero-arrow-top-right-on-square" class="w-4 h-4 shrink-0 -translate-y-px" />|
 
   defp link_icon(assigns), do: ~H""
 
@@ -5576,7 +5576,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         class="hidden"
       >
       </div>
-      <div :if={not @is_template and length(top_tabs) > 1} id={"project-tabs-#{@project.uuid}"}>
+      <%!-- The tab icons 1px lower: centred on the capitals' height, they
+           read high beside mostly-lowercase words (measured on tim-dev,
+           the boss, 2026-11-02: "they aren't centered vertically"). --%>
+      <div
+        :if={not @is_template and length(top_tabs) > 1}
+        id={"project-tabs-#{@project.uuid}"}
+        class="[&_.tab>span:first-child]:translate-y-px"
+      >
         <.nav_tabs active_tab={to_string(top_tab)} on_change="switch_tab" tabs={top_tabs} />
       </div>
 
@@ -5605,30 +5612,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            views behind their own, subordinate strip. A tasks-off project
            has no Tasks tab and none of this. --%>
       <div :if={@fx.tasks} class={["flex flex-col gap-4", top_tab != :tasks && "hidden"]}>
-        <div :if={not @is_template} class="flex flex-wrap gap-2">
-            <.smart_link
-              navigate={Paths.new_assignment(@project.uuid)}
-              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
-              embed_mode={@embed_mode}
-              class="btn btn-primary btn-sm"
-              data-id="add-task-sheet"
-            >
-              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
-            </.smart_link>
-            <%!-- Add a sub-project via the same add page tasks use
-                 (`AssignmentFormLive` in sub-project mode, V127) — name +
-                 assignee + dependencies. Template sub-projects deep-clone on
-                 instantiation. --%>
-            <.smart_link
-              :if={@fx.subprojects}
-              navigate={Paths.new_assignment(@project.uuid) <> "?kind=subproject"}
-              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid, "kind" => "subproject"}}}
-              embed_mode={@embed_mode}
-              class="btn btn-outline btn-sm gap-1"
-            >
-              <.icon name="hero-folder-plus" class="w-4 h-4" /> {gettext("Add sub-project")}
-            </.smart_link>
-        </div>
 
       <%!-- The template bar: how to USE a template. A project's start,
            its "since" and how it stands against its plan sit on the header
@@ -5737,13 +5720,49 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             do: [%{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}],
             else: []
           ) %>
-      <div :if={not @is_template and length(task_tabs) > 1} id={"project-task-views-#{@project.uuid}"}>
+      <%!-- The views and the add buttons share one row, the buttons at its
+           right end (the boss, 2026-11-02: a row of their own was wasted);
+           on a narrow screen the buttons wrap above the views, full size. --%>
+      <div
+        :if={not @is_template or length(task_tabs) > 1}
+        class="flex flex-wrap-reverse items-center gap-x-4 gap-y-2"
+      >
+      <div
+        :if={not @is_template and length(task_tabs) > 1}
+        id={"project-task-views-#{@project.uuid}"}
+        class="min-w-0 [&_.tab>span:first-child]:translate-y-px"
+      >
         <.nav_tabs
           active_tab={to_string(@active_tab)}
           on_change="switch_tab"
           tabs={task_tabs}
           variant={:border}
         />
+      </div>
+        <div :if={not @is_template} class="ml-auto flex flex-wrap items-center gap-2">
+            <.smart_link
+              navigate={Paths.new_assignment(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="btn btn-primary btn-sm"
+              data-id="add-task-sheet"
+            >
+              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
+            </.smart_link>
+            <%!-- Add a sub-project via the same add page tasks use
+                 (`AssignmentFormLive` in sub-project mode, V127) — name +
+                 assignee + dependencies. Template sub-projects deep-clone on
+                 instantiation. --%>
+            <.smart_link
+              :if={@fx.subprojects}
+              navigate={Paths.new_assignment(@project.uuid) <> "?kind=subproject"}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid, "kind" => "subproject"}}}
+              embed_mode={@embed_mode}
+              class="btn btn-outline btn-sm gap-1"
+            >
+              <.icon name="hero-folder-plus" class="w-4 h-4" /> {gettext("Add sub-project")}
+            </.smart_link>
+        </div>
       </div>
 
       <%!-- Tabs never jump (the panel, 2026-10-31): the views are ONE
@@ -6627,7 +6646,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            switching. Rendered OUTSIDE the tasks gate: a tasks-off project
            still shows its Client/Sites/… tabs. --%>
       <%= for tab <- @ext_tabs do %>
-        <div :if={MapSet.member?(@ext_mounted, tab.id)} class={if(@active_tab != tab.id, do: "hidden")}>
+        <%!-- Every tab fills the window from where it starts, as the
+             Tasks tab's views do, so whatever the host puts under this
+             page sits in the same place on every tab (the boss,
+             2026-11-02). --%>
+        <div
+          :if={MapSet.member?(@ext_mounted, tab.id)}
+          id={"project-ext-pane-#{tab.id}-#{@project.uuid}"}
+          phx-hook="PkpTabScroll" data-pkp-fill data-active="1"
+          class={["min-h-0 overflow-y-auto overscroll-contain", @active_tab != tab.id && "hidden"]}
+        >
           {live_render(@socket, tab.lv,
             id: "ext-tab-#{tab.id}-#{@project.uuid}",
             session: %{
@@ -6654,7 +6682,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- ── The Comments tab ── the project's own thread, inline (task
            threads keep the drawer the row icons open). Switched by the
            project's Discussions extension. --%>
-      <div :if={@project_thread?} class={[top_tab != :comments && "hidden"]}>
+      <div
+        :if={@project_thread?}
+        id={"project-comments-pane-#{@project.uuid}"}
+        phx-hook="PkpTabScroll" data-pkp-fill data-active="1"
+        class={["min-h-0 overflow-y-auto overscroll-contain", top_tab != :comments && "hidden"]}
+      >
         <%= if @project_thread? and top_tab == :comments and comments_available?() do %>
           <.live_component
             module={PhoenixKitComments.Web.CommentsComponent}
@@ -6671,7 +6704,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- ── The All comments tab ── every comment on the project's tasks,
            newest first, each under its task (which opens the task's
            view); a task can be picked, the project's own thread mixed in. --%>
-      <div :if={@all_comments?} class={[top_tab != :all_comments && "hidden"]} id={"project-all-comments-#{@project.uuid}"}>
+      <div
+        :if={@all_comments?}
+        id={"project-all-comments-#{@project.uuid}"}
+        phx-hook="PkpTabScroll" data-pkp-fill data-active="1"
+        class={["min-h-0 overflow-y-auto overscroll-contain", top_tab != :all_comments && "hidden"]}
+      >
         <form
           id={"all-comments-filter-#{@project.uuid}"}
           phx-change="all_comments_filter"
@@ -6734,7 +6772,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- ── The History tab ── the project told as it happened
            (`ProjectHistoryLive`, lazily mounted and then kept, like the
            Timeline). The raw audit log stays on ⋮ → Activity. --%>
-      <div :if={not @is_template and @fx.tasks} class={[top_tab != :history && "hidden"]}>
+      <div
+        :if={not @is_template and @fx.tasks}
+        id={"project-history-pane-#{@project.uuid}"}
+        phx-hook="PkpTabScroll" data-pkp-fill data-active="1"
+        class={["min-h-0 overflow-y-auto overscroll-contain", top_tab != :history && "hidden"]}
+      >
         <%= if @history_mounted? do %>
           {live_render(@socket, PhoenixKitProjects.Web.ProjectHistoryLive,
             id: "project-history-live-#{@project.uuid}",
