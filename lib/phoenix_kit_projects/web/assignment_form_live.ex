@@ -4400,7 +4400,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         phx-change="validate_subproject"
         phx-submit="save_subproject"
         phx-debounce="300"
-        class="flex flex-col gap-4"
+        class="flex flex-col gap-3"
       >
         <%!-- On :new a sub-project can either be created fresh or an existing
              standalone project can be nested in place (V127). On :edit only
@@ -4682,17 +4682,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </button>
           <.ref_chip :if={assigns[:task_ref]} ref={assigns[:task_ref]} />
         </:context>
-        <:badge>
-          <.assignment_status_badge
-            :if={not Map.get(@project, :is_template, false)}
-            status={to_string(@form[:status].value || "waiting")}
-            size="md"
-            class="shrink-0"
-          />
-        </:badge>
       </.form_header>
 
-      <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
+      <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
         <%!-- The tabs. Every tab's fields stay in this one form and are only
              hidden, so switching loses nothing typed and a save posts them
              all; a tab holding an error the form shows carries a dot. --%>
@@ -5413,20 +5405,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           :if={@portal?}
           class="card bg-base-100 shadow"
         >
-          <div class="card-body flex-row items-center justify-between gap-3 py-4">
+          <div class="card-body flex-row items-start gap-3 py-4">
+            <input
+              type="checkbox"
+              class="toggle toggle-primary shrink-0 mt-0.5"
+              checked={@assignment.public == true}
+              phx-click="toggle_portal_public"
+              aria-label={gettext("Show on the public portal")}
+            />
             <div class="min-w-0">
               <h3 class="text-sm font-semibold">{gettext("Public portal")}</h3>
               <p class="text-xs opacity-60">
               {gettext("Show this issue (title and status only) on the project's public page.")}
               </p>
             </div>
-            <input
-              type="checkbox"
-              class="toggle toggle-primary"
-              checked={@assignment.public == true}
-              phx-click="toggle_portal_public"
-              aria-label={gettext("Show on the public portal")}
-            />
           </div>
 
           <%!-- What the stranger actually attached. This sits ABOVE the two
@@ -5474,21 +5466,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              empty forever. --%>
           <div
             :if={@assignment.public == true and public_board?(@project)}
-            class="card-body flex-row items-center justify-between gap-3 border-t border-base-200 py-4"
+            class="card-body flex-row items-start gap-3 border-t border-base-200 py-4"
           >
+            <input
+              type="checkbox"
+              class="toggle toggle-primary shrink-0 mt-0.5"
+              checked={@assignment.board_published_at != nil}
+              phx-click="toggle_board_published"
+              aria-label={gettext("Publish to the public board")}
+            />
             <div class="min-w-0">
               <h3 class="text-sm font-semibold">{gettext("Publish to the public board")}</h3>
               <p class="text-xs opacity-60">
               {gettext("This board is on the open internet and can be indexed by search engines. The issue's description is shown too.")}
               </p>
             </div>
-            <input
-              type="checkbox"
-              class="toggle toggle-primary"
-              checked={@assignment.board_published_at != nil}
-              phx-click="toggle_board_published"
-              aria-label={gettext("Publish to the public board")}
-            />
           </div>
         </div>
 

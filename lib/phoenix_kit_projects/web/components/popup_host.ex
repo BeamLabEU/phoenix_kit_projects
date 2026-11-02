@@ -144,8 +144,14 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       .pkp-frame *:has([data-pkp-tabs]) {
         display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0;
       }
-      .pkp-frame *:has([data-pkp-tabs]) > *:not(:has([data-pkp-tabs])):not([role="tabpanel"]) {
+      .pkp-frame *:has([data-pkp-tabs]) > *:not(:has([data-pkp-tabs])):not([role="tabpanel"]):not([data-pkp-scroll]) {
         flex-shrink: 0;
+      }
+      /* A form whose tabs sit outside it (the project popup, whose Settings
+         tab shows a panel that cannot be inside the form): the area after
+         the tabs is the one scroll area instead of the open pane. */
+      .pkp-frame *:has([data-pkp-tabs]) > [data-pkp-scroll] {
+        flex: 1 1 0%; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
       }
       .pkp-frame *:has(> [data-pkp-tabs]) > [role="tabpanel"]:not(.hidden) {
         flex: 1 1 0%; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -189,10 +195,12 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
              could not close — the backdrop is a no-op while a field holds
              typed text, by `close_guard={:input}`, and there was no other
              control). A click on × is deliberate, so it closes; it asks
-             first only while the form says it has unsaved changes. --%>
+             first only while the form says it has unsaved changes. On the
+             header's row (the boss, 2026-11-02): the box's padding is 1.5rem
+             and the header's buttons are 2rem high. --%>
         <button
           type="button"
-          class="btn btn-ghost btn-sm btn-circle absolute right-2 top-2 z-20"
+          class="btn btn-ghost btn-sm btn-circle absolute right-6 top-6 z-20"
           phx-click={@on_close}
           phx-value-frame-ref={frame.frame_ref}
           aria-label={gettext("Close")}

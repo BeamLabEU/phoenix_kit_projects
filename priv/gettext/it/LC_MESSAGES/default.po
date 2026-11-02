@@ -8677,8 +8677,8 @@ msgstr "Scegli cosa usa %{name} — da un semplice elenco di attività a un trac
 
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:530
 #, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr "Scegli cosa usa questo progetto — da un semplice elenco di attività a un tracker completo. Le modifiche qui si applicano subito; il pulsante Salva in alto è per i campi."
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr "Scegli cosa usa questo progetto — da un semplice elenco di attività a un tracker completo. Le modifiche qui si applicano subito; il pulsante Salva in basso è per i campi."
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
@@ -10657,3 +10657,9 @@ msgstr "Risultati della ricerca"
 
 msgid "is not a list of assignees"
 msgstr "non è un elenco di assegnatari"
+
+msgid "What you changed since the last save is lost."
+msgstr "Ciò che hai modificato dall'ultimo salvataggio va perso."
+
+msgid "Discard"
+msgstr "Scarta"

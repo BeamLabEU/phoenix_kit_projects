@@ -1715,7 +1715,9 @@
       if (this.el.hasAttribute("data-pkp-fill")) return this.el;
       var tab = this.el.querySelector('[role="tab"][aria-selected="true"]');
       var id = tab && tab.getAttribute("aria-controls");
-      return id ? document.getElementById(id) : null;
+      var pane = id ? document.getElementById(id) : null;
+      // A form whose tabs sit outside it scrolls the area holding the panes.
+      return (pane && pane.closest("[data-pkp-scroll]")) || pane;
     },
     fill: function () {
       var top = this.el.getBoundingClientRect().top + window.scrollY;

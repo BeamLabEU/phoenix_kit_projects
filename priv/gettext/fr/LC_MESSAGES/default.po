@@ -8677,8 +8677,8 @@ msgstr "Choisissez ce que %{name} utilise — d'une simple liste de tâches à u
 
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:530
 #, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr "Choisissez ce que ce projet utilise — d'une simple liste de tâches à un outil de suivi complet. Les changements ici s'appliquent tout de suite ; le bouton Enregistrer ci-dessus concerne les champs."
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr "Choisissez ce que ce projet utilise — d'une simple liste de tâches à un outil de suivi complet. Les changements ici s'appliquent tout de suite ; le bouton Enregistrer ci-dessous concerne les champs."
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
@@ -10657,3 +10657,9 @@ msgstr "Résultats de recherche"
 
 msgid "is not a list of assignees"
 msgstr "n'est pas une liste de responsables"
+
+msgid "What you changed since the last save is lost."
+msgstr "Ce que vous avez modifié depuis le dernier enregistrement est perdu."
+
+msgid "Discard"
+msgstr "Abandonner"

@@ -606,7 +606,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         </:context>
       </.form_header>
 
-      <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
+      <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
         <%!-- The task popup's language block: title + description per
              language, AI translate in the tab row. --%>
         <.words_block

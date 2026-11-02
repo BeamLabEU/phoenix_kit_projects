@@ -527,7 +527,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         <div :if={@embedded_in_form}>
           <h2 class="text-sm font-semibold">{gettext("Modules & features")}</h2>
           <p class="text-xs opacity-60">
-            {gettext("Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields.")}
+            {gettext("Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields.")}
           </p>
         </div>
 
@@ -580,7 +580,19 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             class={["card border bg-base-100", (available && "border-base-200") || "border-base-200 opacity-60"]}
           >
             <div class="card-body py-4 gap-3">
+              <%!-- The toggle right before its name (the boss, 2026-11-02: a
+                   toggle far across the row had to be matched to its label by
+                   eye). --%>
               <div class="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  class="toggle toggle-primary mt-0.5 shrink-0"
+                  checked={enabled}
+                  disabled={not available}
+                  phx-click="toggle_ext"
+                  phx-value-key={ext.key}
+                  aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(ext.name))}
+                />
                 <.icon name={ext.icon} class="w-6 h-6 mt-0.5 shrink-0 opacity-70" />
                 <div class="min-w-0 grow">
                   <div class="flex items-center gap-2">
@@ -594,15 +606,6 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                     {gettext("Unavailable — enable the backing module in Admin › Modules first.")}
                   </p>
                 </div>
-                <input
-                  type="checkbox"
-                  class="toggle toggle-primary"
-                  checked={enabled}
-                  disabled={not available}
-                  phx-click="toggle_ext"
-                  phx-value-key={ext.key}
-                  aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(ext.name))}
-                />
               </div>
 
               <%!-- Per-instance config (only while enabled, only with a schema) --%>
@@ -764,27 +767,28 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           <div :for={{ext, flags} <- @flag_groups} class="card border border-base-200 bg-base-100">
             <div class="card-body py-4 gap-2">
               <h3 class="text-sm font-semibold opacity-70">{WebHelpers.translate_catalog(ext.name)}</h3>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+              <%!-- One column, each toggle right before its label. --%>
+              <div class="flex flex-col gap-1">
                 <label
                   :for={%{flag: flag, on: on, unmet_requires: unmet} <- flags}
-                  class={["flex items-center justify-between gap-3 py-1", unmet != [] && "opacity-50"]}
+                  class={["flex items-start gap-3 py-1 cursor-pointer", unmet != [] && "opacity-50"]}
                   title={requires_hint(unmet, @flag_groups)}
                 >
-                  <span class="text-sm">
-                    {WebHelpers.translate_catalog(flag.label)}
-                    <span :if={unmet != []} class="block text-xs text-warning">
-                      {gettext("Requires: %{list}", list: requires_labels(unmet, @flag_groups))}
-                    </span>
-                  </span>
                   <input
                     type="checkbox"
-                    class="toggle toggle-primary toggle-sm"
+                    class="toggle toggle-primary toggle-sm shrink-0"
                     checked={on}
                     disabled={unmet != []}
                     phx-click="toggle_flag"
                     phx-value-key={flag.key}
                     aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(flag.label))}
                   />
+                  <span class="text-sm">
+                    {WebHelpers.translate_catalog(flag.label)}
+                    <span :if={unmet != []} class="block text-xs text-warning">
+                      {gettext("Requires: %{list}", list: requires_labels(unmet, @flag_groups))}
+                    </span>
+                  </span>
                 </label>
               </div>
             </div>

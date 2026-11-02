@@ -2446,7 +2446,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     <div id="project-completion" class="flex flex-col gap-1.5">
       <div class="join" role="radiogroup" aria-label={gettext("How it ends")}>
         <label
-          :for={{value, label} <- [{"auto", gettext("Has an end")}, {"manual", "∞ " <> gettext("Ongoing")}]}
+          :for={{value, label} <- [{"auto", gettext("Has an end")}, {"manual", gettext("Ongoing")}]}
           class={[
             "btn btn-sm join-item",
             if(@choice == value, do: "btn-primary", else: "btn-outline border-base-300 font-normal")
@@ -2488,9 +2488,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </button>
         <% else %>
           <span class="opacity-60">{gettext("Finished with it for good?")}</span>
+          <%!-- A real button (the boss, 2026-11-02: red text did not read as
+               one). --%>
           <button
             type="button"
-            class="btn btn-ghost btn-xs text-error"
+            class="btn btn-outline btn-error btn-sm"
             {ConfirmAction.ask("end_project",
               title: gettext("End this project?"),
               message: gettext("The project is marked completed and leaves the active lists. Its tasks stay as they are, and it can be reopened here."),
@@ -2580,7 +2582,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               phx-debounce="300"
               class="font-mono uppercase w-40"
             />
-            <p class="text-xs text-base-content/60 -mt-1">
+            <p class="text-xs text-base-content/60 mt-1.5">
               <%= if @form.source.data.uuid do %>
                 {gettext("The short name of this project: its tasks are %{example}, and the key works in links and on the API. You can change it — the old key keeps working.",
                   example: "#{@form[:key].value || @key_field.suggestion}-1"
@@ -2632,15 +2634,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                title. --%>
           <.ref_chip :if={@live_action == :edit and not @project.is_template} ref={@project.key} />
         </:context>
-        <:badge>
-          <span :if={@live_action == :edit and is_binary(@project.uuid)} class="shrink-0">
-            <.project_status_badge project={@project} />
-          </span>
-        </:badge>
       </.form_header>
 
-      <.form for={@form} id="project-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
-        <.form_tabs id="project-form-tabs" prefix="project" panes={@panes} active={@pane} errors={@pane_errors} />
+      <%!-- Header, tabs, ONE scroll area, the Save row (the boss,
+           2026-11-02: the Settings tab lost its tabs). The scroll area holds
+           the form and, on Settings, the modules panel, which writes on its
+           own and so cannot sit inside the form (nested forms): the tabs
+           and the Save row are outside both, the Save button submits the
+           form by its id. --%>
+      <.form_tabs id="project-form-tabs" prefix="project" panes={@panes} active={@pane} errors={@pane_errors} />
+
+      <div data-pkp-scroll class="flex flex-col gap-3">
+      <.form for={@form} id="project-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
 
         <%!-- ══ :new — the 2026-08-06 redesign: basics, starting-point
              cards, capability customize, statuses, invites. ══ --%>
@@ -2888,7 +2893,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                      (the boss's "each thing stands alone", 2026-09-05).
                      The flags below are what the list does, so they hide
                      with it. --%>
-                <label id="ext-row-tasks" class="flex items-center justify-between gap-3 py-0.5">
+                <%!-- Each toggle right before its label (the boss, 2026-11-02). --%>
+                <label id="ext-row-tasks" class="flex items-start gap-3 py-0.5">
+                  <input type="hidden" name="ext[tasks]" value="false" />
+                  <input
+                    type="checkbox"
+                    name="ext[tasks]"
+                    value="true"
+                    checked={tasks_on?(assigns)}
+                    class="toggle toggle-primary toggle-sm shrink-0 mt-0.5"
+                  />
                   <span class="text-sm">
                     <span class="flex items-center gap-2 font-medium">
                       <.icon name="hero-clipboard-document-list" class="w-4 h-4 opacity-60" />
@@ -2898,14 +2912,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       {gettext("A task list with its board, timeline and calendar. Off: a project made only of the tabs you pick below.")}
                     </span>
                   </span>
-                  <input type="hidden" name="ext[tasks]" value="false" />
-                  <input
-                    type="checkbox"
-                    name="ext[tasks]"
-                    value="true"
-                    checked={tasks_on?(assigns)}
-                    class="toggle toggle-primary toggle-sm"
-                  />
                 </label>
                 <div
                   :for={{group_key, group_label, flags} <- grouped_flag_defs(@flag_defs)}
@@ -2913,26 +2919,26 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   id={"create-flags-#{group_key}"}
                 >
                   <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{translate_catalog_string(group_label)}</h3>
-                  <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+                  <div class="flex flex-col gap-1">
                     <label
                       :for={flag <- flags}
                       id={"flag-row-#{flag.key}"}
-                      class="flex items-center justify-between gap-3 py-0.5"
+                      class="flex items-start gap-3 py-0.5"
                     >
-                      <span class="text-sm">
-                        {translate_catalog_string(flag.label)}
-                        <span :if={flag.requires != []} class="block text-xs opacity-40">
-                          {gettext("Needs: %{list}", list: Enum.join(flag.requires, ", "))}
-                        </span>
-                      </span>
                       <input type="hidden" name={"flag[#{flag.key}]"} value="false" />
                       <input
                         type="checkbox"
                         name={"flag[#{flag.key}]"}
                         value="true"
                         checked={@flag_states[flag.key]}
-                        class="toggle toggle-primary toggle-sm"
+                        class="toggle toggle-primary toggle-sm shrink-0"
                       />
+                      <span class="text-sm">
+                        {translate_catalog_string(flag.label)}
+                        <span :if={flag.requires != []} class="block text-xs opacity-40">
+                          {gettext("Needs: %{list}", list: Enum.join(flag.requires, ", "))}
+                        </span>
+                      </span>
                     </label>
                   </div>
                 </div>
@@ -2961,13 +2967,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       id={"ext-row-#{ext.key}"}
                       class="group/extbox rounded-lg border border-base-200 p-2"
                     >
-                      <label class="flex items-center justify-between gap-3">
-                        <span class="min-w-0">
-                          <span class="flex items-center gap-2 text-sm font-medium">
-                            <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {translate_catalog_string(ext.name)}
-                          </span>
-                          <span :if={ext.description} class="block text-xs opacity-50">{translate_catalog_string(ext.description)}</span>
-                        </span>
+                      <label class="flex items-start gap-3">
                         <input type="hidden" name={"ext[#{ext.key}]"} value="false" />
                         <%!-- data-ext-toggle, not a bare :checked, is what the
                              reveals below key on: `group-has-[:checked]` matches
@@ -2981,8 +2981,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                           value="true"
                           checked={@ext_states[ext.key]}
                           data-ext-toggle
-                          class="toggle toggle-primary toggle-sm"
+                          class="toggle toggle-primary toggle-sm shrink-0 mt-0.5"
                         />
+                        <span class="min-w-0">
+                          <span class="flex items-center gap-2 text-sm font-medium">
+                            <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {translate_catalog_string(ext.name)}
+                          </span>
+                          <span :if={ext.description} class="block text-xs opacity-50">{translate_catalog_string(ext.description)}</span>
+                        </span>
                       </label>
                       <%!-- The extension's OWN capability flags, revealed
                            by the same CSS group-has as its config (instant,
@@ -2996,17 +3002,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       >
                         <label
                           :for={flag <- Map.get(@ext_flag_defs, ext.key, [])}
-                          class="flex items-center justify-between gap-3 py-0.5"
+                          class="flex items-center gap-3 py-0.5"
                         >
-                          <span class="text-sm">{translate_catalog_string(flag.label)}</span>
                           <input type="hidden" name={"flag[#{flag.key}]"} value="false" />
                           <input
                             type="checkbox"
                             name={"flag[#{flag.key}]"}
                             value="true"
                             checked={@flag_states[flag.key]}
-                            class="toggle toggle-primary toggle-sm"
+                            class="toggle toggle-primary toggle-sm shrink-0"
                           />
+                          <span class="text-sm">{translate_catalog_string(flag.label)}</span>
                         </label>
                       </div>
 
@@ -3309,30 +3315,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </.form_pane>
         <% end %>
 
-        <%!-- Cancel + Save belong to the FIELDS above: the modules panel
-             below writes immediately and has nothing to save, and a Save
-             row under it read as if it applied to the panel — "I doubt the
-             API key will be removed if I click cancel" (Max, 2026-10-05).
-             :edit only — the creation form has its own action row. --%>
-        <.form_actions
-          :if={@live_action == :edit}
-          class="gap-2"
-          submit_label={gettext("Save")}
-          submitting_label={gettext("Saving…")}
-          submit_class="btn btn-primary btn-sm"
-          submit_disabled={@ai_in_flight != []}
-        >
-          <:cancel>
-            <button
-              type="button"
-              phx-click="cancel"
-              data-confirm={@dirty? && gettext("Discard your changes?")}
-              class="btn btn-ghost btn-sm"
-            >
-              {gettext("Close")}
-            </button>
-          </:cancel>
-        </.form_actions>
       </.form>
 
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
@@ -3362,12 +3344,36 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             id: "edit-modules-#{@project.uuid}",
             session: %{
               "id" => @project.uuid,
+              # A nested LiveView is a process of its own and starts on the
+              # app's default language: it was Estonian on an English page
+              # (the boss, 2026-11-02). It takes this page's.
+              "locale" => Gettext.get_locale(PhoenixKitProjects.Gettext),
               "embedded_in_form" => true,
               "current_user_uuid" => @current_user_uuid,
               "wrapper_class" => "flex flex-col gap-6"
             }
           )}
         </div>
+      </div>
+      </div>
+
+      <%!-- Close + Save belong to the FIELDS: the modules panel writes as
+           it is changed and says so (Max, 2026-10-05: "I doubt the API key
+           will be removed if I click cancel"). :edit only — the creation
+           form has its own action row. --%>
+      <div :if={@live_action == :edit} class="flex items-center justify-end gap-2 shrink-0 pt-1">
+        <button type="button" {ConfirmAction.close("cancel", @dirty?)} class="btn btn-ghost btn-sm">
+          {gettext("Close")}
+        </button>
+        <button
+          type="submit"
+          form="project-form"
+          class="btn btn-primary btn-sm"
+          disabled={@ai_in_flight != []}
+          phx-disable-with={gettext("Saving…")}
+        >
+          {gettext("Save")}
+        </button>
       </div>
 
 

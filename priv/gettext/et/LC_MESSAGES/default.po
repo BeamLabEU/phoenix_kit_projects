@@ -8677,8 +8677,8 @@ msgstr "Vali, mida %{name} kasutab — lihtsast ülesannete nimekirjast täielik
 
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:530
 #, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr "Vali, mida see projekt kasutab — lihtsast ülesannete nimekirjast täieliku jälgijani. Siinsed muudatused rakenduvad kohe; ülal olev Salvesta-nupp on väljade jaoks."
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr "Vali, mida see projekt kasutab — lihtsast ülesannete nimekirjast täieliku jälgijani. Siinsed muudatused rakenduvad kohe; all olev Salvesta-nupp on väljade jaoks."
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
@@ -10657,3 +10657,9 @@ msgstr "Otsingutulemused"
 
 msgid "is not a list of assignees"
 msgstr "ei ole vastutajate loend"
+
+msgid "What you changed since the last save is lost."
+msgstr "Viimasest salvestamisest saadik tehtud muudatused lähevad kaduma."
+
+msgid "Discard"
+msgstr "Loobu muudatustest"

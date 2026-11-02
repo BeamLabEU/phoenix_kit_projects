@@ -448,7 +448,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
         </:context>
       </.form_header>
 
-      <.form for={@form} id="template-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
+      <.form for={@form} id="template-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
         <%!-- Translatable card: name + description with language tabs.
              Wrapper id keys on @current_lang so morphdom re-mounts the
              inputs when the user switches languages — that's what swaps

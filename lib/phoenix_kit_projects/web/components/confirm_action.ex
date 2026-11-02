@@ -56,6 +56,22 @@ defmodule PhoenixKitProjects.Web.Components.ConfirmAction do
         }
 
   @doc """
+  A popup's Close button: `event` at once when nothing is unsaved, behind
+  "Discard your changes?" in the page's own dialog when something is (the
+  boss, 2026-11-02 — the browser's own box froze the page).
+  """
+  @spec close(String.t(), boolean()) :: map()
+  def close(event, true),
+    do:
+      ask(event,
+        title: gettext("Discard your changes?"),
+        message: gettext("What you changed since the last save is lost."),
+        confirm: gettext("Discard")
+      )
+
+  def close(event, _dirty?), do: %{"phx-click" => event}
+
+  @doc """
   The attributes of a button that must ask first. `event` is the page's own
   event to run on confirmation; `opts` carry `:title`, `:message` and
   `:confirm` (the confirm button's label) for the dialog, and every other

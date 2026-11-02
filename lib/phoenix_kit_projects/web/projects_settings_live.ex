@@ -749,19 +749,21 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               "By default the creation page shows only the essentials — everything else folds into \"Setup options\". Promote the blocks your team uses on every project to top level."
             )}
           </p>
-          <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+          <%!-- One column, each toggle right before its label (the boss,
+               2026-11-02). --%>
+          <div class="flex flex-col gap-1">
             <label
               :for={block <- @creation_blocks}
-              class="flex cursor-pointer items-center justify-between gap-3 py-1"
+              class="flex cursor-pointer items-center gap-3 py-1"
             >
-              <span class="text-sm">{WebHelpers.translate_catalog(block.label)}</span>
               <input
                 type="checkbox"
-                class="toggle toggle-primary toggle-sm"
+                class="toggle toggle-primary toggle-sm shrink-0"
                 checked={block.key in @creation_top_blocks}
                 phx-click="toggle_creation_block"
                 phx-value-key={block.key}
               />
+              <span class="text-sm">{WebHelpers.translate_catalog(block.label)}</span>
             </label>
           </div>
       </.form_section>
@@ -778,21 +780,21 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         <p class="text-xs text-base-content/60">
           {gettext("What every project has unless it sets its own on its Modules & Features page.")}
         </p>
-        <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+        <div class="flex flex-col gap-1">
           <label
             :for={flag <- @site_flags}
-            class="flex cursor-pointer items-center justify-between gap-3 py-1"
+            class="flex cursor-pointer items-center gap-3 py-1"
           >
-            <span class="text-sm">{WebHelpers.translate_catalog(flag.label)}</span>
             <input
               type="checkbox"
               id={"site-flag-#{flag.key}"}
-              class="toggle toggle-primary toggle-sm"
+              class="toggle toggle-primary toggle-sm shrink-0"
               checked={Map.get(@site_flag_values, flag.key, false)}
               phx-click="toggle_site_flag"
               phx-value-key={flag.key}
               phx-value-enabled={to_string(not Map.get(@site_flag_values, flag.key, false))}
             />
+            <span class="text-sm">{WebHelpers.translate_catalog(flag.label)}</span>
           </label>
         </div>
       </.form_section>
