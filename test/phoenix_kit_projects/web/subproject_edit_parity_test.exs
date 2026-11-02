@@ -96,4 +96,28 @@ defmodule PhoenixKitProjects.Web.SubprojectEditParityTest do
     assert to =~ "/projects/#{ctx.child.uuid}/edit"
     assert to =~ "subproject_link=#{ctx.link.uuid}"
   end
+
+  # codex review: a dirty short sub-project form's Close shows its question.
+  test "a new sub-project's Close with something typed asks in the app's dialog", ctx do
+    {:ok, view, _html} =
+      live(ctx.conn, "/en/admin/projects/#{ctx.parent.uuid}/assignments/new?kind=subproject")
+
+    view
+    |> element("#subproject-form")
+    |> render_change(%{"subproject" => %{"name" => "Typed"}})
+
+    html = render_click(view, "request_confirm", %{"event" => "cancel"})
+    assert html =~ "Discard your changes?"
+    refute html =~ "data-confirm"
+  end
+
+  # codex review: the project form opened for a sub-project goes back to the
+  # parent, not to the project list.
+  test "Close from the sub-project's project form goes back to the parent", ctx do
+    {:ok, view, _html} =
+      live(ctx.conn, "/en/admin/projects/#{ctx.child.uuid}/edit?subproject_link=#{ctx.link.uuid}")
+
+    assert {:error, {_kind, %{to: to}}} = render_click(view, "cancel", %{})
+    assert to =~ ctx.parent.uuid
+  end
 end

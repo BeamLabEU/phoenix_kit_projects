@@ -4725,6 +4725,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         </div>
       </.form>
       <.assignee_picker_outside search_form={"subproject-assignee-form-#{@dom}"} staff_confirm={@staff_confirm} />
+      <%!-- The Close question of this form (`ConfirmAction.close/2`). --%>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

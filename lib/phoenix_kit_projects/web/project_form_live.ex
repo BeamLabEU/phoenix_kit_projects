@@ -1143,7 +1143,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     do: {:noreply, end_or_resume(socket, :resume)}
 
   def handle_event("cancel", _params, socket) do
-    {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
+    {:noreply, WebHelpers.close_or_navigate(socket, back_path(socket, Paths.projects()))}
   end
 
   # The form's id, one per popup: the Save button sits outside the form
@@ -1978,7 +1978,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Project updated."))
-         |> WebHelpers.navigate_after_save(Paths.project(project.uuid),
+         |> WebHelpers.navigate_after_save(back_path(socket, Paths.project(project.uuid)),
            kind: :project,
            record: project,
            action: :update
@@ -3584,17 +3584,30 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
        )
        when is_binary(link_uuid) and is_binary(uuid) do
     with %Assignment{child_project_uuid: ^uuid} = link <- Projects.get_assignment(link_uuid),
-         %Project{} = parent <- Projects.get_project(link.project_uuid),
-         true <- may_edit_link?(socket, parent) do
-      socket
-      |> assign(sp_link: link, sp_parent: parent)
-      |> reload_link_deps()
+         %Project{} = parent <- Projects.get_project(link.project_uuid) do
+      # The way back is the parent's page whatever the rights; the row's
+      # "Waits on" only for whoever may edit the parent's tasks.
+      socket = assign(socket, return_to_project: parent.uuid)
+
+      if may_edit_link?(socket, parent),
+        do: socket |> assign(sp_link: link, sp_parent: parent) |> reload_link_deps(),
+        else: assign(socket, sp_link: nil, sp_parent: nil)
     else
-      _ -> assign(socket, sp_link: nil, sp_parent: nil)
+      _ -> assign(socket, sp_link: nil, sp_parent: nil, return_to_project: nil)
     end
   end
 
-  defp assign_subproject_link(socket, _), do: assign(socket, sp_link: nil, sp_parent: nil)
+  defp assign_subproject_link(socket, _),
+    do: assign(socket, sp_link: nil, sp_parent: nil, return_to_project: nil)
+
+  # Where Close and a save go: the parent project the sub-project was opened
+  # from (codex review), else the project list / the project.
+  defp back_path(socket, fallback) do
+    case socket.assigns[:return_to_project] do
+      uuid when is_binary(uuid) -> Paths.project(uuid)
+      _ -> fallback
+    end
+  end
 
   # Re-read at every write too: the parent's tasks are the parent's.
   defp may_edit_link?(socket, %Project{} = parent) do
