@@ -10723,3 +10723,9 @@ msgstr "Sofort gespeichert, sobald Sie sie hinzufügen — Schließen macht sie 
 
 msgid "Unsaved changes"
 msgstr "Ungespeicherte Änderungen"
+
+msgid "Could not change the dependency."
+msgstr "Die Abhängigkeit konnte nicht geändert werden."
+
+msgid "Create invoice"
+msgstr "Rechnung erstellen"

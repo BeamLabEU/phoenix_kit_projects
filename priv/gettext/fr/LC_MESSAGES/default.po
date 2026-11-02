@@ -10723,3 +10723,9 @@ msgstr "Enregistrés dès que vous les ajoutez — fermer ne les annule pas."
 
 msgid "Unsaved changes"
 msgstr "Modifications non enregistrées"
+
+msgid "Could not change the dependency."
+msgstr "Impossible de modifier la dépendance."
+
+msgid "Create invoice"
+msgstr "Créer la facture"

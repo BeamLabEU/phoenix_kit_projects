@@ -10780,3 +10780,9 @@ msgstr "Сохраняется сразу при добавлении — зак
 
 msgid "Unsaved changes"
 msgstr "Несохранённые изменения"
+
+msgid "Could not change the dependency."
+msgstr "Не удалось изменить зависимость."
+
+msgid "Create invoice"
+msgstr "Создать счёт"

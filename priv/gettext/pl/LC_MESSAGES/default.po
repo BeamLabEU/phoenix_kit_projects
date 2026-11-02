@@ -10780,3 +10780,9 @@ msgstr "Zapisywane od razu po dodaniu — zamknięcie ich nie cofa."
 
 msgid "Unsaved changes"
 msgstr "Niezapisane zmiany"
+
+msgid "Could not change the dependency."
+msgstr "Nie udało się zmienić zależności."
+
+msgid "Create invoice"
+msgstr "Utwórz fakturę"

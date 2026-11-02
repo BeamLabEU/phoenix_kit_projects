@@ -10723,3 +10723,9 @@ msgstr "Se guardan en cuanto los añades: cerrar no los deshace."
 
 msgid "Unsaved changes"
 msgstr "Cambios sin guardar"
+
+msgid "Could not change the dependency."
+msgstr "No se pudo cambiar la dependencia."
+
+msgid "Create invoice"
+msgstr "Crear factura"

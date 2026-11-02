@@ -10720,3 +10720,9 @@ msgstr ""
 
 msgid "Unsaved changes"
 msgstr ""
+
+msgid "Could not change the dependency."
+msgstr ""
+
+msgid "Create invoice"
+msgstr ""

@@ -30,7 +30,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
   alias PhoenixKitProjects.{Attachments, Extensions, Grants, Members, Statuses}
   alias PhoenixKitProjects.Extensions.ConfigOptions
-  alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.Components.AccessPanel
   alias PhoenixKitProjects.Web.Components.{AssigneePicker, FormParts, TimeInput}
   alias PhoenixKitProjects.Web.Components.ConfirmAction
@@ -107,6 +107,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         progress: &cover_progress/3
       )
       |> assign_cover()
+      |> assign_subproject_link(subproject_link_uuid(params, session))
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -1005,6 +1006,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # with form state.
   def handle_event("remove_cover", _params, %{assigns: %{live_action: :edit}} = socket),
     do: {:noreply, put_cover(socket, nil)}
+
+  # What the sub-project's row waits on in its parent (see
+  # `assign_subproject_link/2`); rights re-read on every change.
+  def handle_event(
+        "add_link_dep",
+        %{"depends_on_uuid" => dep},
+        %{assigns: %{sp_link: %Assignment{}}} = socket
+      )
+      when is_binary(dep) and dep != "",
+      do: {:noreply, change_link_dep(socket, dep, :add)}
+
+  def handle_event(
+        "remove_link_dep",
+        %{"uuid" => dep},
+        %{assigns: %{sp_link: %Assignment{}}} = socket
+      )
+      when is_binary(dep),
+      do: {:noreply, change_link_dep(socket, dep, :remove)}
+
+  def handle_event(event, _params, socket) when event in ~w(add_link_dep remove_link_dep),
+    do: {:noreply, socket}
 
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
@@ -3188,6 +3210,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 label={gettext("Count weekends in schedule")}
                 class="checkbox-primary checkbox-sm"
               />
+
+              <%!-- A sub-project is also a row of its parent's list: what it
+                   waits on there (the boss, 2026-11-02 — the sub-project's
+                   popup is this one, with everything a project has). --%>
+              <.subproject_waits_on :if={@sp_link} link={@sp_link} deps={@sp_link_deps} available={@sp_link_available} />
           </.form_pane>
 
           <.form_pane prefix="project" pane="settings" active={@pane}>
@@ -3536,6 +3563,146 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           DescriptionEditor.editor_id("project-description", socket.assigns[:current_lang])}
 
   defp description_image_target(_socket), do: nil
+
+  # ── A sub-project edited here (opened from its row in the parent) ───
+  #
+  # The boss, 2026-11-02: "Everything that the project has should be in the
+  # subproject as well". A sub-project IS a project, so its row's editor
+  # opens this form (`AssignmentFormLive` nests it); the one thing it has
+  # beyond a project is its place in the parent's list — what that row
+  # waits on — shown on the Schedule tab for whoever may edit the parent's
+  # tasks.
+
+  defp subproject_link_uuid(params, session) do
+    Map.get(session, "subproject_link_uuid") ||
+      if(is_map(params), do: params["subproject_link"])
+  end
+
+  defp assign_subproject_link(
+         %{assigns: %{live_action: :edit, project: %Project{uuid: uuid}}} = socket,
+         link_uuid
+       )
+       when is_binary(link_uuid) and is_binary(uuid) do
+    with %Assignment{child_project_uuid: ^uuid} = link <- Projects.get_assignment(link_uuid),
+         %Project{} = parent <- Projects.get_project(link.project_uuid),
+         true <- may_edit_link?(socket, parent) do
+      socket
+      |> assign(sp_link: link, sp_parent: parent)
+      |> reload_link_deps()
+    else
+      _ -> assign(socket, sp_link: nil, sp_parent: nil)
+    end
+  end
+
+  defp assign_subproject_link(socket, _), do: assign(socket, sp_link: nil, sp_parent: nil)
+
+  # Re-read at every write too: the parent's tasks are the parent's.
+  defp may_edit_link?(socket, %Project{} = parent) do
+    Authz.can?(socket.assigns[:phoenix_kit_current_scope], parent, :edit_tasks) and
+      Features.on?(parent, "dependencies")
+  end
+
+  defp reload_link_deps(%{assigns: %{sp_link: %Assignment{} = link, sp_parent: parent}} = socket) do
+    assign(socket,
+      sp_link_deps: Projects.list_dependencies(link.uuid),
+      sp_link_available: Projects.available_dependencies(parent.uuid, link.uuid)
+    )
+  end
+
+  defp change_link_dep(socket, dep_uuid, how) do
+    %{sp_link: link, sp_parent: parent} = socket.assigns
+
+    case link_dep_result(socket, Projects.get_project(parent.uuid), link, dep_uuid, how) do
+      :refused ->
+        put_flash(socket, :error, gettext("You don't have permission to do that here."))
+
+      {action, {:ok, _}, log} ->
+        Activity.log(action, log)
+        reload_link_deps(socket)
+
+      {action, _error, log} ->
+        Activity.log_failed(action, log)
+        put_flash(socket, :error, gettext("Could not change the dependency."))
+    end
+  end
+
+  defp link_dep_result(socket, %Project{} = parent, link, dep_uuid, how) do
+    if may_edit_link?(socket, parent) and link_dep_known?(parent, link, dep_uuid, how) do
+      action =
+        if how == :add, do: "projects.dependency_added", else: "projects.dependency_removed"
+
+      log = [
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: link.uuid,
+        metadata: %{"depends_on_uuid" => dep_uuid}
+      ]
+
+      result =
+        if how == :add,
+          do: Projects.add_dependency(link.uuid, dep_uuid),
+          else: Projects.remove_dependency(link.uuid, dep_uuid)
+
+      {action, result, log}
+    else
+      :refused
+    end
+  end
+
+  defp link_dep_result(_socket, _parent, _link, _dep_uuid, _how), do: :refused
+
+  defp link_dep_known?(parent, link, dep_uuid, :add),
+    do: Enum.any?(Projects.available_dependencies(parent.uuid, link.uuid), &(&1.uuid == dep_uuid))
+
+  defp link_dep_known?(_parent, link, dep_uuid, :remove),
+    do: Enum.any?(Projects.list_dependencies(link.uuid), &(&1.depends_on_uuid == dep_uuid))
+
+  attr(:link, :map, required: true)
+  attr(:deps, :list, required: true)
+  attr(:available, :list, required: true)
+
+  defp subproject_waits_on(assigns) do
+    assigns = assign(assigns, :lang, L10n.current_content_lang())
+
+    ~H"""
+    <fieldset id="subproject-waits-on" class="rounded-box border border-base-300 p-3 flex flex-col gap-2">
+      <legend class="px-1 text-sm font-semibold">{gettext("Waits on")}</legend>
+      <p class="text-xs text-base-content/60">
+        {gettext("Items in this project that must finish before this sub-project can start.")}
+      </p>
+      <ul :if={@deps != []} class="flex flex-col gap-1">
+        <li :for={dep <- @deps} class="flex items-center gap-2 text-sm">
+          <.assignment_status_badge status={dep.depends_on.status} size="xs" class="shrink-0" />
+          <span class="truncate flex-1">{Assignment.label(dep.depends_on, @lang)}</span>
+          <button
+            type="button"
+            phx-click="remove_link_dep"
+            phx-value-uuid={dep.depends_on_uuid}
+            phx-disable-with={gettext("Removing…")}
+            class="btn btn-ghost btn-xs btn-circle hover:text-error"
+            aria-label={gettext("Remove")}
+          >
+            <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+          </button>
+        </li>
+      </ul>
+      <%!-- Inside the project's form (no nested form): the select sends
+           its own event, as the task popup's does. --%>
+      <.select
+        :if={@available != []}
+        name="depends_on_uuid"
+        label={gettext("Add dependency")}
+        value=""
+        options={Enum.map(@available, &{Assignment.label(&1, @lang), &1.uuid})}
+        prompt={gettext("Select")}
+        phx-change="add_link_dep"
+      />
+      <p :if={@deps == [] and @available == []} class="text-sm text-base-content/50">
+        {gettext("No other items in this project to depend on.")}
+      </p>
+    </fieldset>
+    """
+  end
 
   # ── The cover picture (Settings tab) ────────────────────────────────
   #

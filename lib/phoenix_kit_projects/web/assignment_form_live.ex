@@ -95,7 +95,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     # This form can be stacked (`PopupHostLive`, a host's two frames): the
     # ids other elements point at carry the record, or this mount's own key
     # for a task not saved yet (`dom_key/1`).
-    socket = assign(socket, :dom_seed, "new#{System.unique_integer([:positive])}")
+    socket =
+      assign(socket,
+        dom_seed: "new#{System.unique_integer([:positive])}",
+        # What a sub-project's edit hands on to the project form it opens.
+        embed_session: session
+      )
+
     redirect_to = Map.get(session, "redirect_to")
     live_action = WebHelpers.resolve_live_action(socket, session)
     resolved_params = WebHelpers.resolve_action_params(params, session)
@@ -141,6 +147,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> assign_outline(resolved_params)
       |> assign_ai_translate()
       |> assign_task_files()
+      |> allow_subproject_images()
       |> assign_billable()
       # Unsaved edits? Flipped by the first change event; the host's
       # dialog (emit mode) stops closing on Esc/backdrop while true and
@@ -1427,6 +1434,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> assign_options()
         |> assign_form(Projects.change_assignment(assignment))
         |> assign_status_init(child)
+        |> nest_project_form(child, assignment)
 
       {project, assignment} ->
         task_name =
@@ -3526,6 +3534,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       ),
       do: {:noreply, DescriptionImages.pick(socket)}
 
+  # The same for a sub-project's description (its own folder).
+  def handle_info(
+        {:leaf_insert_request, %{editor_id: "subproject-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
   # An image pasted into the task's description: stored as the task's file
   # (`inline`) and placed at the cursor by its address — never kept in the
   # text as a `data:` URL.
@@ -4403,6 +4418,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   @impl true
+  # A sub-project being edited, by someone who may change its settings: the
+  # project's own form, with everything a project has (the boss,
+  # 2026-11-02), plus what its row waits on here (`subproject_link_uuid`).
+  def render(%{kind: "subproject", live_action: :edit, sp_nest: %{} = nest} = assigns) do
+    assigns = assign(assigns, :nest, nest)
+
+    ~H"""
+    <div class={@wrapper_class}>
+      {Phoenix.Component.live_render(@socket, PhoenixKitProjects.Web.ProjectFormLive,
+        id: "subproject-project-form-#{@nest.child_uuid}",
+        session: @nest.session
+      )}
+    </div>
+    """
+  end
+
   def render(%{kind: "subproject"} = assigns) do
     assigns = prepare_subproject_render(assigns)
 
@@ -4533,7 +4564,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 placeholder={gettext("Description…")}
                 mention_context={mention_context(@project)}
                 uploads
-                image_button={false}
+                image_button={@live_action == :edit}
+              />
+              <DescriptionImages.file_input
+                :if={@live_action == :edit and is_map(assigns[:uploads]) and Map.has_key?(assigns[:uploads], :description_images)}
+                uploads={assigns[:uploads]}
               />
             </.words_block>
 
@@ -5764,6 +5799,67 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp dom_key(assigns), do: assigns[:dom_seed] || "new"
 
   # The sub-project form's tabs, the open one, and the ones holding an error.
+  # A sub-project's description takes pictures as a project's does: pasted,
+  # or through the editor's image button (`DescriptionImages`), kept in the
+  # sub-project's own folder. Only on edit (a new one has nowhere to keep
+  # them yet) and only where the project's form is not nested instead.
+  defp allow_subproject_images(%{assigns: %{kind: "subproject", live_action: :edit}} = socket) do
+    if socket.assigns[:sp_nest],
+      do: socket,
+      else: DescriptionImages.allow(socket, &subproject_image_target/1)
+  end
+
+  defp allow_subproject_images(socket), do: socket
+
+  defp subproject_image_target(socket) do
+    case sp_source(socket) do
+      %Project{uuid: uuid} = sub when is_binary(uuid) ->
+        {sub,
+         DescriptionEditor.editor_id("subproject-description", socket.assigns[:current_lang])}
+
+      _ ->
+        nil
+    end
+  end
+
+  # ── A sub-project edited as the project it is ──────────────────────
+  #
+  # The boss, 2026-11-02: "Everything that the project has should be in the
+  # subproject as well." Whoever may change the sub-project's settings
+  # (`:edit_settings` on it, as the project popup asks) gets the project's
+  # own form — nested here in a popup, the project's edit page otherwise —
+  # told which row it is (`subproject_link_uuid`) so its Schedule tab also
+  # shows what that row waits on. Anyone else keeps this form's short
+  # version (name, description, assignee, how it ends, what it waits on).
+  defp nest_project_form(socket, %Project{uuid: child_uuid} = child, %Assignment{} = link)
+       when is_binary(child_uuid) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    cond do
+      child.is_template or not PhoenixKitProjects.Authz.can?(scope, child, :edit_settings) ->
+        assign(socket, sp_nest: nil)
+
+      socket.assigns[:embed_mode] == :navigate ->
+        socket
+        |> assign(sp_nest: nil)
+        |> push_navigate(to: Paths.edit_project(child_uuid) <> "?subproject_link=" <> link.uuid)
+
+      true ->
+        session =
+          (socket.assigns[:embed_session] || %{})
+          |> Map.drop(~w(project_id kind from_view))
+          |> Map.merge(%{
+            "live_action" => "edit",
+            "id" => child_uuid,
+            "subproject_link_uuid" => link.uuid
+          })
+
+        assign(socket, sp_nest: %{child_uuid: child_uuid, session: session})
+    end
+  end
+
+  defp nest_project_form(socket, _child, _link), do: assign(socket, sp_nest: nil)
+
   defp prepare_subproject_render(assigns) do
     assigns = assign(assigns, :dom, dom_key(assigns))
 

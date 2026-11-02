@@ -10723,3 +10723,9 @@ msgstr "Salvestatakse kohe lisamisel — sulgemine neid tagasi ei võta."
 
 msgid "Unsaved changes"
 msgstr "Salvestamata muudatused"
+
+msgid "Could not change the dependency."
+msgstr "Sõltuvust ei õnnestunud muuta."
+
+msgid "Create invoice"
+msgstr "Loo arve"
