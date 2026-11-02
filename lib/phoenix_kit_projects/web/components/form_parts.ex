@@ -33,7 +33,7 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   import PhoenixKitAI.Components.AITranslate, only: [ai_multilang_tabs: 1]
 
   alias PhoenixKit.Modules.Languages
-  alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
+  alias PhoenixKitProjects.Web.Components.{AssignmentStatusBadge, ConfirmAction}
 
   # ── Header ─────────────────────────────────────────────────────────
 
@@ -60,7 +60,10 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
 
   attr(:close_confirm, :any,
     default: nil,
-    doc: "a question asked before closing (unsaved changes)"
+    doc:
+      "truthy while something is unsaved: the ✕ asks first, in the page's own " <>
+        "dialog (`ConfirmAction.close/2` — the page allows `close_event` in its " <>
+        "`request_confirm`), never the browser's box"
   )
 
   attr(:close_label, :string, default: nil)
@@ -92,8 +95,7 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
       <button
         :if={@close_event}
         type="button"
-        phx-click={@close_event}
-        data-confirm={@close_confirm}
+        {ConfirmAction.close(@close_event, @close_confirm not in [nil, false])}
         class="btn btn-ghost btn-sm btn-square shrink-0"
         aria-label={@close_label || gettext("Close")}
       >

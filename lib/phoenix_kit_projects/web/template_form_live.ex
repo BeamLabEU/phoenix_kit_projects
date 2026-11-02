@@ -17,7 +17,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
-  alias PhoenixKitProjects.Web.Components.DescriptionEditor
+  alias PhoenixKitProjects.Web.Components.{ConfirmAction, DescriptionEditor}
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.DescriptionImages
 
@@ -269,6 +269,22 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
          :info,
          gettext("Hold on — wait for the translation to finish before saving.")
        )}
+    end
+  end
+
+  # Close with unsaved changes asks first in the module's own dialog
+  # (`Components.ConfirmAction`), never the browser's box; only Close may
+  # be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(cancel))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {%{event: "cancel" = event, params: params}, socket} -> handle_event(event, params, socket)
+      {_none, socket} -> {:noreply, socket}
     end
   end
 
@@ -540,8 +556,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               <:cancel>
               <button
                 type="button"
-                phx-click="cancel"
-                data-confirm={@dirty? && gettext("Discard your changes?")}
+                {ConfirmAction.close("cancel", @dirty?)}
                 class="btn btn-ghost btn-sm"
               >
                 {gettext("Close")}
@@ -554,6 +569,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
 
       <%!-- Modal lives outside the form — see project_form_live.ex. --%>
       <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

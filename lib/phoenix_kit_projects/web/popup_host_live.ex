@@ -122,6 +122,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Web.{AssignmentFormLive, AssignmentViewLive, ProjectShowLive}
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -505,6 +506,25 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   end
 
   @impl true
+  # A frame's ✕ while its form holds unsaved changes asks first, in this
+  # host's own dialog (`PopupHost` puts it behind `ConfirmAction`); only
+  # the close may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(close_top_modal))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {%{event: "close_top_modal" = event, params: params}, socket} ->
+        handle_event(event, params, socket)
+
+      {_none, socket} ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_event("close_top_modal", params, socket) do
     # Backdrop click + ESC keypress both fire `close_top_modal`. Each
     # element passes `phx-value-frame-ref={frame.frame_ref}` so the
@@ -714,6 +734,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
         )}
       </:frame>
     </.popup_host>
+    <ConfirmAction.confirm_action_modal confirm={assigns[:confirm_action]} />
     <%!-- The open task in the page's address (`PkpDrawerUrl`), only
          when the host named the parameter. --%>
     <div

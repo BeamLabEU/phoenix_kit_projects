@@ -3119,8 +3119,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <:cancel>
             <button
               type="button"
-              phx-click="cancel"
-              data-confirm={@dirty? && gettext("Discard your changes?")}
+              {ConfirmAction.close("cancel", @dirty?)}
               class="btn btn-ghost btn-sm"
             >
               {gettext("Close")}

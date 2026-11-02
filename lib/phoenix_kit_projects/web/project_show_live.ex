@@ -1133,9 +1133,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                takes along (`Components.MoveProject`). --%>
           <.table_row_menu_button
             :if={assigns[:invoice_ready?]}
-            phx-click="generate_invoice"
-            phx-disable-with={gettext("Generating…")}
-            data-confirm={gettext("Create a draft invoice from all uninvoiced billable time?")}
+            {ConfirmAction.ask("generate_invoice",
+              title: gettext("Create a draft invoice from all uninvoiced billable time?"),
+              confirm: gettext("Create invoice")
+            )}
             icon="hero-banknotes"
             label={gettext("Invoice effort")}
           />
@@ -2730,7 +2731,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          socket,
          params,
          ~w(archive_project remove_assignment review_submission detach_subproject complete
-            make_subproject make_task outline_purge)
+            make_subproject make_task outline_purge generate_invoice)
        )}
 
   def handle_event("confirm_action_cancel", _params, socket),

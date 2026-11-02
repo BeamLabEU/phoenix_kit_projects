@@ -901,8 +901,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
   host hears about it once (`notify_dirty/2`). Idempotent — pipe it into
   every handler that changes what a save would write (validate, pending
   dependency picks); later calls see `dirty?` already set and do nothing.
-  Mount with `dirty?: false`; render `data-confirm` from `@dirty?` on
-  Cancel and the header's back link.
+  Mount with `dirty?: false`; Close and the header's back link take
+  `ConfirmAction.close(event, @dirty?)`, so they ask first in the page's
+  own dialog — never the browser's confirm box.
   """
   @spec mark_dirty(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def mark_dirty(%{assigns: %{dirty?: true}} = socket), do: socket

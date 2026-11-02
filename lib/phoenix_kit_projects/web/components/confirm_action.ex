@@ -3,6 +3,10 @@ defmodule PhoenixKitProjects.Web.Components.ConfirmAction do
   A destructive action that asks first, through core's `confirm_modal/1`
   instead of the browser's `data-confirm` dialog — the shape the catalogue
   uses for its deletes (boss, 2026-10-05: "use the core's confirm modal").
+  Nothing in this module asks through the browser's box any more (the
+  boss, 2026-11-02 — it froze the page and looks foreign): every Close,
+  Delete and popup ✕ comes here, and `NoBrowserConfirmTest` keeps
+  `data-confirm` out of `lib/`.
 
   Three parts, so a page adds one assign-free modal and three short event
   clauses and keeps its existing handlers untouched:

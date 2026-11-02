@@ -331,6 +331,40 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       refute button =~ "data-confirm"
     end
 
+    # The boss, 2026-11-02: never the browser's box. A dirty frame's ✕ asks
+    # in the host's own dialog, and closes only on Discard.
+    test "a dirty frame's × asks in the host's own dialog and closes on Discard",
+         %{conn: conn} do
+      topic = unique_topic()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic}
+        )
+
+      push_n_frames(topic, view, 1)
+      [%{frame_ref: ref}] = :sys.get_state(view.pid).socket.assigns.modal_stack
+      send(view.pid, {:projects, :dirty, %{frame_ref: ref, dirty: true}})
+      html = render(view)
+
+      [button] = Regex.run(~r/<button[^>]*aria-label="Close"[^>]*>/, html)
+      assert button =~ ~s(phx-click="request_confirm")
+      assert button =~ ~s(phx-value-event="close_top_modal")
+      refute html =~ "data-confirm"
+
+      render_click(view, "request_confirm", %{
+        "event" => "close_top_modal",
+        "title" => "Close without saving?",
+        "frame-ref" => to_string(ref)
+      })
+
+      assert render(view) =~ "Close without saving?"
+      assert [_] = :sys.get_state(view.pid).socket.assigns.modal_stack
+
+      render_click(view, "confirm_action_ok", %{})
+      assert [] = :sys.get_state(view.pid).socket.assigns.modal_stack
+    end
+
     test "close_top_modal with non-top frame-ref is a no-op", %{conn: conn} do
       topic = unique_topic()
 

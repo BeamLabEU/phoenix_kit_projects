@@ -43,8 +43,12 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   matches against its top frame (`pop_if_top_matches/2`). A frame the
   host marks `closeable: false` (a form that has been edited) ignores Esc
   and the backdrop — the form's own Cancel is the way out, so a stray
-  click never eats what was typed. Stack cap at 5 frames matches
-  `PopupHostLive`'s `@max_stack_depth`.
+  click never eats what was typed. Its ✕ still closes, but asks first in
+  the host's own dialog (`ConfirmAction.ask/2` for `on_close`, carrying
+  the frame ref), never the browser's box: the host answers
+  `request_confirm` / `confirm_action_ok` / `confirm_action_cancel` and
+  draws `<.confirm_action_modal>` (`PopupHostLive` does). Stack cap at 5
+  frames matches `PopupHostLive`'s `@max_stack_depth`.
 
   ## Example
 
@@ -68,6 +72,8 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
   import PhoenixKitWeb.Components.Core.Modal, only: [modal: 1]
+
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
 
   attr(:modal_stack, :list, required: true)
   attr(:on_close, :string, default: "close_top_modal")
@@ -201,11 +207,9 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         <button
           type="button"
           class="btn btn-ghost btn-sm btn-circle absolute right-6 top-6 z-20"
-          phx-click={@on_close}
-          phx-value-frame-ref={frame.frame_ref}
+          {close_attrs(@on_close, frame)}
           aria-label={gettext("Close")}
           title={gettext("Close")}
-          data-confirm={Map.get(frame, :closeable, true) == false && gettext("Close without saving?")}
         >
           <.icon name="hero-x-mark" class="w-5 h-5" />
         </button>
@@ -213,5 +217,20 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       </.modal>
     </div>
     """
+  end
+
+  # The ✕: closes at once, or — while the frame's form holds unsaved
+  # changes — asks first in the host's own dialog.
+  defp close_attrs(on_close, %{frame_ref: ref} = frame) do
+    if Map.get(frame, :closeable, true) == false do
+      ConfirmAction.ask(on_close,
+        title: gettext("Close without saving?"),
+        message: gettext("What you changed since the last save is lost."),
+        confirm: gettext("Discard"),
+        "frame-ref": ref
+      )
+    else
+      %{"phx-click" => on_close, "phx-value-frame-ref" => ref}
+    end
   end
 end

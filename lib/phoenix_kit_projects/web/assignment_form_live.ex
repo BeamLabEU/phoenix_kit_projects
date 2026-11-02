@@ -4432,8 +4432,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <button
             :if={@embed_mode != :navigate and @from_view?}
             type="button"
-            phx-click="cancel"
-            data-confirm={@dirty? && gettext("Discard your changes?")}
+            {ConfirmAction.close("cancel", @dirty?)}
             class="btn btn-ghost btn-sm btn-square shrink-0"
             title={gettext("Back to task")}
             aria-label={gettext("Back to task")}
@@ -4671,8 +4670,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         <div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow">
           <button
             type="button"
-            phx-click="cancel"
-            data-confirm={@dirty? && gettext("Discard your changes?")}
+            {ConfirmAction.close("cancel", @dirty?)}
             class="btn btn-ghost btn-sm mr-auto"
           >
             {gettext("Close")}
@@ -4729,8 +4727,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <button
             :if={@from_view?}
             type="button"
-            phx-click={if @live_action == :edit, do: "close_form", else: "cancel"}
-            data-confirm={@live_action != :edit && @dirty? && gettext("Discard your changes?")}
+            {ConfirmAction.close(if(@live_action == :edit, do: "close_form", else: "cancel"), @dirty?)}
             class="btn btn-ghost btn-sm btn-square shrink-0"
             title={gettext("Back to task")}
             aria-label={gettext("Back to task")}
@@ -5609,8 +5606,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <button
             type="button"
             id="assignment-close"
-            phx-click="cancel"
-            data-confirm={@dirty? && gettext("Discard your changes?")}
+            {ConfirmAction.close("cancel", @dirty?)}
             class="btn btn-ghost btn-sm order-1 mr-auto"
           >
             {gettext("Close")}
