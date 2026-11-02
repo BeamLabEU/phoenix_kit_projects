@@ -10696,3 +10696,15 @@ msgstr ""
 
 msgid "Started %{date}"
 msgstr ""
+
+msgid "Change the deadline"
+msgstr ""
+
+msgid "Open their page"
+msgstr ""
+
+msgid "Could not change the deadline."
+msgstr ""
+
+msgid "That time could not be read."
+msgstr ""

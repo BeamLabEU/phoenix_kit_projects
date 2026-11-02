@@ -10699,3 +10699,15 @@ msgstr "Cuántas tareas están abiertas"
 
 msgid "Started %{date}"
 msgstr "Iniciado %{date}"
+
+msgid "Change the deadline"
+msgstr "Cambiar el plazo"
+
+msgid "Open their page"
+msgstr "Abrir su página"
+
+msgid "Could not change the deadline."
+msgstr "No se pudo cambiar el plazo."
+
+msgid "That time could not be read."
+msgstr "No se pudo leer esa hora."

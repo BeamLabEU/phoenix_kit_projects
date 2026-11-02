@@ -61,7 +61,13 @@ defmodule PhoenixKitProjects.Web.OngoingChoiceTest do
 
   describe "the badge and what ongoing work shows" do
     test "beside the name on its page, opening the popup; no plan badges", %{conn: conn} do
-      project = fixture_project(%{"settings" => @ongoing, "start_mode" => "immediate"})
+      # Shown when switched on (the third list, item 3: off by default).
+      project =
+        fixture_project(%{
+          "settings" => Map.put(@ongoing, "header", %{"ongoing" => true, "open_tasks" => true}),
+          "start_mode" => "immediate"
+        })
+
       project = Projects.get_project!(project.uuid)
       open_task!(project)
       open_task!(project)

@@ -57,7 +57,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
   # The steps the project page runs for the view (`ProjectShowLive`'s
   # `:intent` handler accepts exactly these).
-  @steps ~w(ask_ready start_task complete ask_reopen)
+  @steps ~w(ask_ready start_task complete ask_reopen reopen make_idle)
 
   @impl true
   def mount(params, session, socket) do
@@ -316,7 +316,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
       when step in @steps do
     WebHelpers.emit_intent(socket, step, socket.assigns.assignment.uuid)
 
-    if step == "start_task",
+    if step in ~w(start_task reopen make_idle),
       do: {:noreply, socket},
       else: {:noreply, WebHelpers.close_or_navigate(socket, project_path(socket))}
   end
@@ -392,8 +392,9 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     <div class={@wrapper_class} id={"task-view-#{@assignment.uuid}"}>
       <%!-- Header: where it sits, what it is, where it stands, what next. --%>
       <header class="flex flex-col gap-1.5">
-        <%!-- One row, as every popup's (the boss, 2026-10-31): back, the ref
-             pill, the name, its status, Edit and close. --%>
+        <%!-- One row, as every popup's: back, the ref pill, the name and the
+             close (the boss, 2026-11-02: the status and Edit belong with the
+             details below, not beside the name). --%>
         <div class={["flex items-center gap-2 min-w-0", @embed_mode == :emit && "pr-8"]}>
           <button
             :if={@back_task}
@@ -410,23 +411,6 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
           <h2 class="flex-1 min-w-0 text-lg font-semibold leading-tight break-words">
             {Assignment.label(@assignment, @lang)}
           </h2>
-          <.assignment_status_badge
-            :if={not @project.is_template}
-            status={@assignment.status}
-            subproject={Assignment.subproject?(@assignment)}
-            size="md"
-            class="shrink-0"
-          />
-          <button
-            :if={@can_edit?}
-            type="button"
-            phx-click="edit"
-            class="btn btn-ghost btn-sm btn-square shrink-0"
-            title={gettext("Edit")}
-            aria-label={gettext("Edit")}
-          >
-            <.icon name="hero-pencil-square" class="w-4 h-4" />
-          </button>
           <%!-- In a drawer the drawer has its ✕; one more here made two.
                On its own page this is the way back to the project. --%>
           <button
@@ -440,15 +424,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
           </button>
         </div>
 
-        <div
-          :if={
-            @parent ||
-              (not @project.is_template and
-                 ((@assignment.status == "in_progress" and Enum.any?(@waits_on, &(&1.status != "done"))) or
-                    @can_step?))
-          }
-          class="flex flex-wrap items-center gap-2 text-sm"
-        >
+        <div :if={@parent} class="flex flex-wrap items-center gap-2 text-sm">
           <span :if={@parent} class="text-base-content/60 min-w-0 truncate">
             {gettext("Part of")}
             <button
@@ -460,23 +436,6 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               {Assignment.label(@parent, @lang)}
             </button>
           </span>
-          <span
-            :if={
-              not @project.is_template and @assignment.status == "in_progress" and
-                Enum.any?(@waits_on, &(&1.status != "done"))
-            }
-            class="badge badge-warning gap-1"
-          >
-            <.icon name="hero-pause-circle" class="w-3.5 h-3.5" />
-            {AssignmentStatusBadge.on_hold_label(Assignment.subproject?(@assignment))}
-          </span>
-          <.next_step
-            :if={not @project.is_template and @can_step?}
-            assignment={@assignment}
-            fx={@fx}
-            step_intents?={@step_intents?}
-            project={@project}
-          />
         </div>
       </header>
 
@@ -484,8 +443,36 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
         <%!-- Details: beside the main column when the drawer is wide,
              above it when it is narrow. Blank optional fields are left
              out, never "None". --%>
-        <aside class="@2xl:col-start-2 @2xl:row-start-1">
+        <aside class="relative @2xl:col-start-2 @2xl:row-start-1">
+          <%!-- Edit, at the corner of the facts it edits (the boss,
+               2026-11-02: not beside the name, not a row of its own). --%>
+          <button
+            :if={@can_edit?}
+            type="button"
+            phx-click="edit"
+            class="btn btn-ghost btn-xs gap-1 absolute top-2 right-2 @2xl:top-0 @2xl:right-0"
+          >
+            <.icon name="hero-pencil-square" class="w-3.5 h-3.5" /> {gettext("Edit")}
+          </button>
           <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm rounded-box border border-base-200 p-3 @2xl:border-0 @2xl:p-0">
+            <%!-- The status as a row of the details, a press away from the
+                 others (the boss, 2026-11-02); no "Mark done" button. --%>
+            <dt :if={not @project.is_template} class="text-base-content/60">{gettext("Status")}</dt>
+            <dd :if={not @project.is_template} class="flex flex-wrap items-center gap-2 min-w-0 pr-16">
+              <.view_status
+                assignment={@assignment}
+                fx={@fx}
+                can_step?={@can_step? and @step_intents?}
+              />
+              <span
+                :if={@assignment.status == "in_progress" and Enum.any?(@waits_on, &(&1.status != "done"))}
+                class="badge badge-warning badge-sm gap-1"
+              >
+                <.icon name="hero-pause-circle" class="w-3.5 h-3.5" />
+                {AssignmentStatusBadge.on_hold_label(Assignment.subproject?(@assignment))}
+              </span>
+            </dd>
+
             <dt :if={@fx.assignees} class="text-base-content/60">{gettext("Assignee")}</dt>
             <dd :if={@fx.assignees} class="min-w-0 truncate">
               <%= if assignee_kind(@assignment) do %>
@@ -559,14 +546,6 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               {if @desc_open?, do: gettext("Show less"), else: gettext("Show more")}
             </button>
           </section>
-          <button
-            :if={not present?(desc) and @can_edit?}
-            type="button"
-            phx-click="edit"
-            class="text-sm text-base-content/50 hover:text-base-content self-start"
-          >
-            {gettext("Add a description")}
-          </button>
 
           <%!-- The files added to the task, to look at or download. Only
                the ones added as files: the images pasted into the
@@ -602,7 +581,9 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
           <%!-- Activity: one place, three tabs. --%>
           <section :if={@threads || @history != []} class="flex flex-col gap-3">
-            <div role="tablist" class="tabs tabs-border">
+            <%!-- The tabs' edge on the details box's, their words and what
+                 they open on one line further in (the boss, 2026-11-02). --%>
+            <div role="tablist" class="tabs tabs-border [&>.tab]:px-3">
               <button
                 :if={@threads}
                 type="button"
@@ -640,6 +621,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               </button>
             </div>
 
+            <div class="px-3">
             <.live_component
               :if={@threads && @activity_tab == "comments"}
               module={PhoenixKitComments.Web.CommentsComponent}
@@ -669,6 +651,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               decoration_keys={PhoenixKitProjects.TaskNotes.decoration_keys()}
               comment_decorations={PhoenixKitProjects.TaskNotes.decorations(PhoenixKitProjects.TaskNotes.list(@assignment.uuid))}
             />
+            </div>
           </section>
         </main>
       </div>
@@ -676,61 +659,57 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     """
   end
 
-  # The one next step for the task's status, as the list's row offers it.
   attr(:assignment, :map, required: true)
   attr(:fx, :map, required: true)
-  attr(:step_intents?, :boolean, required: true)
-  attr(:project, :map, required: true)
+  attr(:can_step?, :boolean, default: false)
 
-  defp next_step(assigns) do
-    assigns = assign(assigns, :step, step_for(assigns.assignment, assigns.fx))
-
+  # The status; where the page under the drawer runs steps, a press opens
+  # the statuses, each run as that step there (its dialogs included).
+  defp view_status(%{can_step?: true} = assigns) do
     ~H"""
-    <%= if @step do %>
-      <% {event, label, class, icon} = @step %>
-      <%!-- Without a project page under it to run the step's dialog (its
-           own page, the Time page, a host's drawer) the button takes you
-           there, to this task. --%>
-      <.link
-        :if={not @step_intents?}
-        navigate={Paths.task(@project, @assignment)}
-        class={["btn btn-sm gap-1 ml-auto", class]}
+    <details class="dropdown" id={"view-status-pop-#{@assignment.uuid}"}>
+      <summary
+        class="list-none cursor-pointer [&::-webkit-details-marker]:hidden"
+        title={pgettext("task action", "Change status")}
       >
-        <.icon name={icon} class="w-4 h-4" /> {label}
-      </.link>
-      <button
-        :if={@step_intents?}
-        type="button"
-        phx-click="step"
-        phx-value-step={event}
-        phx-disable-with={gettext("Saving…")}
-        class={["btn btn-sm gap-1 ml-auto", class]}
-      >
-        <.icon name={icon} class="w-4 h-4" /> {label}
-      </button>
-    <% end %>
+        <.assignment_status_badge status={@assignment.status} subproject={Assignment.subproject?(@assignment)} />
+      </summary>
+      <ul class="dropdown-content z-30 mt-1 min-w-[11rem] rounded-box bg-base-100 border border-base-200 shadow-xl p-1">
+        <li :for={status <- AssignmentStatusBadge.choices(@assignment, @fx)} role="none">
+          <button
+            type="button"
+            id={"view-status-#{@assignment.uuid}-#{status}"}
+            role="menuitemradio"
+            aria-checked={to_string(status == @assignment.status)}
+            disabled={status == @assignment.status}
+            phx-click="step"
+            phx-value-step={status_step(@assignment, status)}
+            class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm w-full text-left hover:bg-base-200 disabled:cursor-default disabled:hover:bg-transparent"
+          >
+            <span class={["inline-block w-2.5 h-2.5 rounded-full shrink-0", AssignmentStatusBadge.color(status)]}></span>
+            <span class="flex-1">{AssignmentStatusBadge.label(status, Assignment.subproject?(@assignment))}</span>
+          </button>
+        </li>
+      </ul>
+    </details>
     """
   end
 
-  defp step_for(%Assignment{child_project_uuid: child}, _fx) when is_binary(child), do: nil
+  defp view_status(assigns) do
+    ~H"""
+    <.assignment_status_badge status={@assignment.status} subproject={Assignment.subproject?(@assignment)} />
+    """
+  end
 
-  defp step_for(%Assignment{status: "waiting"}, _fx),
-    do:
-      {"ask_ready", AssignmentStatusBadge.action_label(:allow_start), "btn-info",
-       "hero-play-circle"}
-
-  defp step_for(%Assignment{status: "todo"}, %{in_progress: true}),
-    do: {"start_task", AssignmentStatusBadge.action_label(:start), "btn-warning", "hero-play"}
-
-  defp step_for(%Assignment{status: status}, _fx) when status in ["todo", "in_progress"],
-    do: {"complete", AssignmentStatusBadge.action_label(:mark_done), "btn-success", "hero-check"}
-
-  defp step_for(%Assignment{status: "done"}, _fx),
-    do:
-      {"ask_reopen", AssignmentStatusBadge.action_label(:reopen), "btn-ghost",
-       "hero-arrow-uturn-left"}
-
-  defp step_for(_assignment, _fx), do: nil
+  # The project page's mapping from the status chosen to the step that
+  # makes it so (`ProjectShowLive`'s `set_status`).
+  defp status_step(%Assignment{status: same}, same), do: nil
+  defp status_step(_a, "done"), do: "complete"
+  defp status_step(%Assignment{status: "waiting"}, "todo"), do: "ask_ready"
+  defp status_step(%Assignment{status: "done"}, "todo"), do: "ask_reopen"
+  defp status_step(_a, "todo"), do: "reopen"
+  defp status_step(_a, "in_progress"), do: "start_task"
+  defp status_step(_a, "waiting"), do: "make_idle"
 
   # Rows of other tasks — a connection, a subtask — each opening its view.
   attr(:title, :string, default: nil)

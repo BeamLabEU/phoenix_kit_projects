@@ -10699,3 +10699,15 @@ msgstr "Mitu ülesannet on avatud"
 
 msgid "Started %{date}"
 msgstr "Alustatud %{date}"
+
+msgid "Change the deadline"
+msgstr "Muuda tähtaega"
+
+msgid "Open their page"
+msgstr "Ava nende leht"
+
+msgid "Could not change the deadline."
+msgstr "Tähtaega ei õnnestunud muuta."
+
+msgid "That time could not be read."
+msgstr "Seda kellaaega ei õnnestunud lugeda."

@@ -277,13 +277,15 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
   end
 
   describe "the project link hint (item 7)" do
-    test "says a site path opens in a new tab too, as the link does", %{conn: conn} do
+    # Since the third list (item 2) how it opens is a choice, not a hint.
+    test "offers how the link opens: a new tab or here", %{conn: conn} do
       conn = put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))
       project = fixture_project()
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
-      assert html =~ "both open in a new tab"
-      refute html =~ "opens in the same one"
+      assert html =~ ~s(name="header[link_target]")
+      assert html =~ "In a new tab"
+      assert html =~ "Here, without a reload"
     end
   end
 

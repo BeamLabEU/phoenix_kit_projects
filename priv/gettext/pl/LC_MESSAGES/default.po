@@ -10756,3 +10756,15 @@ msgstr "Ile zadań jest otwartych"
 
 msgid "Started %{date}"
 msgstr "Rozpoczęty %{date}"
+
+msgid "Change the deadline"
+msgstr "Zmień termin"
+
+msgid "Open their page"
+msgstr "Otwórz ich stronę"
+
+msgid "Could not change the deadline."
+msgstr "Nie udało się zmienić terminu."
+
+msgid "That time could not be read."
+msgstr "Nie udało się odczytać tej godziny."

@@ -127,6 +127,92 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
   end
 
   # The boss's third list, items 2, 3, 10.
+  # The boss's third list, items 11, 13, 14.
+  describe "the task row (third list)" do
+    test "the handle runs the card's height; the ref sits at the end of the title row",
+         %{conn: conn} do
+      project = started_project()
+      a = assignment!(project)
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      card = view |> element(~s([data-pkp-card="#{a.uuid}"])) |> render()
+      # The handle is a column of the card, not part of the title row.
+      assert card =~
+               ~r/data-pkp-card="#{a.uuid}"[^>]*>\s*<span[^>]*data-pkp-rel[^>]*><\/span>\s*<span[^>]*pk-drag-handle[^>]*self-stretch/
+
+      # The status opens the statuses; the ref is beside the row's icons.
+      assert has_element?(view, "#row-status-pop-#{a.uuid} #row-status-#{a.uuid}-done")
+      assert card =~ ~r/data-ref=.*assignment-menu-#{a.uuid}/s
+    end
+
+    test "the status chip runs the same step as the ⋮ list", %{conn: conn} do
+      project = started_project()
+      a = assignment!(project)
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      view |> element("#row-status-#{a.uuid}-in_progress") |> render_click()
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
+    end
+
+    test "Done on a finished task's chip asks why (reopen), nothing written yet",
+         %{conn: conn} do
+      project = started_project()
+      a = assignment!(project, %{"status" => "done"})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      html = view |> element("#row-status-#{a.uuid}-todo") |> render_click()
+      assert html =~ ~s(id="reopen-form-#{project.uuid}")
+      assert Projects.get_assignment(a.uuid).status == "done"
+    end
+
+    test "the deadline chip takes a day and a typed time, and Clear removes it",
+         %{conn: conn} do
+      project = started_project()
+
+      a =
+        assignment!(project, %{
+          "deadline" =>
+            DateTime.add(DateTime.utc_now(), 3 * 86_400, :second) |> DateTime.truncate(:second)
+        })
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert has_element?(view, "#row-deadline-form-#{a.uuid}")
+
+      view
+      |> form("#row-deadline-form-#{a.uuid}", %{"date" => "2030-05-06", "time" => "1730"})
+      |> render_submit()
+
+      at = Projects.get_assignment(a.uuid).deadline
+      assert DateTime.to_date(at) == ~D[2030-05-06]
+
+      render_submit(view, "save_deadline", %{"uuid" => a.uuid, "clear" => "1"})
+      assert is_nil(Projects.get_assignment(a.uuid).deadline)
+    end
+
+    test "a typed clock reads as people type it" do
+      clock = &PhoenixKitProjects.Web.ProjectShowLive.typed_clock/1
+      assert clock.("17") == {:ok, ~T[17:00:00]}
+      assert clock.("1730") == {:ok, ~T[17:30:00]}
+      assert clock.("9:05") == {:ok, ~T[09:05:00]}
+      assert clock.("5:30 pm") == {:ok, ~T[17:30:00]}
+      assert clock.("12am") == {:ok, ~T[00:00:00]}
+      assert clock.("") == {:ok, ~T[17:00:00]}
+      assert clock.("25") == :bad_time
+    end
+
+    test "one person assigned links to their staff page", %{conn: conn} do
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "Dept-#{n}"})
+      {:ok, team} = Teams.create(%{"name" => "Fitters-#{n}", "department_uuid" => dept.uuid})
+      project = started_project()
+      assignment!(project, %{"assigned_team_uuid" => team.uuid})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert has_element?(view, ~s(a[href*="/admin/staff/teams/#{team.uuid}"]), "Fitters-#{n}")
+    end
+  end
+
   describe "the header as the project's settings say" do
     defp with_header(project, header) do
       {:ok, project} =

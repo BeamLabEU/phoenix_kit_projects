@@ -388,7 +388,9 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       project = fixture_project()
 
       {:ok, project} =
-        Projects.update_project(project, %{"settings" => %{"completion" => "manual"}})
+        Projects.update_project(project, %{
+          "settings" => %{"completion" => "manual", "header" => %{"ongoing" => true}}
+        })
 
       _ = task(project, "One")
 

@@ -77,8 +77,11 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       assert html =~ "Create 3D model"
       assert html =~ "Unassigned"
       refute html =~ "None"
-      # On its own page the next step takes you to the project to run it.
-      assert html =~ "Allow start"
+      # The status is a row of the details; no "Mark done" button, no "Add
+      # a description" link (the boss, 2026-11-02).
+      assert html =~ "Status"
+      refute html =~ "Add a description"
+      refute html =~ "Allow start"
     end
 
     test "draws the description as written and lists the task's own files", ctx do
@@ -148,13 +151,16 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       assert s["back_to"] == ctx.measure.uuid
     end
 
-    test "the next step is asked of the page, and the view steps aside", ctx do
+    test "a status picked in the details is asked of the page, and the view steps aside", ctx do
       {:ok, view, _html} =
         live_isolated(ctx.conn, AssignmentViewLive,
           session: emit_session(ctx, ctx.measure, %{"step_intents" => "1"})
         )
 
-      assert has_element?(view, ~s(button[phx-click="step"][phx-value-step="ask_ready"]))
+      assert has_element?(
+               view,
+               ~s(#view-status-#{ctx.measure.uuid}-todo[phx-click="step"][phx-value-step="ask_ready"])
+             )
 
       render_click(view, "step", %{"step" => "ask_ready"})
 
@@ -163,15 +169,12 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       assert_receive {:projects, :closed, %{frame_ref: 7}}
     end
 
-    test "in a host that does not run the step, it is a link to the task on its project page",
-         ctx do
+    test "in a host that does not run the step, the status is plain", ctx do
       {:ok, view, _html} =
         live_isolated(ctx.conn, AssignmentViewLive, session: emit_session(ctx, ctx.measure))
 
       refute has_element?(view, ~s(button[phx-click="step"]))
-
-      href = PhoenixKitProjects.Paths.task(ctx.project, ctx.measure)
-      assert has_element?(view, ~s(a[href="#{href}"]), "Allow start")
+      refute has_element?(view, "#view-status-pop-#{ctx.measure.uuid}")
 
       # A forged click asks nobody: no intent nobody would answer, and the
       # view stays open.
