@@ -59,16 +59,17 @@ defmodule PhoenixKitProjects.Web.WriteGateTest do
       assert Projects.get_assignment(a.uuid).estimated_duration == a.estimated_duration
     end
 
-    test "an autosave queued before the revoke writes nothing", %{conn: conn} do
+    test "a Save after the revoke writes nothing", %{conn: conn} do
       {project, a} = assignment!()
       view = open_as_admin(conn, "/en/admin/projects/#{project.uuid}/assignments/#{a.uuid}/edit")
 
-      # A change schedules the autosave; the right goes before its timer.
+      # A change waits for Save; the right goes before it is pressed.
       render_change(view, "validate", %{"assignment" => %{"estimated_duration" => "9"}})
       swap_scope(view, revoked())
-      send(view.pid, :autosave)
 
-      assert render(view) =~ @refusal
+      assert render_submit(view, "save", %{"assignment" => %{"estimated_duration" => "9"}}) =~
+               @refusal
+
       assert Projects.get_assignment(a.uuid).estimated_duration == a.estimated_duration
     end
 

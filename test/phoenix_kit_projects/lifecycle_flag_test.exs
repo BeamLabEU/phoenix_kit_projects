@@ -382,7 +382,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
                |> live("/en/admin/projects/#{project.uuid}/edit")
     end
 
-    test "Save belongs to the fields: before the modules panel, which says it applies at once",
+    test "Save belongs to the fields: under the scroll area, submitting the form; the panel says it applies at once",
          %{conn: conn} do
       # Save once sat LAST, after the panel, so the page did not read as
       # having ended and then carried on. But the panel writes immediately,
@@ -397,11 +397,14 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
       modules_at = :binary.match(html, "Presets:") |> elem(0)
-      save_at = :binary.match(html, "phx-disable-with") |> elem(0)
+      {save_at, _} = :binary.match(html, ~s(form="project-form"))
 
-      assert save_at < modules_at, "Save renders after the modules panel"
+      # The Save row sits below the scroll area that holds the panel (the
+      # boss, 2026-11-02 — the tabs and Save stay put); it submits the
+      # project form by id and the panel says its own changes apply at once.
+      assert save_at > modules_at
       assert html =~ "Changes here apply at once"
-      refute binary_part(html, modules_at, byte_size(html) - modules_at) =~ "Saving…"
+      assert html =~ "the Save button below is for the fields"
     end
   end
 end

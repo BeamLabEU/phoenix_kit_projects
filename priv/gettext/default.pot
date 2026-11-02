@@ -10660,3 +10660,9 @@ msgstr ""
 
 msgid "Discard"
 msgstr ""
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr ""
+
+msgid "Unsaved changes"
+msgstr ""

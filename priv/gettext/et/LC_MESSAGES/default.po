@@ -10663,3 +10663,9 @@ msgstr "Viimasest salvestamisest saadik tehtud muudatused lähevad kaduma."
 
 msgid "Discard"
 msgstr "Loobu muudatustest"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Salvestatakse kohe lisamisel — sulgemine neid tagasi ei võta."
+
+msgid "Unsaved changes"
+msgstr "Salvestamata muudatused"

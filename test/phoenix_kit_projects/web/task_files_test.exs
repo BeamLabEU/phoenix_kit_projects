@@ -173,7 +173,10 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
            )
 
     assert has_element?(view, "#assignment-files input[type=file][name=task_files]")
-    assert has_element?(view, "#assignment-description-image")
+    # A picture for the description comes through the editor's own image
+    # button (`DescriptionImages.pick/1`), into this hidden input.
+    assert has_element?(view, "input[type=file][name=description_images]")
+    refute has_element?(view, "#assignment-description-image")
   end
 
   test "removing a file asks first through the shared confirm", ctx do
@@ -303,17 +306,18 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
       {:ok, view, _} =
         live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
 
-      render_click(view, "remove_task_file", %{"uuid" => file.uuid})
-      send(view.pid, :autosave)
-      render(view)
-
-      assert Projects.get_assignment(ctx.a.uuid).description == "Before  after"
-
-      # a file of the task (not in the text) leaves the text as it is
+      # a file of the task (not in the text) goes at once and leaves the text alone
       render_click(view, "remove_task_file", %{"uuid" => other.uuid})
-      send(view.pid, :autosave)
-      render(view)
+      assert Projects.get_assignment(ctx.a.uuid).description =~ "pkfile:"
+
+      # a picture of the text: out of the text now, the file itself and the
+      # text saved together with Save (Close would keep both)
+      render_click(view, "remove_task_file", %{"uuid" => file.uuid})
+      assert [_] = Attachments.list_task_files(ctx.a.uuid, inline: true)
+      view |> form("#assignment-form") |> render_submit()
+
       assert Projects.get_assignment(ctx.a.uuid).description == "Before  after"
+      assert Attachments.list_task_files(ctx.a.uuid, inline: true) == []
     end
 
     test "an open view of the task hears of a file added or removed", ctx do

@@ -10720,3 +10720,9 @@ msgstr "Изменения после последнего сохранения 
 
 msgid "Discard"
 msgstr "Отменить изменения"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Сохраняется сразу при добавлении — закрытие это не отменит."
+
+msgid "Unsaved changes"
+msgstr "Несохранённые изменения"

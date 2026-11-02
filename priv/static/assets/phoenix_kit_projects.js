@@ -1924,6 +1924,17 @@
     }, true);
   }
 
+  // A description editor's image button: the server answers its insert
+  // request with the id of the upload's hidden file input, opened here
+  // (`DescriptionImages.pick/1`).
+  if (!window.__pkpPickFile) {
+    window.__pkpPickFile = true;
+    window.addEventListener("phx:pkp:pick-file", function (e) {
+      var input = e.detail && e.detail.id && document.getElementById(e.detail.id);
+      if (input) input.click();
+    });
+  }
+
   window.PhoenixKitProjectsHooks = {
     PkpOutline: Outline,
     PkpTitle: Title,

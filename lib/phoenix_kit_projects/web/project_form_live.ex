@@ -2555,13 +2555,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 mention_context={mention_context(assigns[:project])}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
-                image_button={false}
+                image_button={!!assigns[:uploads]}
               />
-              <DescriptionImages.button
-                :if={assigns[:uploads]}
-                uploads={assigns[:uploads]}
-                id="project-description-image"
-              />
+              <DescriptionImages.file_input :if={assigns[:uploads]} uploads={assigns[:uploads]} />
           </.words_block>
 
           <%!-- "Has an end | Ongoing", right under the name (the panel,
@@ -3116,6 +3112,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               my_person_uuid={@my_person_uuid}
               recent={@recent_assignees}
               notice={@assignee_notice}
+              view={@assignee_view}
+              home={@assignee_home}
+              more?={not is_nil(@assignee_cursor)}
+              open?={@assignee_open?}
+              streams={@streams}
             />
 
 
@@ -3418,6 +3419,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          msg,
          DescriptionEditor.decode_context(mention_context(socket.assigns[:project]))
        )}
+
+  # The editor's own image button: opens the description picture upload's
+  # file chooser (`DescriptionImages.pick/1`).
+  def handle_info(
+        {:leaf_insert_request, %{editor_id: "project-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
 
   # An image pasted into the description: kept in the project's folder and
   # placed at the cursor, as a task's (the boss, 2026-10-31).

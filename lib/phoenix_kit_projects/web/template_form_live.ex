@@ -299,6 +299,14 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   def handle_info({:leaf_suggest, _} = msg, socket),
     do: {:noreply, DescriptionEditor.suggest(socket, msg, nil)}
 
+  # The editor's own image button: opens the description picture upload's
+  # file chooser (`DescriptionImages.pick/1`).
+  def handle_info(
+        {:leaf_insert_request, %{editor_id: "template-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
   # An image pasted into the description: kept in the template's folder
   # and placed at the cursor (the boss, 2026-10-31).
   def handle_info(
@@ -496,9 +504,9 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
                 placeholder={gettext("Description…")}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
-                image_button={false}
+                image_button={@live_action == :edit}
               />
-              <DescriptionImages.button :if={@live_action == :edit} uploads={@uploads} id="template-description-image" />
+              <DescriptionImages.file_input :if={@live_action == :edit} uploads={@uploads} />
         </.words_block>
 
         <%!-- Non-translatable settings stay outside the wrapper so they

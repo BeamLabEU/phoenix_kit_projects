@@ -10663,3 +10663,9 @@ msgstr "Was Sie seit dem letzten Speichern geändert haben, geht verloren."
 
 msgid "Discard"
 msgstr "Verwerfen"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Sofort gespeichert, sobald Sie sie hinzufügen — Schließen macht sie nicht rückgängig."
+
+msgid "Unsaved changes"
+msgstr "Ungespeicherte Änderungen"

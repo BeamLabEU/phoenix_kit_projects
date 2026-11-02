@@ -10720,3 +10720,9 @@ msgstr "Zmiany od ostatniego zapisu zostaną utracone."
 
 msgid "Discard"
 msgstr "Odrzuć"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Zapisywane od razu po dodaniu — zamknięcie ich nie cofa."
+
+msgid "Unsaved changes"
+msgstr "Niezapisane zmiany"

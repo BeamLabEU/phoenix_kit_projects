@@ -169,7 +169,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveExtrasTest do
 
       assert has_element?(view, "#task-default-assignee-search")
       render_click(view, "assignee_pick", %{"kind" => "department", "uuid" => dept.uuid})
-      assert has_element?(view, "#task-default-assignee-chosen", dept.name)
+      assert has_element?(view, "#task-default-assignee-chips", dept.name)
 
       view |> form("#task-form") |> render_submit()
       assert Projects.get_task(task.uuid).default_assigned_department_uuid == dept.uuid

@@ -117,17 +117,23 @@ defmodule PhoenixKitProjects.Web.DeltaReviewLiveTest do
 
       a = task!(project, "Doors", %{"assigned_person_uuid" => bob.person})
 
-      {:ok, view, _} =
-        live_isolated(put_test_scope(conn, fake_scope(user_uuid: me)), AssignmentFormLive,
-          session: %{
-            "id" => a.uuid,
-            "project_id" => project.uuid,
-            "live_action" => "edit",
-            "current_user_uuid" => me
-          }
-        )
+      # One visit to the form: Save closes it, so a second save is a
+      # second visit (the boss, 2026-11-02).
+      open = fn ->
+        {:ok, view, _} =
+          live_isolated(put_test_scope(conn, fake_scope(user_uuid: me)), AssignmentFormLive,
+            session: %{
+              "id" => a.uuid,
+              "project_id" => project.uuid,
+              "live_action" => "edit",
+              "current_user_uuid" => me
+            }
+          )
 
-      %{view: view, a: a, bob: bob, carl: carl}
+        view
+      end
+
+      %{view: open.(), open: open, a: a, bob: bob, carl: carl}
     end
 
     defp submit(view, attrs) do
@@ -143,10 +149,11 @@ defmodule PhoenixKitProjects.Web.DeltaReviewLiveTest do
       assert actions(ctx.bob.user) == ["projects.assignment_reassigned"]
     end
 
-    test "a change after a status change in the same visit still tells the owner", ctx do
+    test "a change in a later visit after a status change still tells the owner", ctx do
       submit(ctx.view, %{"assigned_person_uuid" => ctx.bob.person, "status" => "in_progress"})
+      assert actions(ctx.bob.user) == ["projects.assignment_started"]
 
-      submit(ctx.view, %{
+      submit(ctx.open.(), %{
         "assigned_person_uuid" => ctx.bob.person,
         "status" => "in_progress",
         "description" => "Oak, not ash"
@@ -156,18 +163,17 @@ defmodule PhoenixKitProjects.Web.DeltaReviewLiveTest do
                "projects.assignment_started",
                "projects.assignment_updated"
              ]
+    end
 
-      # …and only once per visit.
+    test "a save that changes the status and the words tells the owner once, as the status",
+         ctx do
       submit(ctx.view, %{
         "assigned_person_uuid" => ctx.bob.person,
         "status" => "in_progress",
-        "description" => "Ash after all"
+        "description" => "Oak, not ash"
       })
 
-      assert actions(ctx.bob.user) == [
-               "projects.assignment_started",
-               "projects.assignment_updated"
-             ]
+      assert actions(ctx.bob.user) == ["projects.assignment_started"]
     end
   end
 end

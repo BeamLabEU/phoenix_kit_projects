@@ -50,7 +50,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormTabsTest do
     {:ok, view, _} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/edit")
 
     render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => gert.uuid})
-    assert has_element?(view, "#project-assignee-chosen", "Gert")
+    assert has_element?(view, "#project-assignee-chips", "Gert")
     view |> form("#project-form") |> render_submit()
 
     assert Projects.get_project(ctx.project.uuid).assigned_person_uuid == gert.uuid

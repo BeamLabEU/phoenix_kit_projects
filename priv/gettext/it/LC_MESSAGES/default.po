@@ -10663,3 +10663,9 @@ msgstr "Ciò che hai modificato dall'ultimo salvataggio va perso."
 
 msgid "Discard"
 msgstr "Scarta"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Salvati appena li aggiungi: chiudere non li annulla."
+
+msgid "Unsaved changes"
+msgstr "Modifiche non salvate"

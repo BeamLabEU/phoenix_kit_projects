@@ -10663,3 +10663,9 @@ msgstr "Ce que vous avez modifié depuis le dernier enregistrement est perdu."
 
 msgid "Discard"
 msgstr "Abandonner"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Enregistrés dès que vous les ajoutez — fermer ne les annule pas."
+
+msgid "Unsaved changes"
+msgstr "Modifications non enregistrées"

@@ -10663,3 +10663,9 @@ msgstr "Se pierde lo que cambiaste desde el último guardado."
 
 msgid "Discard"
 msgstr "Descartar"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Se guardan en cuanto los añades: cerrar no los deshace."
+
+msgid "Unsaved changes"
+msgstr "Cambios sin guardar"
