@@ -665,7 +665,22 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
   # The status; where the page under the drawer runs steps, a press opens
   # the statuses, each run as that step there (its dialogs included).
-  defp view_status(%{can_step?: true} = assigns) do
+  # A menu only when there is another status to choose: a sub-project
+  # that follows its tasks offers none once it has started (panel review).
+  defp view_status(%{can_step?: true, assignment: a, fx: fx} = assigns)
+       when is_map(a) and is_map(fx) do
+    if Enum.any?(AssignmentStatusBadge.choices(a, fx), &(&1 != a.status)),
+      do: view_status_menu(assigns),
+      else: view_status(Map.put(assigns, :can_step?, false))
+  end
+
+  defp view_status(assigns) do
+    ~H"""
+    <.assignment_status_badge status={@assignment.status} subproject={Assignment.subproject?(@assignment)} />
+    """
+  end
+
+  defp view_status_menu(assigns) do
     ~H"""
     <details class="dropdown" id={"view-status-pop-#{@assignment.uuid}"}>
       <summary
@@ -692,12 +707,6 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
         </li>
       </ul>
     </details>
-    """
-  end
-
-  defp view_status(assigns) do
-    ~H"""
-    <.assignment_status_badge status={@assignment.status} subproject={Assignment.subproject?(@assignment)} />
     """
   end
 

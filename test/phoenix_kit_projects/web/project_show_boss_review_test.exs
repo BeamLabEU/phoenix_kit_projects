@@ -634,6 +634,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       assert Projects.get_assignment(link.uuid).status == "in_progress"
     end
 
+    # Panel review, list 3: once a following sub-project has started there is
+    # nothing to choose, so its chip is a plain badge, not an empty menu.
+    test "a started sub-project that follows its tasks has a plain status chip", %{conn: conn} do
+      parent = started_project()
+      {_child, link} = subproject!(parent)
+      {:ok, _} = Projects.update_assignment_status(link, %{status: "in_progress"})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{parent.uuid}")
+      refute has_element?(view, "#row-status-pop-#{link.uuid}")
+    end
+
     test "with the setting on, the menu offers only release and hold", %{conn: conn} do
       parent = started_project()
       {_child, link} = subproject!(parent)

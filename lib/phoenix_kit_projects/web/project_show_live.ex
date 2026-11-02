@@ -2403,7 +2403,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp row_status(assigns) do
     ~H"""
-    <%= if @a.status in ~w(waiting todo in_progress done) do %>
+    <%= if @a.status in ~w(waiting todo in_progress done) and
+             Enum.any?(AssignmentStatusBadge.choices(@a, @fx), &(&1 != @a.status)) do %>
       <details class="dropdown shrink-0" id={"row-status-pop-#{@a.uuid}"}>
         <summary
           class="list-none cursor-pointer [&::-webkit-details-marker]:hidden"
