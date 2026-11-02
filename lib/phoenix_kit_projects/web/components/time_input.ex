@@ -103,44 +103,30 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   """
   @spec parse_clock(term()) :: {0..23, 0..59} | nil
   def parse_clock(text) when is_binary(text) do
-    text = text |> String.trim() |> String.downcase()
-
     text =
-      Enum.reduce(["am", "pm"], text, fn half, acc ->
+      Enum.reduce(["am", "pm"], text |> String.trim() |> String.downcase(), fn half, acc ->
         String.replace(acc, String.downcase(L10n.day_half_label(half)), half)
       end)
 
     case Regex.run(~r/^(\d{1,2})(?:\s*[:.h]?\s*(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?$/u, text) do
-      [_, h | rest] ->
-        {h, _} = Integer.parse(h)
-
-        m =
-          case rest do
-            [m | _] when m != "" -> elem(Integer.parse(m), 0)
-            _ -> 0
-          end
-
-        half =
-          case rest do
-            [_, h2] when h2 in ["a", "p"] -> h2
-            _ -> nil
-          end
-
-        hour =
-          case half do
-            nil -> if h in 0..23, do: h
-            "a" -> if h in 1..12, do: rem(h, 12)
-            "p" -> if h in 1..12, do: rem(h, 12) + 12
-          end
-
-        if hour && m in 0..59, do: {hour, m}
-
-      _ ->
-        nil
+      [_, h | rest] -> to_clock(String.to_integer(h), minute_of(rest), half_of(rest))
+      _ -> nil
     end
   end
 
   def parse_clock(_), do: nil
+
+  defp minute_of([m | _]) when m != "", do: String.to_integer(m)
+  defp minute_of(_rest), do: 0
+
+  defp half_of([_, half]) when half in ["a", "p"], do: half
+  defp half_of(_rest), do: nil
+
+  defp to_clock(_h, m, _half) when m not in 0..59, do: nil
+  defp to_clock(h, m, nil) when h in 0..23, do: {h, m}
+  defp to_clock(h, m, "a") when h in 1..12, do: {rem(h, 12), m}
+  defp to_clock(h, m, "p") when h in 1..12, do: {rem(h, 12) + 12, m}
+  defp to_clock(_h, _m, _half), do: nil
 
   # A 12-hour hour (1–12) with its half; a 24-hour one passes through.
   defp from_half(12, "am"), do: 0
