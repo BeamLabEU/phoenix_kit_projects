@@ -71,8 +71,8 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
       id = editor_id(html, "assignment-description")
 
       send(view.pid, {:leaf_changed, %{editor_id: id, markdown: "**Oak**, oiled", html: ""}})
-      send(view.pid, :autosave)
       render(view)
+      view |> form("#assignment-form") |> render_submit()
 
       # A one-off task keeps its words on the task itself.
       a = Projects.get_assignment(ctx.a.uuid)

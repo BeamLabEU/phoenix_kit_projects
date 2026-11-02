@@ -521,7 +521,7 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   defp value("repeat_rule", v), do: PhoenixKitProjects.Repeats.label(v) || "—"
   defp value("counts_weekends", true), do: gettext("Yes")
   defp value("counts_weekends", _), do: gettext("No")
-  defp value("completion", "manual"), do: "∞ " <> gettext("Ongoing")
+  defp value("completion", "manual"), do: gettext("Ongoing")
   defp value("completion", _), do: gettext("Has an end")
   defp value("description", v), do: "“#{v}”"
   defp value(_field, v) when is_binary(v), do: v

@@ -8675,11 +8675,6 @@ msgstr[1] "%{count} Aufgaben können jetzt beginnen."
 msgid "Choose what %{name} uses — from a simple task list to a full tracker."
 msgstr "Wähle, was %{name} verwendet — von einer einfachen Aufgabenliste bis zum vollständigen Tracker."
 
-#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
-#, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr "Wähle, was dieses Projekt verwendet — von einer einfachen Aufgabenliste bis zum vollständigen Tracker. Änderungen hier gelten sofort; die Speichern-Schaltfläche oben ist für die Felder."
-
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
 msgid "Keep idle"
@@ -10711,3 +10706,20 @@ msgstr "Die Frist konnte nicht geändert werden."
 
 msgid "That time could not be read."
 msgstr "Diese Uhrzeit ließ sich nicht lesen."
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
+#, elixir-autogen, elixir-format
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr "Wähle, was dieses Projekt verwendet — von einer einfachen Aufgabenliste bis zum vollständigen Tracker. Änderungen hier gelten sofort; die Speichern-Schaltfläche unten ist für die Felder."
+
+msgid "What you changed since the last save is lost."
+msgstr "Was Sie seit dem letzten Speichern geändert haben, geht verloren."
+
+msgid "Discard"
+msgstr "Verwerfen"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Sofort gespeichert, sobald Sie sie hinzufügen — Schließen macht sie nicht rückgängig."
+
+msgid "Unsaved changes"
+msgstr "Ungespeicherte Änderungen"

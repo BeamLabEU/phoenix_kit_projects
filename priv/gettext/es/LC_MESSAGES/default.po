@@ -8675,11 +8675,6 @@ msgstr[1] "%{count} tareas se pueden empezar ya."
 msgid "Choose what %{name} uses — from a simple task list to a full tracker."
 msgstr "Elige qué usa %{name} — desde una simple lista de tareas hasta un gestor completo."
 
-#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
-#, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr "Elige qué usa este proyecto — desde una simple lista de tareas hasta un gestor completo. Los cambios aquí se aplican al instante; el botón Guardar de arriba es para los campos."
-
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
 msgid "Keep idle"
@@ -10711,3 +10706,20 @@ msgstr "No se pudo cambiar el plazo."
 
 msgid "That time could not be read."
 msgstr "No se pudo leer esa hora."
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
+#, elixir-autogen, elixir-format
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr "Elige qué usa este proyecto — desde una simple lista de tareas hasta un gestor completo. Los cambios aquí se aplican al instante; el botón Guardar de abajo es para los campos."
+
+msgid "What you changed since the last save is lost."
+msgstr "Se pierde lo que cambiaste desde el último guardado."
+
+msgid "Discard"
+msgstr "Descartar"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Se guardan en cuanto los añades: cerrar no los deshace."
+
+msgid "Unsaved changes"
+msgstr "Cambios sin guardar"

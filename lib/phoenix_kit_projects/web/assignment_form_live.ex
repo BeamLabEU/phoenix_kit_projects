@@ -124,7 +124,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       # More). Every tab's fields stay in the one form, only hidden, so a
       # switch loses nothing typed.
       |> assign(form_pane: "task")
-      |> assign(save_state: :idle, save_error: nil, pending_params: nil, autosave_timer: nil)
+      |> assign(
+        save_state: :idle,
+        save_error: nil,
+        pending_params: nil,
+        autosave_timer: nil,
+        pending_file_removals: []
+      )
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_logged_minutes()
@@ -844,6 +850,39 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # The description as the editor is handed it: its pictures by an address
   # the viewer may open, one it cannot kept as it is.
   defp editor_content(text, scope), do: InlineImages.resolve(text, scope, keep_missing: true)
+
+  defp remove_file_now(socket, file_uuid, shown, inline?) do
+    case Attachments.remove_task_file(
+           socket.assigns.assignment,
+           file_uuid,
+           Activity.actor_uuid(socket)
+         ) do
+      :ok ->
+        log_task_file(
+          socket,
+          "projects.task_file_removed",
+          file_uuid,
+          shown && shown.file.original_file_name
+        )
+
+        socket = if inline?, do: strip_inline_image(socket, file_uuid), else: socket
+        socket |> load_task_files() |> put_flash(:info, gettext("File removed."))
+
+      {:error, _} ->
+        log_task_file_failed(socket, "projects.task_file_removed", file_uuid)
+        put_flash(socket, :error, gettext("Could not remove the file."))
+    end
+  end
+
+  # The description pictures taken out of the text, removed with Save.
+  defp remove_pending_files(socket) do
+    socket.assigns
+    |> Map.get(:pending_file_removals, [])
+    |> Enum.reduce(socket, fn {file_uuid, shown}, acc ->
+      remove_file_now(acc, file_uuid, shown, false)
+    end)
+    |> assign(:pending_file_removals, [])
+  end
 
   # A picture taken off the task leaves its description too — every
   # language's — and the open editor is handed the text without it; saved
@@ -1689,22 +1728,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  # "Done" on a task being edited: what is still waiting is saved first;
-  # if that fails the form stays open on the error.
+  # Close on a task being edited: leaves WITHOUT saving (the button asks
+  # first while something is unsaved — `ConfirmAction.close/2`).
   def handle_event("close_form", _params, socket) do
-    socket = socket |> cancel_autosave() |> autosave_now()
+    fallback =
+      case socket.assigns[:project] do
+        %{uuid: uuid} -> Paths.project(uuid)
+        _ -> Paths.projects()
+      end
 
-    if socket.assigns[:save_state] == :error do
-      {:noreply, socket}
-    else
-      fallback =
-        case socket.assigns[:project] do
-          %{uuid: uuid} -> Paths.project(uuid)
-          _ -> Paths.projects()
-        end
-
-      {:noreply, leave_form(socket, fallback)}
-    end
+    {:noreply, socket |> cancel_autosave() |> leave_form(fallback)}
   end
 
   def handle_event("cancel", _params, socket) do
@@ -1945,25 +1978,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
       inline? = match?(%{inline: true}, shown)
 
-      case Attachments.remove_task_file(
-             socket.assigns.assignment,
-             file_uuid,
-             Activity.actor_uuid(socket)
-           ) do
-        :ok ->
-          log_task_file(
-            socket,
-            "projects.task_file_removed",
-            file_uuid,
-            shown && shown.file.original_file_name
-          )
-
-          socket = if inline?, do: strip_inline_image(socket, file_uuid), else: socket
-          {:noreply, socket |> load_task_files() |> put_flash(:info, gettext("File removed."))}
-
-        {:error, _} ->
-          log_task_file_failed(socket, "projects.task_file_removed", file_uuid)
-          {:noreply, put_flash(socket, :error, gettext("Could not remove the file."))}
+      if inline? and socket.assigns.live_action == :edit do
+        # A picture of the description goes with the text it is in: out of
+        # the text now, and the file itself only on Save — Close keeps both
+        # (the panel, 2026-11-02: no saved text naming a removed file).
+        {:noreply,
+         socket
+         |> strip_inline_image(file_uuid)
+         |> update(:pending_file_removals, &Enum.uniq(&1 ++ [{file_uuid, shown}]))}
+      else
+        {:noreply, remove_file_now(socket, file_uuid, shown, inline?)}
       end
     else
       {:noreply,
@@ -2071,20 +2095,34 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # ── Save ────────────────────────────────────────────────────────
 
-  # A task being edited saves as it is changed (`schedule_autosave/2`):
-  # Enter in a field just saves now, and nothing closes.
+  # Save on a task being edited: everything the form holds, through the
+  # steps the autosave took (gates re-read, times corrected, words and the
+  # title on the task, labels, the history's change list); on success the
+  # popup closes as Close does, on an error it stays open on it.
   def handle_event(
         "save",
         %{"assignment" => _} = params,
         %{assigns: %{live_action: :edit, kind: "task"}} = socket
       ) do
-    {:noreply,
-     socket
-     |> take_task_params(params)
-     |> take_times_params(params)
-     |> cancel_autosave()
-     |> assign(:pending_params, params)
-     |> autosave_now()}
+    socket =
+      socket
+      |> take_task_params(params)
+      |> take_times_params(params)
+      |> cancel_autosave()
+      |> assign(:pending_params, params)
+      |> autosave_now()
+
+    if socket.assigns[:save_state] == :error do
+      {:noreply, socket}
+    else
+      socket =
+        socket
+        |> remove_pending_files()
+        |> assign(dirty?: false)
+        |> WebHelpers.notify_dirty(false)
+
+      handle_event("close_form", %{}, socket)
+    end
   end
 
   def handle_event("save", %{"assignment" => attrs} = params, socket) do
@@ -3430,34 +3468,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  # ── Saving as you go (a task being edited) ──
+  # ── Saving a task being edited ──
   #
-  # The shape of the publishing editor's: every change restarts a short
-  # timer; when it runs out the form is saved, and a quiet line says where
-  # things stand (saving, saved, or why not). There is no Save and no
-  # Cancel: a task's form is where its state is read and changed, and
-  # logging time, dependencies and the portal switches already wrote at
-  # once — the fields now do too (Max, 2026-10-14).
-  @autosave_ms 700
-
-  @impl true
-  # A timer, not an event, so `Web.WriteGate` never sees it: a save queued
-  # before the right was revoked is dropped here.
-  def handle_info(:autosave, socket) do
-    socket = assign(socket, :autosave_timer, nil)
-
-    if WriteGate.allowed?(socket) do
-      {:noreply, autosave_now(socket)}
-    else
-      {:noreply,
-       socket
-       |> assign(pending_params: nil, save_state: :error)
-       |> WriteGate.refuse()}
-    end
-  end
+  # The form's latest params wait in `pending_params` and go through
+  # `autosave_now/1` when Save is pressed (it was a timer after every
+  # change until the boss, 2026-11-02: one save style for every popup).
+  # Logging time, dependencies, subtasks, files and the portal switches
+  # still write at once — they are records of their own.
 
   # The description editors (Leaf): their text into the form being shown —
-  # the task's (saved as it is changed) or the sub-project's.
+  # the task's (held until Save) or the sub-project's.
+  @impl true
   def handle_info({:leaf_changed, _} = msg, socket) do
     case DescriptionEditor.changed(msg) do
       {"assignment-description", lang, markdown} ->
@@ -3470,6 +3491,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply, socket}
     end
   end
+
+  # The editor's own image button: opens the description picture upload's
+  # file chooser (`DescriptionImages.pick/1`).
+  def handle_info(
+        {:leaf_insert_request, %{editor_id: "assignment-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
 
   # An image pasted into the task's description: stored as the task's file
   # (`inline`) and placed at the cursor by its address — never kept in the
@@ -3507,14 +3536,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {:noreply, socket}
   end
 
+  # Held until Save (the boss, 2026-11-02): no timer any more, the form's
+  # latest params wait for the Save button.
   defp schedule_autosave(%{assigns: %{live_action: :edit, kind: "task"}} = socket, params) do
-    socket = cancel_autosave(socket)
-
-    assign(socket,
-      pending_params: params,
-      save_state: :pending,
-      autosave_timer: Process.send_after(self(), :autosave, @autosave_ms)
-    )
+    assign(socket, pending_params: params, save_state: :idle)
   end
 
   defp schedule_autosave(socket, _params), do: socket
@@ -4400,7 +4425,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         phx-change="validate_subproject"
         phx-submit="save_subproject"
         phx-debounce="300"
-        class="flex flex-col gap-4"
+        class="flex flex-col gap-3"
       >
         <%!-- On :new a sub-project can either be created fresh or an existing
              standalone project can be nested in place (V127). On :edit only
@@ -4504,6 +4529,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               my_person_uuid={@my_person_uuid}
               recent={@recent_assignees}
               notice={@assignee_notice}
+              view={@assignee_view}
+              home={@assignee_home}
+              more?={not is_nil(@assignee_cursor)}
+              open?={@assignee_open?}
+              streams={@streams}
             />
           </.form_pane>
 
@@ -4682,17 +4712,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </button>
           <.ref_chip :if={assigns[:task_ref]} ref={assigns[:task_ref]} />
         </:context>
-        <:badge>
-          <.assignment_status_badge
-            :if={not Map.get(@project, :is_template, false)}
-            status={to_string(@form[:status].value || "waiting")}
-            size="md"
-            class="shrink-0"
-          />
-        </:badge>
       </.form_header>
 
-      <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
+      <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
         <%!-- The tabs. Every tab's fields stay in this one form and are only
              hidden, so switching loses nothing typed and a save posts them
              all; a tab holding an error the form shows carries a dot. --%>
@@ -4873,16 +4895,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 uploads
                 image_button={@can_attach?}
               />
-              <%!-- An image for the description: stored as the task's and
-                   placed at the cursor (a pasted one too). --%>
-              <label
-                :if={@can_attach?}
-                for={@uploads.description_images.ref}
-                id="assignment-description-image"
-                class="btn btn-ghost btn-xs self-start gap-1 font-normal text-base-content/70"
-              >
-                <.icon name="hero-photo" class="w-3.5 h-3.5" /> {gettext("Add an image to the description")}
-              </label>
           </.words_block>
 
           <%!-- Where it stands: the list's own status colours, one press each
@@ -4909,6 +4921,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             view={@assignee_view}
             home={@assignee_home}
             more?={not is_nil(@assignee_cursor)}
+            open?={@assignee_open?}
             streams={@streams}
             search_form={"assignment-assignee-form-#{@dom}"}
             can_assign?={@can_assign?}
@@ -5130,6 +5143,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           role="tabpanel"
           class={["flex flex-col gap-4", @pane != "connections" && "hidden"]}
         >
+          <%!-- These write as they are made (records of their own), unlike
+               the fields above, which wait for Save. --%>
+          <p :if={@live_action == :edit} class="text-xs text-base-content/60 flex items-center gap-1.5">
+            <.icon name="hero-bolt" class="w-3.5 h-3.5 shrink-0" />
+            {gettext("Saved as soon as you add them — Close does not undo these.")}
+          </p>
           <%!-- The picker uses `phx-change` on its own `<.select>` (a form
                inside a form is not HTML); it overrides the form's
                `validate` for its own changes. Editing, a row is written at
@@ -5225,6 +5244,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           role="tabpanel"
           class={["flex flex-col gap-4", @pane != "more" && "hidden"]}
         >
+          <%!-- These write as they are made (records of their own), unlike
+               the fields above, which wait for Save. --%>
+          <p :if={@live_action == :edit} class="text-xs text-base-content/60 flex items-center gap-1.5">
+            <.icon name="hero-bolt" class="w-3.5 h-3.5 shrink-0" />
+            {gettext("Saved as soon as you add them — Close does not undo these.")}
+          </p>
             <%!-- The task's time, in one box: what people logged, what an
                  agent reported for itself (it sends its own time and tokens
                  over the API; nobody types those in), and a line to log
@@ -5413,20 +5438,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           :if={@portal?}
           class="card bg-base-100 shadow"
         >
-          <div class="card-body flex-row items-center justify-between gap-3 py-4">
+          <div class="card-body flex-row items-start gap-3 py-4">
+            <input
+              type="checkbox"
+              class="toggle toggle-primary shrink-0 mt-0.5"
+              checked={@assignment.public == true}
+              phx-click="toggle_portal_public"
+              aria-label={gettext("Show on the public portal")}
+            />
             <div class="min-w-0">
               <h3 class="text-sm font-semibold">{gettext("Public portal")}</h3>
               <p class="text-xs opacity-60">
               {gettext("Show this issue (title and status only) on the project's public page.")}
               </p>
             </div>
-            <input
-              type="checkbox"
-              class="toggle toggle-primary"
-              checked={@assignment.public == true}
-              phx-click="toggle_portal_public"
-              aria-label={gettext("Show on the public portal")}
-            />
           </div>
 
           <%!-- What the stranger actually attached. This sits ABOVE the two
@@ -5474,21 +5499,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              empty forever. --%>
           <div
             :if={@assignment.public == true and public_board?(@project)}
-            class="card-body flex-row items-center justify-between gap-3 border-t border-base-200 py-4"
+            class="card-body flex-row items-start gap-3 border-t border-base-200 py-4"
           >
+            <input
+              type="checkbox"
+              class="toggle toggle-primary shrink-0 mt-0.5"
+              checked={@assignment.board_published_at != nil}
+              phx-click="toggle_board_published"
+              aria-label={gettext("Publish to the public board")}
+            />
             <div class="min-w-0">
               <h3 class="text-sm font-semibold">{gettext("Publish to the public board")}</h3>
               <p class="text-xs opacity-60">
               {gettext("This board is on the open internet and can be indexed by search engines. The issue's description is shown too.")}
               </p>
             </div>
-            <input
-              type="checkbox"
-              class="toggle toggle-primary"
-              checked={@assignment.board_published_at != nil}
-              phx-click="toggle_board_published"
-              aria-label={gettext("Publish to the public board")}
-            />
           </div>
         </div>
 
@@ -5499,27 +5524,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              "Add & next" in the markup and CSS `order` puts it last on
              screen. "Add & next" carries `then=next`, which LiveView sends
              as the submitter — Shift+Enter presses it through PkShiftEnter. --%>
-        <%!-- A task being edited saves as it is changed: no Save, no
-             Cancel — a line that says where things stand, and Done. Always
-             in reach: the form is two screens long. --%>
+        <%!-- A task being edited saves with Save, like every popup (the
+             boss, 2026-11-02: "if someone makes a mistake, they can just
+             cancel"); Close leaves without saving and asks first when
+             something is unsaved. Files, subtasks, connections and logged
+             time are their own records and are kept as they are added (each
+             section says so). Always in reach: the form is two screens long. --%>
         <div
           :if={@live_action == :edit}
           id="assignment-save-bar"
           class="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow"
         >
           <span id="assignment-save-state" role="status" class="inline-flex items-center gap-1.5 text-xs text-base-content/60">
-            <%= case @save_state do %>
-              <% :pending -> %>
-                <span class="loading loading-spinner loading-xs"></span> {gettext("Saving…")}
-              <% :saved -> %>
-                <.icon name="hero-check" class="w-3.5 h-3.5 text-success" /> {gettext("Saved")}
-              <% :error -> %>
+            <%= cond do %>
+              <% @save_state == :error -> %>
                 <span class="badge badge-error badge-sm h-auto gap-1">
                   <.icon name="hero-exclamation-triangle" class="w-3 h-3" />
                   {gettext("Not saved")}: {@save_error}
                 </span>
-              <% _ -> %>
-                {gettext("Changes are saved as you make them.")}
+              <% @dirty? -> %>
+                {gettext("Unsaved changes")}
+              <% true -> %>
             <% end %>
           </span>
           <div class="flex items-center gap-1">
@@ -5531,14 +5556,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               type="button"
               id="assignment-delete"
               phx-click="delete_task"
-              phx-disable-with={gettext("Deleting…")}
-              data-confirm={delete_question(@subtask_total)}
+              {ConfirmAction.ask("delete_task",
+                title: delete_question(@subtask_total),
+                confirm: gettext("Delete")
+              )}
               class="btn btn-ghost btn-sm text-error"
             >
               <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Delete")}
             </button>
-            <button type="button" phx-click="close_form" class="btn btn-sm">
+            <button type="button" id="assignment-close-edit" {ConfirmAction.close("close_form", @dirty?)} class="btn btn-ghost btn-sm">
               {if @from_view?, do: gettext("Back to task"), else: gettext("Close")}
+            </button>
+            <button
+              type="submit"
+              id="assignment-save"
+              phx-disable-with={gettext("Saving…")}
+              disabled={@ai_in_flight != []}
+              class="btn btn-primary btn-sm"
+            >
+              {gettext("Save")}
             </button>
           </div>
         </div>

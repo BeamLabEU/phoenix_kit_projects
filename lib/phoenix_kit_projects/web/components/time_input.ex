@@ -1,18 +1,22 @@
 defmodule PhoenixKitProjects.Web.Components.TimeInput do
   @moduledoc """
   Every place the module asks for a time of day: a date field (core's
-  `date_input/1`, in the site's date format) and an hour and a minute select,
-  with an AM/PM select only on a site whose `time_format` is the 12-hour
-  clock (`PhoenixKitProjects.L10n.twelve_hour?/0`).
+  `date_input/1`, in the site's date format) and ONE text field for the time,
+  typed (`17:30`, `1730`, `17`, `5:30 pm` on a 12-hour site) or picked from
+  half-hour suggestions, shown in the site's `time_format`
+  (`PhoenixKitProjects.L10n.format_clock/2`).
 
   Not the browser's `datetime-local` / `time` inputs: those draw the device's
   clock, so an iPad showed AM/PM on a site that runs on 24 hours (the boss,
-  2026-10-30). The selects show the site's clock on every device.
+  2026-10-30). Not an hour and a minute select either: 24 hours and twelve
+  five-minute steps to scroll through for one time (the boss, 2026-11-02:
+  "it should at least be typable").
 
   ## Posting
 
   The parts post under the field's name — `assignment[deadline][date]`,
-  `[hour]`, `[minute]`, `[half]` — and `normalize/2` folds them back into the
+  `[time]` (the older `[hour]`, `[minute]`, `[half]` still read) — and
+  `normalize/2` folds them back into the
   value the old inputs posted (`"2026-10-31T17:00"` for a date and time,
   `"17:00"` for a time alone, `""` for none), so every receiver keeps its
   parsing. A plain string still passes through unchanged.
@@ -67,7 +71,15 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
 
   def fold(%{} = parts), do: clock(parts) || ""
 
-  # `"HH:MM"` of the posted hour, minute and AM/PM, or nil for no hour.
+  # `"HH:MM"` of the typed time, or of the posted hour, minute and AM/PM;
+  # nil for none (or one that reads as no time).
+  defp clock(%{"time" => typed}) do
+    case parse_clock(typed) do
+      {h, m} -> pad(h) <> ":" <> pad(m)
+      nil -> nil
+    end
+  end
+
   defp clock(parts) do
     case Integer.parse(to_string(parts["hour"] || "")) do
       {h, ""} when h in 0..23 ->
@@ -83,6 +95,38 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
         nil
     end
   end
+
+  @doc """
+  `{hour, minute}` of a typed time, or nil: `17:30`, `17.30`, `1730`, `930`,
+  `17`, `5:30 pm`, `5pm`, `5:30 p.m.` and the site's own AM/PM words. A time
+  with AM/PM takes a 1–12 hour; one without, 0–23.
+  """
+  @spec parse_clock(term()) :: {0..23, 0..59} | nil
+  def parse_clock(text) when is_binary(text) do
+    text =
+      Enum.reduce(["am", "pm"], text |> String.trim() |> String.downcase(), fn half, acc ->
+        String.replace(acc, String.downcase(L10n.day_half_label(half)), half)
+      end)
+
+    case Regex.run(~r/^(\d{1,2})(?:\s*[:.h]?\s*(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?$/u, text) do
+      [_, h | rest] -> to_clock(String.to_integer(h), minute_of(rest), half_of(rest))
+      _ -> nil
+    end
+  end
+
+  def parse_clock(_), do: nil
+
+  defp minute_of([m | _]) when m != "", do: String.to_integer(m)
+  defp minute_of(_rest), do: 0
+
+  defp half_of([_, half]) when half in ["a", "p"], do: half
+  defp half_of(_rest), do: nil
+
+  defp to_clock(_h, m, _half) when m not in 0..59, do: nil
+  defp to_clock(h, m, nil) when h in 0..23, do: {h, m}
+  defp to_clock(h, m, "a") when h in 1..12, do: {rem(h, 12), m}
+  defp to_clock(h, m, "p") when h in 1..12, do: {rem(h, 12) + 12, m}
+  defp to_clock(_h, _m, _half), do: nil
 
   # A 12-hour hour (1–12) with its half; a 24-hour one passes through.
   defp from_half(12, "am"), do: 0
@@ -196,7 +240,7 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
           html={date_html(@form, @disabled)}
           aria-label={gettext("Day")}
         />
-        <.clock_selects
+        <.clock_field
           id={@id}
           name={@name}
           hour={@hour}
@@ -235,7 +279,7 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
     <fieldset id={@id} class={["flex flex-col gap-1", @class]} data-time-input="clock">
       <legend :if={@label} class="label mb-1"><span class="font-semibold">{@label}</span></legend>
       <div class="flex flex-wrap items-center gap-1.5">
-        <.clock_selects
+        <.clock_field
           id={@id}
           name={@name}
           hour={@hour}
@@ -260,71 +304,35 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   attr(:disabled, :boolean, default: false)
   attr(:size, :string, default: "sm")
 
-  defp clock_selects(assigns) do
-    twelve? = L10n.twelve_hour?()
-
-    {shown_hour, half} =
-      case assigns.hour do
-        nil -> {nil, "am"}
-        h when twelve? -> {elem(L10n.to_twelve_hour(h), 0), if(h < 12, do: "am", else: "pm")}
-        h -> {h, nil}
-      end
-
+  # The time as one typed field, in the site's clock, with every half hour
+  # offered as a suggestion (the browser's list under the field).
+  defp clock_field(assigns) do
     assigns =
       assign(assigns,
-        twelve?: twelve?,
-        shown_hour: shown_hour,
-        half: half,
-        hours: if(twelve?, do: [12 | Enum.to_list(1..11)], else: Enum.to_list(0..23)),
-        minutes: minute_options(assigns.minute),
-        select_class: "select select-#{assigns.size} w-auto"
+        shown: if(is_integer(assigns.hour), do: L10n.format_clock(assigns.hour, assigns.minute)),
+        suggestions: for(h <- 0..23, m <- [0, 30], do: L10n.format_clock(h, m)),
+        example: L10n.format_clock(17, 30),
+        input_class: "input input-#{assigns.size} w-32"
       )
 
     ~H"""
-    <select
-      id={"#{@id}-hour"}
-      name={"#{@name}[hour]"}
+    <input
+      type="text"
+      id={"#{@id}-time"}
+      name={"#{@name}[time]"}
+      value={@shown}
       form={@form}
       disabled={@disabled}
-      class={@select_class}
-      aria-label={gettext("Hour")}
-    >
-      <option :if={@blank} value="" selected={is_nil(@shown_hour)}>—</option>
-      <option :for={h <- @hours} value={h} selected={h == @shown_hour}>
-        {if @twelve?, do: Integer.to_string(h), else: pad(h)}
-      </option>
-    </select>
-    <span class="text-base-content/60">:</span>
-    <select
-      id={"#{@id}-minute"}
-      name={"#{@name}[minute]"}
-      form={@form}
-      disabled={@disabled}
-      class={@select_class}
-      aria-label={gettext("Minute")}
-    >
-      <option :for={m <- @minutes} value={m} selected={m == @minute}>{pad(m)}</option>
-    </select>
-    <select
-      :if={@twelve?}
-      id={"#{@id}-half"}
-      name={"#{@name}[half]"}
-      form={@form}
-      disabled={@disabled}
-      class={@select_class}
-      aria-label={gettext("AM or PM")}
-    >
-      <option value="am" selected={@half == "am"}>{L10n.day_half_label("am")}</option>
-      <option value="pm" selected={@half == "pm"}>{L10n.day_half_label("pm")}</option>
-    </select>
+      list={"#{@id}-times"}
+      autocomplete="off"
+      placeholder={@example}
+      class={@input_class}
+      aria-label={gettext("Time")}
+    />
+    <datalist id={"#{@id}-times"}>
+      <option :for={t <- @suggestions} value={t}></option>
+    </datalist>
     """
-  end
-
-  # Every five minutes, plus the value's own minute when it is between them
-  # (a start stamped at 13:07 keeps its 07).
-  defp minute_options(current) do
-    steps = Enum.to_list(0..55//5)
-    if current in steps, do: steps, else: Enum.sort([current | steps])
   end
 
   defp date_html(form, disabled) do

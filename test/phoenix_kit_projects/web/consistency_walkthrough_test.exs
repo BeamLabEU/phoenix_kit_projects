@@ -225,17 +225,18 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
       project = fixture_project(%{"start_mode" => "immediate"})
       {:ok, _view, html} = project_popup(conn, project)
 
-      [_, footer] = String.split(html, ~s(id="project-form-tabs"), parts: 2)
-      [footer | _] = String.split(footer, ~s(id="project-modules-card"), parts: 2)
-      [_, footer] = String.split(footer, ~s(phx-click="cancel"), parts: 2)
-      [footer | _] = String.split(footer, "</form>", parts: 2)
+      [_, footer] = String.split(html, ~s(phx-click="cancel"), parts: 2)
+      [footer | _] = String.split(footer, "</div>", parts: 2)
 
       assert footer =~ ~r/^[^<]*>\s*Close\s*</
       refute footer =~ "Cancel"
+      assert footer =~ ~s(form="project-form")
       assert footer =~ ~r/>\s*Save\s*</
     end
 
-    test "its header carries the project's key and status, like the task popup's", %{conn: conn} do
+    test "its header carries the project's key and no status chip, like the task popup's", %{
+      conn: conn
+    } do
       conn = put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))
       project = fixture_project(%{"start_mode" => "immediate"})
       {:ok, _} = Projects.start_project(project)
@@ -244,7 +245,9 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
 
       [header] = Regex.run(~r{<header id="project-form-header".*?</header>}s, html)
       assert header =~ ~s(data-ref="#{project.key}")
-      assert header =~ "badge"
+      # The status is lower on the page (the boss, 2026-11-02).
+      refute header =~ "Ongoing"
+      refute header =~ "running"
     end
 
     test "the modules panel inside the form leaves the browser tab's title alone", %{conn: conn} do

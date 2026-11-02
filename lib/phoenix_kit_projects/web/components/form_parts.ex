@@ -27,6 +27,8 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
+
+  alias PhoenixKitWeb.Components.Core.NavTabs
   import PhoenixKitWeb.Components.MultilangForm, only: [multilang_fields_wrapper: 1]
   import PhoenixKitAI.Components.AITranslate, only: [ai_multilang_tabs: 1]
 
@@ -103,6 +105,17 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
 
   # ── Tabs ───────────────────────────────────────────────────────────
 
+  # Each pane's icon, the same wherever the pane appears.
+  defp pane_icon("task"), do: "hero-clipboard-document-list"
+  defp pane_icon("project"), do: "hero-folder"
+  defp pane_icon("subproject"), do: "hero-folder"
+  defp pane_icon("planning"), do: "hero-calendar-days"
+  defp pane_icon("schedule"), do: "hero-calendar-days"
+  defp pane_icon("connections"), do: "hero-link"
+  defp pane_icon("more"), do: "hero-paper-clip"
+  defp pane_icon("settings"), do: "hero-cog-6-tooth"
+  defp pane_icon(_), do: nil
+
   @doc """
   The tab strip of a form's panes: `panes` is `[{id, label}]`, `active` the
   open one, `errors` the panes holding an error (a `MapSet`). Each tab sends
@@ -124,10 +137,13 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
 
   def form_tabs(assigns) do
     ~H"""
+    <%!-- The module's one tab look, the project page's (core `NavTabs`,
+         boxed, an icon each — the boss, 2026-11-02: these read as another
+         kind of tab, with more air above and under them). --%>
     <div
       :if={match?([_, _ | _], @panes)}
       role="tablist"
-      class="tabs tabs-border shrink-0"
+      class={NavTabs.tablist_class(:boxed, "shrink-0 self-start max-w-full overflow-x-auto")}
       id={@id}
       phx-hook="PkpTabScroll"
       data-pkp-tabs
@@ -142,8 +158,9 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
         aria-controls={"#{@prefix}-pane-#{pane}"}
         phx-click={@event}
         phx-value-pane={pane}
-        class={["tab gap-1.5", @active == pane && "tab-active"]}
+        class={NavTabs.tab_class(@active == pane, "whitespace-nowrap")}
       >
+        <.icon :if={pane_icon(pane)} name={pane_icon(pane)} class="w-4 h-4 shrink-0" />
         {label}
         <span
           :if={MapSet.member?(@errors, pane)}
@@ -226,13 +243,16 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
       )
 
     ~H"""
-    <div id={@id} class={["flex flex-col gap-3", @translated? && "rounded-box border border-base-300 p-3"]}>
+    <%!-- Tight under the language row (the boss, 2026-11-02: a large gap
+         between the languages and the title field); core's switcher keeps
+         a margin of its own, taken off here. --%>
+    <div id={@id} class={["flex flex-col gap-2", @translated? && "rounded-box border border-base-300 p-3"]}>
       <.ai_multilang_tabs
         :if={@multilang_enabled}
         multilang_enabled={@multilang_enabled}
         language_tabs={@language_tabs}
         current_lang={@current_lang}
-        class=""
+        class="[&>div:last-child]:mb-0"
         ai_row_class="flex items-center gap-3 -mt-3"
         ai_translate={@ai_translate}
       />
@@ -337,7 +357,6 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
           class={status_choice_class(value, @value == value)}
         >
           <input type="radio" name={@name} value={value} checked={@value == value} class="sr-only" />
-          <.icon :if={@value == value} name="hero-check-mini" class="w-4 h-4 -ml-0.5" />
           {label}
         </label>
       </div>

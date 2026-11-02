@@ -95,7 +95,7 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
 
     view
     |> form("#time-deadline-#{dom}", %{
-      "deadline" => %{"date" => Date.to_iso8601(day), "hour" => "16", "minute" => "30"}
+      "deadline" => %{"date" => Date.to_iso8601(day), "time" => "16:30"}
     })
     |> render_submit()
 

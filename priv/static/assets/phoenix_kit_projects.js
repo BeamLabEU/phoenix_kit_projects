@@ -1715,7 +1715,9 @@
       if (this.el.hasAttribute("data-pkp-fill")) return this.el;
       var tab = this.el.querySelector('[role="tab"][aria-selected="true"]');
       var id = tab && tab.getAttribute("aria-controls");
-      return id ? document.getElementById(id) : null;
+      var pane = id ? document.getElementById(id) : null;
+      // A form whose tabs sit outside it scrolls the area holding the panes.
+      return (pane && pane.closest("[data-pkp-scroll]")) || pane;
     },
     fill: function () {
       // A tab that is not open has no place to measure from (the project
@@ -1923,6 +1925,17 @@
         if (first) first.focus({ preventScroll: true });
       }
     }, true);
+  }
+
+  // A description editor's image button: the server answers its insert
+  // request with the id of the upload's hidden file input, opened here
+  // (`DescriptionImages.pick/1`).
+  if (!window.__pkpPickFile) {
+    window.__pkpPickFile = true;
+    window.addEventListener("phx:pkp:pick-file", function (e) {
+      var input = e.detail && e.detail.id && document.getElementById(e.detail.id);
+      if (input) input.click();
+    });
   }
 
   window.PhoenixKitProjectsHooks = {

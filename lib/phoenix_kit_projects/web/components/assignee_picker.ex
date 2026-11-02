@@ -57,7 +57,6 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
   import PhoenixKitWeb.Components.Core.Modal, only: [confirm_modal: 1]
-  import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
   import PhoenixKitProjects.Web.Components.AssigneeFaces, only: [assignee_faces: 1]
 
   alias Phoenix.LiveView
@@ -68,7 +67,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   @events ~w(assignee_search assignee_pick assignee_recent assign_to_me
              staff_create_confirm staff_create_cancel assignee_noop assignee_clear
              assignee_toggle assignee_remove assignee_browse assignee_back
-             assignee_query assignee_more)
+             assignee_query assignee_more assignee_open assignee_close)
 
   @doc "The events the picker sends; a LiveView hands each to `handle_event/4`."
   @spec events() :: [String.t()]
@@ -113,13 +112,13 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     |> init_multi(Keyword.get(opts, :multi, false))
   end
 
-  defp init_multi(socket, false),
-    do: Phoenix.Component.assign(socket, :assignee_multi?, false)
-
-  defp init_multi(socket, true) do
+  # Both modes open the same dropdown (the boss, 2026-11-02: one picker);
+  # only what a pick does differs.
+  defp init_multi(socket, multi?) do
     socket
     |> Phoenix.Component.assign(
-      assignee_multi?: true,
+      assignee_multi?: multi?,
+      assignee_open?: false,
       assignee_selected: socket.assigns[:assignee_selected] || [],
       assignee_rows: socket.assigns[:assignee_rows] || %{},
       assignee_view: :home,
@@ -338,7 +337,23 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   # lists offered and is looked up again (`describe`), so a forged kind or
   # uuid ticks nobody; an account without a staff record asks first.
   def handle_event("assignee_toggle", %{"kind" => "user", "uuid" => uuid}, socket, mod) do
-    {:noreply, assign_user(socket, uuid, :other, mod)}
+    {:noreply, socket |> close_if_single() |> assign_user(uuid, :other, mod)}
+  end
+
+  # One assignee: a pick replaces it and the dropdown closes.
+  def handle_event(
+        "assignee_toggle",
+        %{"kind" => kind, "uuid" => uuid},
+        %{assigns: %{assignee_multi?: false}} = socket,
+        mod
+      ) do
+    case Assignees.describe(kind, uuid) do
+      %{kind: kind, uuid: uuid} ->
+        {:noreply, socket |> choose(kind, uuid, mod) |> close_if_single()}
+
+      nil ->
+        {:noreply, socket}
+    end
   end
 
   def handle_event("assignee_toggle", %{"kind" => kind, "uuid" => uuid}, socket, mod) do
@@ -375,11 +390,22 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     do: {:noreply, open_list(socket, :home)}
 
   def handle_event("assignee_query", %{"assignee_q" => q}, socket, _mod) when is_binary(q) do
+    socket = Phoenix.Component.assign(socket, :assignee_open?, true)
+
     case String.trim(q) do
       "" -> {:noreply, open_list(socket, :home)}
       text -> {:noreply, open_list(socket, {:search, String.slice(text, 0, 100)})}
     end
   end
+
+  # The dropdown under the search field: opened by focusing it, closed by
+  # a click elsewhere. Closing only hides it — the list, its page and its
+  # scroll stay as they were (the panel, 2026-11-02).
+  def handle_event("assignee_open", _params, socket, _mod),
+    do: {:noreply, Phoenix.Component.assign(socket, :assignee_open?, true)}
+
+  def handle_event("assignee_close", _params, socket, _mod),
+    do: {:noreply, Phoenix.Component.assign(socket, :assignee_open?, false)}
 
   # The list's bottom came into view: the next page, once, for the list
   # that asked (a page for a list since left is dropped).
@@ -394,6 +420,11 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   end
 
   def handle_event(_event, _params, socket, _mod), do: {:noreply, socket}
+
+  defp close_if_single(%{assigns: %{assignee_multi?: false}} = socket),
+    do: Phoenix.Component.assign(socket, :assignee_open?, false)
+
+  defp close_if_single(socket), do: socket
 
   defp open_list(socket, :home) do
     socket
@@ -562,117 +593,29 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     doc: "the hidden input naming the kind chosen"
   )
 
+  attr(:view, :any, default: :home)
+  attr(:home, :map, default: %{})
+  attr(:more?, :boolean, default: false)
+  attr(:open?, :boolean, default: false)
+  attr(:streams, :any, required: true)
   attr(:class, :any, default: nil)
 
   def assignee_picker(assigns) do
+    key = assigns.chip.key
+
     assigns =
       assign(assigns,
-        recent_shown: Enum.reject(assigns.recent, &({&1.kind, &1.uuid} == assigns.chip.key)),
         me_id: assigns.me_id || "#{assigns.id}-me",
-        kind: kind_of(assigns.chip)
+        kind: kind_of(assigns.chip),
+        selected: if(key, do: [key], else: []),
+        rows: if(key, do: %{key => assigns.chip.row}, else: %{})
       )
 
     ~H"""
     <div id={@id} class={["flex flex-col gap-2", @class]} data-kind={@kind}>
       <input type="hidden" name={@kind_name} value={@kind} />
       <input :for={{name, value} <- @fields} type="hidden" name={name} value={value} />
-      <div class="flex items-center justify-between gap-2">
-        <label :if={@label} for={"#{@id}-search"} class="text-sm font-semibold">{@label}</label>
-        <%!-- Works for any account: one with no staff person gets one
-             made, after the form asks (`staff_confirm`). --%>
-        <button
-          :if={@can_assign? and @chip.key != {"person", @my_person_uuid}}
-          type="button"
-          id={@me_id}
-          phx-click="assign_to_me"
-          class="btn btn-xs btn-outline gap-1 ml-auto"
-        >
-          <.icon name="hero-user-plus" class="w-3.5 h-3.5" /> {gettext("Assign to me")}
-        </button>
-      </div>
-      <p :if={@can_assign? and match?({:trashed, _}, @notice)} id={"#{@id}-notice"} class="text-xs text-warning">
-        <%= if @notice == {:trashed, :self} do %>
-          {gettext("Your staff record is in the trash; restore it under Staff → People to be assigned.")}
-        <% else %>
-          {gettext("Their staff record is in the trash; restore it under Staff → People to assign them.")}
-        <% end %>
-      </p>
-
-      <div
-        :if={@chip.key}
-        id={"#{@id}-chosen"}
-        data-kind={@kind}
-        class="flex items-center gap-2 rounded-box border border-base-300 px-2.5 py-1.5"
-      >
-        <%= if @chip.row && @chip.row[:faces] do %>
-          <.assignee_faces faces={@chip.row.faces} size="sm" />
-        <% else %>
-          <span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-base-200 shrink-0">
-            <.icon name={(@chip.row && @chip.row.icon) || "hero-user"} class="w-4 h-4 text-base-content/60" />
-          </span>
-        <% end %>
-        <div class="min-w-0 flex-1">
-          <div class="truncate font-medium text-sm">
-            {(@chip.row && @chip.row.label) || gettext("No longer listed")}
-          </div>
-          <div :if={@chip.row && @chip.row.sublabel} class="truncate text-xs text-base-content/60">
-            {@chip.row.sublabel}
-          </div>
-        </div>
-        <button
-          :if={@can_assign?}
-          type="button"
-          id={"#{@id}-clear"}
-          phx-click="assignee_clear"
-          class="btn btn-ghost btn-xs btn-circle"
-          aria-label={gettext("Remove the assignee")}
-          title={gettext("Remove the assignee")}
-        >
-          <.icon name="hero-x-mark" class="w-4 h-4" />
-        </button>
-      </div>
-      <p :if={is_nil(@chip.key) and not @can_assign?} class="text-sm text-base-content/60">
-        {gettext("Unassigned")}
-      </p>
-
-      <.search_picker
-        :if={@can_assign?}
-        id={"#{@id}-search"}
-        dropdown_id={"#{@id}-list"}
-        form={@search_form}
-        search_event="assignee_search"
-        results_event="assignee_results"
-        pick_event="assignee_pick"
-        staged_event="assignee_staged"
-        search_on_focus
-        close_on_pick
-        row_layout="stacked"
-        placeholder={
-          if @chip.key,
-            do: gettext("Hand it to someone else — search a person, team or department"),
-            else: gettext("Search a person, team or department")
-        }
-        class="input input-sm w-full"
-        searching_label={gettext("Searching…")}
-        more_label={gettext("Load more")}
-        loading_more_label={gettext("Loading…")}
-        no_matches_label={gettext("No matches")}
-      />
-
-      <div :if={@can_assign? and @recent_shown != []} id={"#{@id}-recent"} class="flex flex-wrap items-center gap-1.5">
-        <span class="text-xs text-base-content/60">{gettext("Recent:")}</span>
-        <button
-          :for={r <- @recent_shown}
-          type="button"
-          phx-click="assignee_recent"
-          phx-value-kind={r.kind}
-          phx-value-uuid={r.uuid}
-          class="btn btn-xs btn-ghost border-base-300 gap-1 font-normal"
-          title={r.sublabel || r.label}
-        >
-          <.icon name={r.icon} class="w-3.5 h-3.5 opacity-60" />{r.label}
-        </button>
-      </div>
+      <.picker_body {assigns} multi?={false} remove_event="assignee_clear" />
     </div>
     """
   end
@@ -693,6 +636,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   attr(:view, :any, default: :home)
   attr(:home, :map, default: %{})
   attr(:more?, :boolean, default: false)
+  attr(:open?, :boolean, default: false)
   attr(:streams, :any, required: true)
   attr(:can_assign?, :boolean, default: true)
   attr(:my_person_uuid, :string, default: nil)
@@ -703,131 +647,178 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   attr(:class, :any, default: nil)
 
   def assignee_multi_picker(assigns) do
-    assigns =
-      assign(assigns,
-        me_id: assigns.me_id || "#{assigns.id}-me",
-        me?: {"person", assigns.my_person_uuid} in assigns.selected,
-        list_title: list_title(assigns.view)
-      )
+    assigns = assign(assigns, me_id: assigns.me_id || "#{assigns.id}-me")
 
     ~H"""
     <div id={@id} class={["flex flex-col gap-2", @class]} data-count={length(@selected)}>
       <input type="hidden" name={@name} value="" />
       <input :for={{kind, uuid} <- @selected} type="hidden" name={@name} value={"#{kind}:#{uuid}"} />
+      <.picker_body {assigns} multi?={true} remove_event="assignee_remove" />
+    </div>
+    """
+  end
 
-      <div class="flex items-center justify-between gap-2">
-        <label :if={@label} for={"#{@id}-q"} class="text-sm font-semibold">{@label}</label>
+  # What both modes draw (the boss, 2026-11-02 — one picker, as it looked
+  # before the several-assignee change): who it is for as cards; the search
+  # field, whose dropdown holds the grouped lists and the search results;
+  # the Recent chips under it, one press each.
+  defp picker_body(assigns) do
+    assigns =
+      assign(assigns,
+        me?: {"person", assigns.my_person_uuid} in assigns.selected,
+        recent_shown: Enum.reject(assigns.recent, &({&1.kind, &1.uuid} in assigns.selected)),
+        list_title: list_title(assigns.view)
+      )
+
+    ~H"""
+    <div class="flex items-center justify-between gap-2">
+      <label :if={@label} for={"#{@id}-q"} class="text-sm font-semibold">{@label}</label>
+      <%!-- Works for any account: one with no staff person gets one
+           made, after the form asks (`staff_confirm`). --%>
+      <button
+        :if={@can_assign? and not @me?}
+        type="button"
+        id={@me_id}
+        phx-click="assign_to_me"
+        class="btn btn-xs btn-outline gap-1 ml-auto"
+      >
+        <.icon name="hero-user-plus" class="w-3.5 h-3.5" /> {gettext("Assign to me")}
+      </button>
+    </div>
+    <p :if={@can_assign? and match?({:trashed, _}, @notice)} id={"#{@id}-notice"} class="text-xs text-warning">
+      <%= if @notice == {:trashed, :self} do %>
+        {gettext("Your staff record is in the trash; restore it under Staff → People to be assigned.")}
+      <% else %>
+        {gettext("Their staff record is in the trash; restore it under Staff → People to assign them.")}
+      <% end %>
+    </p>
+
+    <%!-- Who it is for: a card each, in the order they were added. --%>
+    <div :if={@selected != []} id={"#{@id}-chips"} class="flex flex-wrap gap-2">
+      <div
+        :for={{kind, uuid} = key <- @selected}
+        id={"#{@id}-chip-#{kind}-#{uuid}"}
+        data-kind={kind}
+        class="flex items-center gap-2 rounded-box border border-base-300 py-1.5 pl-2 pr-1 min-w-0 max-w-full"
+      >
+        <% row = Map.get(@rows, key) %>
+        <%= if row && row[:faces] do %>
+          <.assignee_faces faces={row.faces} size="sm" />
+        <% else %>
+          <span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-base-200 shrink-0">
+            <.icon name={(row && row.icon) || "hero-user"} class="w-4 h-4 text-base-content/60" />
+          </span>
+        <% end %>
+        <div class="min-w-0">
+          <div class="truncate font-medium text-sm">{(row && row.label) || gettext("No longer listed")}</div>
+          <div :if={row && row[:sublabel]} class="truncate text-xs text-base-content/60">{row.sublabel}</div>
+        </div>
         <button
-          :if={@can_assign? and not @me?}
+          :if={@can_assign?}
           type="button"
-          id={@me_id}
-          phx-click="assign_to_me"
-          class="btn btn-xs btn-outline gap-1 ml-auto"
+          id={"#{@id}-clear-#{kind}-#{uuid}"}
+          phx-click={@remove_event}
+          phx-value-kind={kind}
+          phx-value-uuid={uuid}
+          class="btn btn-ghost btn-xs btn-circle shrink-0"
+          aria-label={gettext("Remove %{name}", name: (row && row.label) || "")}
+          title={gettext("Remove %{name}", name: (row && row.label) || "")}
         >
-          <.icon name="hero-user-plus" class="w-3.5 h-3.5" /> {gettext("Assign to me")}
+          <.icon name="hero-x-mark" class="w-4 h-4" />
         </button>
       </div>
-      <p :if={@can_assign? and match?({:trashed, _}, @notice)} id={"#{@id}-notice"} class="text-xs text-warning">
-        <%= if @notice == {:trashed, :self} do %>
-          {gettext("Your staff record is in the trash; restore it under Staff → People to be assigned.")}
-        <% else %>
-          {gettext("Their staff record is in the trash; restore it under Staff → People to assign them.")}
-        <% end %>
-      </p>
+    </div>
+    <p :if={@selected == [] and not @can_assign?} class="text-sm text-base-content/60">
+      {gettext("Unassigned")}
+    </p>
 
-      <%!-- Who it is for now: one chip each, in the order they were added. --%>
-      <div :if={@selected != []} id={"#{@id}-chips"} class="flex flex-wrap gap-1.5">
-        <span
-          :for={{kind, uuid} = key <- @selected}
-          id={"#{@id}-chip-#{kind}-#{uuid}"}
-          data-kind={kind}
-          class="inline-flex items-center gap-1.5 rounded-full border border-base-300 bg-base-100 py-0.5 pl-1 pr-1.5 text-sm max-w-full"
-        >
-          <% row = Map.get(@rows, key) %>
-          <%= if row && row[:faces] do %>
-            <.assignee_faces faces={row.faces} size="xs" />
-          <% else %>
-            <.icon name={(row && row.icon) || "hero-user"} class="w-4 h-4 text-base-content/60 shrink-0" />
-          <% end %>
-          <span class="truncate">{(row && row.label) || gettext("No longer listed")}</span>
-          <button
-            :if={@can_assign?}
-            type="button"
-            phx-click="assignee_remove"
-            phx-value-kind={kind}
-            phx-value-uuid={uuid}
-            class="btn btn-ghost btn-xs btn-circle min-h-0 h-5 w-5"
-            aria-label={gettext("Remove %{name}", name: (row && row.label) || "")}
-            title={gettext("Remove %{name}", name: (row && row.label) || "")}
-          >
-            <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
-          </button>
-        </span>
-      </div>
-      <p :if={@selected == [] and not @can_assign?} class="text-sm text-base-content/60">
-        {gettext("Unassigned")}
-      </p>
+    <div :if={@can_assign?} id={"#{@id}-search"} phx-click-away={@open? && "assignee_close"}>
+      <label class="input input-sm w-full flex items-center gap-2">
+        <.icon name="hero-magnifying-glass" class="w-4 h-4 opacity-60" />
+        <input
+          id={"#{@id}-q"}
+          type="search"
+          name="assignee_q"
+          form={@search_form}
+          phx-debounce="250"
+          phx-focus="assignee_open"
+          autocomplete="off"
+          aria-expanded={to_string(@open?)}
+          aria-controls={"#{@id}-list"}
+          placeholder={gettext("Search a person, team or department")}
+          class="grow"
+        />
+      </label>
 
-      <div :if={@can_assign?} class="rounded-box border border-base-300">
-        <label class="input input-sm w-full flex items-center gap-2 border-0 border-b border-base-300 rounded-b-none focus-within:outline-none">
-          <.icon name="hero-magnifying-glass" class="w-4 h-4 opacity-60" />
-          <input
-            id={"#{@id}-q"}
-            type="search"
-            name="assignee_q"
-            form={@search_form}
-            phx-debounce="250"
-            autocomplete="off"
-            placeholder={gettext("Search a person, team or department")}
-            class="grow"
+      <%!-- Under the field, in the flow (an absolute one is clipped by a
+           popup's scroll area). Hidden when closed, never removed: the
+           list, its page and its scroll stay. --%>
+      <div
+        id={"#{@id}-list"}
+        role="listbox"
+        class={[
+          "mt-1 max-h-72 overflow-y-auto overscroll-contain p-1 rounded-box border border-base-300 bg-base-100 shadow-sm",
+          not @open? && "hidden"
+        ]}
+      >
+        <%= if @view == :home do %>
+          <.option_section
+            :for={{kind, title} <- [{"team", gettext("Teams")}, {"department", gettext("Departments")}, {"person", gettext("People")}]}
+            :if={match?(%{rows: [_ | _]}, @home[kind])}
+            id={"#{@id}-home-#{kind}"}
+            title={title}
+            rows={@home[kind].rows}
+            selected={@selected}
+            more_kind={@home[kind].more? && kind}
           />
-        </label>
-
-        <div id={"#{@id}-list"} class="max-h-72 overflow-y-auto overscroll-contain p-1">
-          <%= if @view == :home do %>
-            <.option_section
-              :if={@recent != []}
-              id={"#{@id}-recent"}
-              title={gettext("Recent")}
-              rows={@recent}
-              selected={@selected}
-            />
-            <.option_section
-              :for={{kind, title} <- [{"team", gettext("Teams")}, {"department", gettext("Departments")}, {"person", gettext("People")}]}
-              :if={match?(%{rows: [_ | _]}, @home[kind])}
-              id={"#{@id}-home-#{kind}"}
-              title={title}
-              rows={@home[kind].rows}
-              selected={@selected}
-              more_kind={@home[kind].more? && kind}
-            />
-          <% else %>
-            <div class="flex items-center gap-2 px-1 py-1">
-              <button type="button" phx-click="assignee_back" id={"#{@id}-back"} class="btn btn-ghost btn-xs gap-1">
-                <.icon name="hero-chevron-left" class="w-3.5 h-3.5" /> {gettext("Back")}
-              </button>
-              <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">{@list_title}</span>
-            </div>
-            <ul
-              id={"#{@id}-options"}
-              phx-update="stream"
-              phx-viewport-bottom={@more? && "assignee_more"}
-              class="flex flex-col"
+        <% else %>
+          <div class="flex items-center gap-2 px-1 py-1">
+            <button
+              :if={match?({:browse, _}, @view)}
+              type="button"
+              phx-click="assignee_back"
+              id={"#{@id}-back"}
+              class="btn btn-ghost btn-xs gap-1"
             >
-              <li
-                :for={{dom_id, row} <- @streams.assignee_options}
-                id={dom_id}
-                class={[member?(row) && "pl-4"]}
-              >
-                <.option_row row={row} selected={@selected} />
-              </li>
-              <li id={"#{@id}-options-empty"} class="hidden only:block px-2 py-2 text-sm text-base-content/60">
-                {gettext("No matches")}
-              </li>
-            </ul>
-          <% end %>
-        </div>
+              <.icon name="hero-chevron-left" class="w-3.5 h-3.5" /> {gettext("Back")}
+            </button>
+            <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">{@list_title}</span>
+          </div>
+          <ul
+            id={"#{@id}-options"}
+            phx-update="stream"
+            phx-viewport-bottom={@more? && "assignee_more"}
+            class="flex flex-col"
+          >
+            <li
+              :for={{dom_id, row} <- @streams.assignee_options}
+              id={dom_id}
+              class={[member?(row) && "pl-4"]}
+            >
+              <.option_row row={row} selected={@selected} />
+            </li>
+            <li id={"#{@id}-options-empty"} class="hidden only:block px-2 py-2 text-sm text-base-content/60">
+              {gettext("No matches")}
+            </li>
+          </ul>
+        <% end %>
       </div>
+    </div>
+
+    <%!-- The viewer's own recent picks, as before: one press adds one. --%>
+    <div :if={@can_assign? and @recent_shown != []} id={"#{@id}-recent"} class="flex flex-wrap items-center gap-1.5">
+      <span class="text-xs text-base-content/60">{gettext("Recent:")}</span>
+      <button
+        :for={r <- @recent_shown}
+        type="button"
+        phx-click="assignee_recent"
+        phx-value-kind={r.kind}
+        phx-value-uuid={r.uuid}
+        class="btn btn-xs btn-ghost border-base-300 gap-1 font-normal"
+        title={r.sublabel || r.label}
+      >
+        <.icon name={r.icon} class="w-3.5 h-3.5 opacity-60" />{r.label}
+      </button>
     </div>
     """
   end
@@ -864,28 +855,28 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   attr(:row, :map, required: true)
   attr(:selected, :list, required: true)
 
-  # One option, ticked when its key is chosen (a button, not a native
-  # checkbox: the server alone draws the tick — see the library picker).
+  # One option: a press adds it (several) or makes it the one (one); a
+  # chosen one carries a tick at its end, no checkbox (the boss).
   defp option_row(assigns) do
     assigns = assign(assigns, :on?, {assigns.row.kind, assigns.row.uuid} in assigns.selected)
 
     ~H"""
     <button
       type="button"
-      role="checkbox"
-      aria-checked={to_string(@on?)}
+      role="option"
+      aria-selected={to_string(@on?)}
       phx-click="assignee_toggle"
       phx-value-kind={@row.kind}
       phx-value-uuid={@row.uuid}
       data-assignee={"#{@row.kind}:#{@row.uuid}"}
-      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-base-200"
+      class={["flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-base-200", @on? && "bg-primary/5"]}
     >
-      <span class="checkbox checkbox-sm" aria-hidden="true" aria-checked={to_string(@on?)}></span>
       <.icon name={@row[:icon] || "hero-user"} class="w-4 h-4 shrink-0 opacity-60" />
       <span class="min-w-0 flex-1">
         <span class="block truncate text-sm">{@row.label}</span>
         <span :if={@row[:sublabel]} class="block truncate text-xs text-base-content/60">{@row.sublabel}</span>
       </span>
+      <.icon :if={@on?} name="hero-check" class="w-4 h-4 shrink-0 text-primary" />
     </button>
     """
   end

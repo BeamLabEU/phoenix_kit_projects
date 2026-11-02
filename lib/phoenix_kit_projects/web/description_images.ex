@@ -18,7 +18,6 @@ defmodule PhoenixKitProjects.Web.DescriptionImages do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import Phoenix.LiveView, only: [allow_upload: 3, consume_uploaded_entry: 3, put_flash: 3]
-  import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
 
   alias PhoenixKitProjects.{Activity, Attachments, InlineImages}
   alias PhoenixKitProjects.Web.Components.DescriptionEditor
@@ -118,21 +117,26 @@ defmodule PhoenixKitProjects.Web.DescriptionImages do
   end
 
   attr(:uploads, :map, required: true)
-  attr(:id, :string, required: true)
 
-  @doc "The \"Add an image to the description\" button and its hidden file input."
-  def button(assigns) do
+  @doc """
+  The hidden file input behind the editor's own image button: the toolbar
+  button sends `{:leaf_insert_request, …}`, the LiveView answers with
+  `pick/1`, which opens this input's file chooser. One control for a
+  picture in every description, the editor's (the boss, 2026-11-02 — a link
+  under the field in some popups, a paperclip in the comments).
+  """
+  def file_input(assigns) do
     ~H"""
-    <label
-      for={@uploads.description_images.ref}
-      id={@id}
-      class="btn btn-ghost btn-xs self-start gap-1 font-normal text-base-content/70"
-    >
-      <.icon name="hero-photo" class="w-3.5 h-3.5" /> {gettext("Add an image to the description")}
-    </label>
     <.live_file_input upload={@uploads.description_images} class="hidden" />
     """
   end
+
+  @doc "Opens the file chooser of `file_input/1` (the editor's image button was pressed)."
+  @spec pick(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def pick(%{assigns: %{uploads: %{description_images: upload}}} = socket),
+    do: Phoenix.LiveView.push_event(socket, "pkp:pick-file", %{id: upload.ref})
+
+  def pick(socket), do: socket
 
   defp target(socket) do
     case socket.assigns[:description_images_target] do

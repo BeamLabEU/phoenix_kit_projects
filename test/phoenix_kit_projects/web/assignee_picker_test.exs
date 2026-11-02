@@ -76,19 +76,12 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
 
       render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => dora.uuid})
       assert has_element?(view, "#assignment-assignee-chip-person-#{dora.uuid}", "Dora")
-      # Recent shows them ticked (the task holds several, V29).
-      assert has_element?(
-               view,
-               "#assignment-assignee-recent [data-assignee='person:#{dora.uuid}'][aria-checked='true']"
-             )
+      # A card above the field now, so not offered again in Recent.
+      refute has_element?(view, "#assignment-assignee-recent", "Dora")
 
       render_click(view, "assignee_remove", %{"kind" => "person", "uuid" => dora.uuid})
       refute has_element?(view, "#assignment-assignee-chip-person-#{dora.uuid}")
-
-      assert has_element?(
-               view,
-               "#assignment-assignee-recent [data-assignee='person:#{dora.uuid}'][aria-checked='false']"
-             )
+      assert has_element?(view, "#assignment-assignee-recent", "Dora")
 
       # And on the next form the viewer opens.
       {:ok, view, _} = edit(ctx)
@@ -167,10 +160,10 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
 
       render_change(view, "assignee_query", %{"assignee_q" => cleo.name})
       sel = "#assignment-assignee-options [data-assignee='person:#{cleo.uuid}']"
-      assert has_element?(view, sel <> "[aria-checked='false']")
+      assert has_element?(view, sel <> "[aria-selected='false']")
 
       view |> element(sel) |> render_click()
-      assert has_element?(view, sel <> "[aria-checked='true']")
+      assert has_element?(view, sel <> "[aria-selected='true']")
     end
   end
 
@@ -208,7 +201,7 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
       |> render_change()
 
       render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => fia.uuid})
-      assert has_element?(view, "#subproject-assignee-chosen", "Fia")
+      assert has_element?(view, "#subproject-assignee-chips", "Fia")
 
       view |> form("#subproject-form") |> render_submit()
 

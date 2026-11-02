@@ -8675,11 +8675,6 @@ msgstr[1] "%{count} tâches peuvent commencer maintenant."
 msgid "Choose what %{name} uses — from a simple task list to a full tracker."
 msgstr "Choisissez ce que %{name} utilise — d'une simple liste de tâches à un outil de suivi complet."
 
-#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
-#, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr "Choisissez ce que ce projet utilise — d'une simple liste de tâches à un outil de suivi complet. Les changements ici s'appliquent tout de suite ; le bouton Enregistrer ci-dessus concerne les champs."
-
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
 msgid "Keep idle"
@@ -10711,3 +10706,20 @@ msgstr "Impossible de modifier l’échéance."
 
 msgid "That time could not be read."
 msgstr "Cette heure n’a pas pu être lue."
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
+#, elixir-autogen, elixir-format
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr "Choisissez ce que ce projet utilise — d'une simple liste de tâches à un outil de suivi complet. Les changements ici s'appliquent tout de suite ; le bouton Enregistrer ci-dessous concerne les champs."
+
+msgid "What you changed since the last save is lost."
+msgstr "Ce que vous avez modifié depuis le dernier enregistrement est perdu."
+
+msgid "Discard"
+msgstr "Abandonner"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Enregistrés dès que vous les ajoutez — fermer ne les annule pas."
+
+msgid "Unsaved changes"
+msgstr "Modifications non enregistrées"

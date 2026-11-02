@@ -8710,11 +8710,6 @@ msgstr[2] "%{count} zadań można teraz rozpocząć."
 msgid "Choose what %{name} uses — from a simple task list to a full tracker."
 msgstr "Wybierz, czego używa %{name} — od prostej listy zadań po pełny tracker."
 
-#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
-#, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr "Wybierz, czego używa ten projekt — od prostej listy zadań po pełny tracker. Zmiany tutaj działają od razu; przycisk Zapisz powyżej dotyczy pól."
-
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
 msgid "Keep idle"
@@ -10768,3 +10763,20 @@ msgstr "Nie udało się zmienić terminu."
 
 msgid "That time could not be read."
 msgstr "Nie udało się odczytać tej godziny."
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
+#, elixir-autogen, elixir-format
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr "Wybierz, czego używa ten projekt — od prostej listy zadań po pełny tracker. Zmiany tutaj działają od razu; przycisk Zapisz poniżej dotyczy pól."
+
+msgid "What you changed since the last save is lost."
+msgstr "Zmiany od ostatniego zapisu zostaną utracone."
+
+msgid "Discard"
+msgstr "Odrzuć"
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr "Zapisywane od razu po dodaniu — zamknięcie ich nie cofa."
+
+msgid "Unsaved changes"
+msgstr "Niezapisane zmiany"

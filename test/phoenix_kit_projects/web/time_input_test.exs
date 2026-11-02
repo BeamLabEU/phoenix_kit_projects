@@ -97,31 +97,61 @@ defmodule PhoenixKitProjects.Web.TimeInputTest do
     end
   end
 
+  # The boss, 2026-11-02: one typed field, not an hour and a minute select.
+  describe "typing a time" do
+    test "the forms people type" do
+      assert TimeInput.parse_clock("17:30") == {17, 30}
+      assert TimeInput.parse_clock("17.30") == {17, 30}
+      assert TimeInput.parse_clock("1730") == {17, 30}
+      assert TimeInput.parse_clock("930") == {9, 30}
+      assert TimeInput.parse_clock("17") == {17, 0}
+      assert TimeInput.parse_clock("5:30 pm") == {17, 30}
+      assert TimeInput.parse_clock("5pm") == {17, 0}
+      assert TimeInput.parse_clock("12 am") == {0, 0}
+      assert TimeInput.parse_clock("12:15 PM") == {12, 15}
+      assert TimeInput.parse_clock("5:30 p.m.") == {17, 30}
+    end
+
+    test "what is no time" do
+      assert TimeInput.parse_clock("") == nil
+      assert TimeInput.parse_clock("25:00") == nil
+      assert TimeInput.parse_clock("13 pm") == nil
+      assert TimeInput.parse_clock("7:61") == nil
+      assert TimeInput.parse_clock("soon") == nil
+    end
+
+    test "folded with its day" do
+      assert TimeInput.fold(%{"date" => "2026-10-31", "time" => "1705"}) == "2026-10-31T17:05"
+      assert TimeInput.fold(%{"time" => "9:30"}) == "09:30"
+      assert TimeInput.fold(%{"time" => ""}) == ""
+    end
+  end
+
   describe "the task form" do
-    test "asks for times with selects, not the device's pickers", ctx do
+    test "asks for a time with one typed field in the site's clock, not the device's pickers",
+         ctx do
       {:ok, view, html} =
         live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
 
       refute html =~ ~s(type="datetime-local")
       refute html =~ ~s(type="time")
-      assert has_element?(view, "select[name='assignment[deadline][hour]']")
-      assert has_element?(view, "select[name='assignment[start_time][hour]']")
-      refute has_element?(view, "select[name='assignment[deadline][half]']")
+      assert has_element?(view, "input[name='assignment[deadline][time]']")
+      assert has_element?(view, "input[name='assignment[start_time][time]']")
+      refute has_element?(view, "select[name='assignment[deadline][hour]']")
       assert html =~ "Today 17:00"
     end
 
-    test "on a 12-hour site there is AM/PM, and 5:30 PM is saved as 17:30", ctx do
+    test "on a 12-hour site the time reads 5:00 PM, and 5:30 pm typed is saved as 17:30", ctx do
       twelve_hour!()
 
       {:ok, view, html} =
         live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
 
-      assert has_element?(view, "select[name='assignment[deadline][half]']")
       assert html =~ "Today 5:00 PM"
 
       view
       |> form("#assignment-form",
-        assignment: %{deadline: %{date: "2027-03-04", hour: "5", minute: "30", half: "pm"}}
+        assignment: %{deadline: %{date: "2027-03-04", time: "5:30 pm"}}
       )
       |> render_submit()
 

@@ -420,6 +420,14 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   def handle_info({:leaf_suggest, _} = msg, socket),
     do: {:noreply, DescriptionEditor.suggest(socket, msg, nil)}
 
+  # The editor's own image button: opens the description picture upload's
+  # file chooser (`DescriptionImages.pick/1`).
+  def handle_info(
+        {:leaf_insert_request, %{editor_id: "task-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
   # An image pasted into the description: kept in the library task's folder
   # and placed at the cursor (the boss, 2026-10-31).
   def handle_info(
@@ -606,7 +614,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         </:context>
       </.form_header>
 
-      <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
+      <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
         <%!-- The task popup's language block: title + description per
              language, AI translate in the tab row. --%>
         <.words_block
@@ -651,9 +659,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
                 placeholder={gettext("Description…")}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
-                image_button={false}
+                image_button={@live_action == :edit}
               />
-              <DescriptionImages.button :if={@live_action == :edit} uploads={@uploads} id="task-description-image" />
+              <DescriptionImages.file_input :if={@live_action == :edit} uploads={@uploads} />
         </.words_block>
 
         <%!-- Non-translatable settings (duration, default assignee). --%>
@@ -695,6 +703,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               my_person_uuid={@my_person_uuid}
               recent={@recent_assignees}
               notice={@assignee_notice}
+              view={@assignee_view}
+              home={@assignee_home}
+              more?={not is_nil(@assignee_cursor)}
+              open?={@assignee_open?}
+              streams={@streams}
             />
           </div>
         </div>

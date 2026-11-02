@@ -8672,11 +8672,6 @@ msgstr[1] ""
 msgid "Choose what %{name} uses — from a simple task list to a full tracker."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
-#, elixir-autogen, elixir-format
-msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button above is for the fields."
-msgstr ""
-
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6833
 #, elixir-autogen, elixir-format
 msgid "Keep idle"
@@ -10707,4 +10702,21 @@ msgid "Could not change the deadline."
 msgstr ""
 
 msgid "That time could not be read."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:530
+#, elixir-autogen, elixir-format
+msgid "Choose what this project uses — from a simple task list to a full tracker. Changes here apply at once; the Save button below is for the fields."
+msgstr ""
+
+msgid "What you changed since the last save is lost."
+msgstr ""
+
+msgid "Discard"
+msgstr ""
+
+msgid "Saved as soon as you add them — Close does not undo these."
+msgstr ""
+
+msgid "Unsaved changes"
 msgstr ""
