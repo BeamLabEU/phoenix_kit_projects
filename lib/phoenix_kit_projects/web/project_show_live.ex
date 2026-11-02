@@ -2346,42 +2346,46 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Left empty it reads as 17:00, the end of a working day, not midnight.
   def typed_clock(text) do
     t = text |> to_string() |> String.trim() |> String.downcase()
+    {t, half} = clock_half(t)
 
-    {t, pm} =
-      cond do
-        String.ends_with?(t, "pm") -> {String.trim(String.trim_trailing(t, "pm")), :pm}
-        String.ends_with?(t, "am") -> {String.trim(String.trim_trailing(t, "am")), :am}
-        true -> {t, nil}
-      end
+    with {h, m} <- clock_parts(t),
+         h when is_integer(h) <- clock_hour(h, half),
+         true <- h in 0..23 and m in 0..59 do
+      Time.new(h, m, 0)
+    else
+      _ -> :bad_time
+    end
+  end
 
+  defp clock_half(t) do
+    cond do
+      String.ends_with?(t, "pm") -> {t |> String.trim_trailing("pm") |> String.trim(), :pm}
+      String.ends_with?(t, "am") -> {t |> String.trim_trailing("am") |> String.trim(), :am}
+      true -> {t, nil}
+    end
+  end
+
+  defp clock_parts(""), do: {17, 0}
+
+  defp clock_parts(t) do
     digits = String.replace(t, ~r/[\s:.]/, "")
 
-    {h, m} =
-      cond do
-        t == "" ->
-          {17, 0}
+    cond do
+      Regex.match?(~r/^\d{1,2}$/, digits) and not String.contains?(t, ":") ->
+        {String.to_integer(digits), 0}
 
-        Regex.match?(~r/^\d{1,2}$/, digits) and not String.contains?(t, ":") ->
-          {String.to_integer(digits), 0}
+      Regex.match?(~r/^\d{3,4}$/, digits) ->
+        n = String.to_integer(digits)
+        {div(n, 100), rem(n, 100)}
 
-        Regex.match?(~r/^\d{3,4}$/, digits) ->
-          n = String.to_integer(digits)
-          {div(n, 100), rem(n, 100)}
-
-        true ->
-          {nil, nil}
-      end
-
-    h =
-      case {h, pm} do
-        {nil, _} -> nil
-        {12, :am} -> 0
-        {h, :pm} when h < 12 -> h + 12
-        {h, _} -> h
-      end
-
-    if is_integer(h) and h in 0..23 and m in 0..59, do: Time.new(h, m, 0), else: :bad_time
+      true ->
+        :bad_time
+    end
   end
+
+  defp clock_hour(12, :am), do: 0
+  defp clock_hour(h, :pm) when h < 12, do: h + 12
+  defp clock_hour(h, _half), do: h
 
   # May the viewer change this row's fields in place (the deadline
   # popover)? The outline's rights when the row has them; a template's rows
@@ -2430,14 +2434,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     assigns =
       assign(assigns,
-        date: local && Date.to_iso8601(DateTime.to_date(local)),
-        time:
-          local &&
-            local
-            |> DateTime.to_time()
-            |> Time.truncate(:second)
-            |> Time.to_iso8601()
-            |> String.slice(0, 5)
+        date: Date.to_iso8601(DateTime.to_date(local)),
+        time: local |> DateTime.to_time() |> Time.to_iso8601() |> String.slice(0, 5)
       )
 
     ~H"""

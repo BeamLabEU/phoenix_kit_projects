@@ -10,8 +10,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Features, Projects}
-  alias PhoenixKitProjects.Schemas.Assignment
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitProjects.Web.ProjectShowLive
   alias PhoenixKitStaff.{Departments, Teams}
 
   setup %{conn: conn} do
@@ -191,7 +192,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
     end
 
     test "a typed clock reads as people type it" do
-      clock = &PhoenixKitProjects.Web.ProjectShowLive.typed_clock/1
+      clock = &ProjectShowLive.typed_clock/1
       assert clock.("17") == {:ok, ~T[17:00:00]}
       assert clock.("1730") == {:ok, ~T[17:30:00]}
       assert clock.("9:05") == {:ok, ~T[09:05:00]}
@@ -273,7 +274,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
 
     test "unknown header values read as the defaults" do
       header =
-        PhoenixKitProjects.Schemas.Project.header(%{
+        Project.header(%{
           settings: %{"header" => %{"link_show" => "bogus", "ongoing" => "yes"}}
         })
 
