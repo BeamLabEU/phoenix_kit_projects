@@ -297,7 +297,27 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # "auto" | "text" | "cards"; `complete_parent` — false keeps a task
     # open when its last subtask is ticked; `row` — %{feature => false}
     # keeps that feature's value off the rows, in the task's form only.
-    "outline" => &is_map/1
+    "outline" => &is_map/1,
+    # What the project page's header shows (`header/1` fills the defaults):
+    # the link button — when (`show`: auto | always | never; auto hides it
+    # in a host page, which is already where it goes), with which icon and
+    # how it opens — and the quiet items beside the name, all off unless
+    # switched on (the boss, 2026-11-02).
+    "header" => &is_map/1
+  }
+
+  @header_defaults %{
+    "link_show" => "auto",
+    "link_icon" => "external",
+    "link_target" => "new_tab",
+    "ongoing" => false,
+    "since" => false,
+    "open_tasks" => false
+  }
+  @header_choices %{
+    "link_show" => ~w(auto always never),
+    "link_icon" => ~w(external back left none),
+    "link_target" => ~w(new_tab here)
   }
 
   @completion_modes ~w(auto manual)
@@ -315,6 +335,32 @@ defmodule PhoenixKitProjects.Schemas.Project do
   @doc "The completion modes: `auto` (the last task done ends it) and `manual` (ongoing)."
   @spec completion_modes() :: [String.t()]
   def completion_modes, do: @completion_modes
+
+  @doc """
+  The project page header's settings with their defaults filled in:
+  `link_show` (auto | always | never), `link_icon` (external | back | left |
+  none), `link_target` (new_tab | here), and the booleans `ongoing`,
+  `since`, `open_tasks` (all false). An unknown value reads as the default.
+  """
+  @spec header(t() | map() | nil) :: map()
+  def header(%{settings: %{"header" => %{} = stored}}) do
+    Map.new(@header_defaults, fn {key, default} ->
+      value = Map.get(stored, key)
+
+      cond do
+        is_boolean(default) and is_boolean(value) -> {key, value}
+        is_boolean(default) -> {key, default}
+        value in Map.get(@header_choices, key, []) -> {key, value}
+        true -> {key, default}
+      end
+    end)
+  end
+
+  def header(_project), do: @header_defaults
+
+  @doc "The choices of each of `header/1`'s non-boolean keys."
+  @spec header_choices() :: map()
+  def header_choices, do: @header_choices
 
   @doc "The file uuid of the project's cover picture, or nil."
   @spec cover_file_uuid(t() | map()) :: String.t() | nil

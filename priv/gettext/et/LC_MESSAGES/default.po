@@ -1502,8 +1502,8 @@ msgstr "—"
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1853
 #, elixir-autogen, elixir-format
-msgid "🎉 All tasks done — project completed!"
-msgstr "🎉 Kõik ülesanded tehtud — projekt lõpetatud!"
+msgid "All tasks done — project completed!"
+msgstr "Kõik ülesanded tehtud — projekt lõpetatud!"
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:96
 #, elixir-autogen, elixir-format
@@ -2107,8 +2107,8 @@ msgstr "Sobivaid iseseisvaid projekte pesastamiseks pole."
 
 #: lib/phoenix_kit_projects/web/widgets/ongoing_tasks_widget.ex:98
 #, elixir-autogen, elixir-format
-msgid "No ongoing tasks. 🎉"
-msgstr "Käimasolevaid ülesandeid pole. 🎉"
+msgid "No ongoing tasks."
+msgstr "Käimasolevaid ülesandeid pole."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4451
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4482

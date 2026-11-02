@@ -1514,8 +1514,8 @@ msgstr "—"
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1853
 #, elixir-autogen, elixir-format
-msgid "🎉 All tasks done — project completed!"
-msgstr "🎉 Все задачи выполнены — проект завершён!"
+msgid "All tasks done — project completed!"
+msgstr "Все задачи выполнены — проект завершён!"
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:96
 #, elixir-autogen, elixir-format
@@ -2121,8 +2121,8 @@ msgstr "Нет подходящих самостоятельных проект�
 
 #: lib/phoenix_kit_projects/web/widgets/ongoing_tasks_widget.ex:98
 #, elixir-autogen, elixir-format
-msgid "No ongoing tasks. 🎉"
-msgstr "Нет текущих задач. 🎉"
+msgid "No ongoing tasks."
+msgstr "Нет текущих задач."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4451
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4482

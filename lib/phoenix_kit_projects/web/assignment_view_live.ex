@@ -648,7 +648,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               resource_uuid={@assignment.uuid}
               current_user={assigns[:phoenix_kit_current_user]}
               title=""
-              show_likes={true}
+              show_likes={false}
             />
             <PhoenixKitProjects.Web.Components.HistoryFeed.history_feed
               :if={@activity_tab == "history" and @history != []}

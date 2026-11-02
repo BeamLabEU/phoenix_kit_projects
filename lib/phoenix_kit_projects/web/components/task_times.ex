@@ -131,7 +131,9 @@ defmodule PhoenixKitProjects.Web.Components.TaskTimes do
       ]}
       title={deadline_title(@state)}
     >
-      <span aria-hidden="true" class="shrink-0">⏰</span>
+      <%!-- A line icon in the chip's own colour, not the ⏰ emoji (the
+           boss, 2026-11-02: "an emoji with colors … kind of ugly"). --%>
+      <.icon name="hero-clock" class="w-3.5 h-3.5 shrink-0" />
       <span class="truncate">{@label}</span>
     </span>
     """

@@ -93,7 +93,7 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
     ~H"""
     <div class="contents">
       <.frame title={gettext("Ongoing — %{name}", name: @project.name)} href={Paths.project(@project.uuid)}>
-      <.empty :if={@tasks == []} icon="hero-check-circle" message={gettext("No ongoing tasks. 🎉")} />
+      <.empty :if={@tasks == []} icon="hero-check-circle" message={gettext("No ongoing tasks.")} />
       <%!-- N-SLOT self-fit: `limit` budget of slots; cq row type. --%>
       <ul :if={@tasks != []} class="flex h-full min-h-0 flex-col divide-y divide-base-200">
         <li

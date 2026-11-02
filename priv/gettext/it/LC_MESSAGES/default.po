@@ -1502,8 +1502,8 @@ msgstr "—"
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1853
 #, elixir-autogen, elixir-format
-msgid "🎉 All tasks done — project completed!"
-msgstr "🎉 Tutte le attività completate — progetto finito!"
+msgid "All tasks done — project completed!"
+msgstr "Tutte le attività completate — progetto finito!"
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:96
 #, elixir-autogen, elixir-format
@@ -2107,8 +2107,8 @@ msgstr "Nessun progetto autonomo idoneo da annidare."
 
 #: lib/phoenix_kit_projects/web/widgets/ongoing_tasks_widget.ex:98
 #, elixir-autogen, elixir-format
-msgid "No ongoing tasks. 🎉"
-msgstr "Nessuna attività in corso. 🎉"
+msgid "No ongoing tasks."
+msgstr "Nessuna attività in corso."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4451
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4482

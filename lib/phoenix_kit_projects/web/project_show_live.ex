@@ -1007,13 +1007,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     ~H"""
         <%!-- The project's key, beside its name (the breadcrumb on the
              standalone page, the h1 in an embed). --%>
-        <.ref_chip :if={not @is_template} ref={@project.key} size="md" />
+        <%!-- One height for everything on this line (the boss, 2026-11-02: a
+             mix of sizes and weights): the select's, h-8, text-sm. --%>
+        <.ref_chip :if={not @is_template} ref={@project.key} size="md" class="h-8 px-3 text-sm" />
         <%!-- Where the project belongs elsewhere (V26): the order a host
              app made it for, a client folder. A path is the host's own
              page, written as stored since it is not one of the kit's
              routes; either opens in a new tab, so the project stays open
              here. --%>
-        <.project_link project={@project} />
+        <.project_link project={@project} embed_mode={@embed_mode} />
         <%!-- What full-width bars above the list used to say, as quiet
              items of this line (the boss, 2026-10-30): since when it runs,
              how it stands against its plan, a small Start for a project
@@ -1021,8 +1023,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <%!-- Ongoing work says so beside its name (the panel, 2026-10-31:
              it was nowhere obvious that a project could be ongoing); the
              badge opens the project's popup, where the choice is. --%>
+        <%!-- Off unless switched on (Settings → Header, the boss,
+             2026-11-02: it is implied when there is no way to end it). --%>
         <.ongoing_badge
-          :if={not @is_template and is_binary(@project.uuid) and Project.ongoing?(@project)}
+          :if={
+            not @is_template and is_binary(@project.uuid) and Project.ongoing?(@project) and
+              Project.header(@project)["ongoing"]
+          }
           project={@project}
           embed_mode={@embed_mode}
         />
@@ -1033,6 +1040,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           schedule={assigns[:schedule]}
           ledger_totals={assigns[:ledger_totals]}
           open_tasks={max((assigns[:total_tasks] || 0) - (assigns[:done_tasks] || 0), 0)}
+          header={Project.header(@project)}
         />
         <%!-- Inline workflow-status picker (the current value). The
              status-list *source* is chosen on the new/edit form (and the
@@ -1053,12 +1061,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             value={@project.current_status_slug}
             options={Enum.map(@status_options, &{&1.label, &1.slug})}
             prompt={gettext("No status")}
-            class="select-sm"
+            class="select-sm h-8 text-sm"
           />
         </form>
         <%!-- Edit + (Un)archive go into a kebab dropdown to match the
              per-row action pattern used elsewhere in the module. --%>
-        <.table_row_menu id={"project-header-menu-#{@project.uuid}"}>
+        <.table_row_menu id={"project-header-menu-#{@project.uuid}"} trigger_size="sm">
           <.smart_menu_link
             navigate={if @is_template, do: Paths.edit_template(@project.uuid), else: Paths.edit_project(@project.uuid)}
             emit={
@@ -1847,7 +1855,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         socket
         |> assign(project: project)
-        |> put_flash(:info, gettext("🎉 All tasks done — project completed!"))
+        |> put_flash(:info, gettext("All tasks done — project completed!"))
 
       {:reopened, project} ->
         Activity.log("projects.project_reopened",
@@ -4514,7 +4522,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          %{"live_action" => "edit", "id" => @project.uuid, "pane" => "project"}}
       }
       embed_mode={@embed_mode}
-      class="badge badge-sm badge-outline badge-info gap-1 whitespace-nowrap no-underline"
+      class="badge badge-outline badge-info h-8 px-3 text-sm gap-1 whitespace-nowrap no-underline"
       title={gettext("Ongoing — this project ends only when someone ends it")}
       data-id={"project-ongoing-#{@project.uuid}"}
     >
@@ -4528,6 +4536,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:schedule, :map, default: nil)
   attr(:ledger_totals, :map, default: nil)
   attr(:open_tasks, :integer, default: 0)
+  attr(:header, :map, default: %{})
 
   defp header_progress(assigns) do
     project = assigns.project
@@ -4553,9 +4562,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     ~H"""
     <%= if @lifecycle? do %>
+      <%!-- "since …" and "N open tasks" are off unless switched on
+           (Settings → Header; the boss, 2026-11-02): the start is on the
+           Hours tab and in History. --%>
       <span
-        :if={@running?}
-        class="text-xs text-base-content/60 whitespace-nowrap"
+        :if={@running? and @header["since"] == true}
+        class="text-sm text-base-content/70 whitespace-nowrap"
         title={gettext("Started %{when}", when: L10n.format_datetime(@project.started_at))}
       >
         {gettext("since %{date}", date: L10n.format_short_date(@project.started_at))}
@@ -4563,8 +4575,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- Ongoing work has no plan to be ahead of or behind, and no
            finish: what is open now is what it says. --%>
       <span
-        :if={@ongoing? and is_nil(@project.completed_at) and @open_tasks > 0}
-        class="text-xs text-base-content/60 whitespace-nowrap"
+        :if={@ongoing? and is_nil(@project.completed_at) and @open_tasks > 0 and @header["open_tasks"] == true}
+        class="text-sm text-base-content/70 whitespace-nowrap"
       >
         {ngettext("%{count} open task", "%{count} open tasks", @open_tasks)}
       </span>
@@ -4572,17 +4584,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <% detail = gettext("%{actual}% done vs %{expected}% expected", actual: @schedule.actual_pct, expected: @schedule.expected_pct) %>
         <%= cond do %>
           <% @schedule.overdue? -> %>
-            <span class="badge badge-error badge-sm gap-1 whitespace-nowrap" title={detail}>
+            <span class="badge badge-error h-8 px-3 text-sm gap-1 whitespace-nowrap" title={detail}>
               <.icon name="hero-exclamation-triangle" class="w-3 h-3" />
               {gettext("%{delta} overdue", delta: @schedule.delta_label)}
             </span>
           <% @schedule.ahead? -> %>
-            <span class="badge badge-success badge-sm gap-1 whitespace-nowrap" title={detail}>
+            <span class="badge badge-success h-8 px-3 text-sm gap-1 whitespace-nowrap" title={detail}>
               <.icon name="hero-arrow-trending-up" class="w-3 h-3" />
               {gettext("%{delta} ahead", delta: @schedule.delta_label)}
             </span>
           <% true -> %>
-            <span class="badge badge-error badge-sm gap-1 whitespace-nowrap" title={detail}>
+            <span class="badge badge-error h-8 px-3 text-sm gap-1 whitespace-nowrap" title={detail}>
               <.icon name="hero-arrow-trending-down" class="w-3 h-3" />
               {gettext("%{delta} behind", delta: @schedule.delta_label)}
             </span>
@@ -4591,14 +4603,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%= if @startable? do %>
         <span
           :if={@project.start_mode == "scheduled"}
-          class="text-xs text-base-content/60 whitespace-nowrap"
+          class="text-sm text-base-content/70 whitespace-nowrap"
         >
           {gettext("Scheduled for %{when}", when: L10n.format_datetime(@project.scheduled_start_date))}
         </span>
         <button
           type="button"
           phx-click="open_start_modal"
-          class="btn btn-success btn-xs gap-1"
+          class="btn btn-success btn-sm gap-1"
         >
           <.icon name="hero-play" class="w-3.5 h-3.5" />
           {if @project.start_mode == "scheduled", do: gettext("Start now"), else: gettext("Start project")}
@@ -4610,7 +4622,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       type="button"
       phx-click="open_log_time"
       id={"project-logged-#{@project.uuid}"}
-      class="badge badge-sm badge-outline gap-1 cursor-pointer whitespace-nowrap hover:bg-primary hover:text-primary-content hover:border-primary"
+      class="badge badge-outline h-8 px-3 text-sm gap-1 cursor-pointer whitespace-nowrap hover:bg-primary hover:text-primary-content hover:border-primary"
       title={gettext("Time logged on this project — click to log more")}
     >
       <.icon name="hero-clock" class="w-3 h-3" />
@@ -4621,7 +4633,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     </button>
     <span
       :if={@ai?}
-      class="badge badge-sm badge-ghost gap-1 whitespace-nowrap"
+      class="badge badge-ghost h-8 px-3 text-sm gap-1 whitespace-nowrap"
       title={gettext("What AI agents reported on this project")}
     >
       <.icon name="hero-cpu-chip" class="w-3 h-3" />
@@ -4633,9 +4645,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   attr(:project, :map, required: true)
+  attr(:embed_mode, :atom, default: nil)
 
+  # The link out (V26), as the project's Settings → Header says (the boss,
+  # 2026-11-02): shown always, never, or — the default — only on the
+  # project's own page, since inside a host page it points where the reader
+  # already is; with the external-link icon, a back or left arrow to match
+  # the host's own button, or none; in a new tab, or here — a path on this
+  # site then navigates without a reload, like the host's tab does.
   defp project_link(%{project: %{external_url: url}} = assigns)
        when is_binary(url) and url != "" do
+    header = Project.header(assigns.project)
+    embedded? = assigns.embed_mode in [:emit, :embed, :embedded]
+
     # Read again, not trusted from the row: only a path on this site or a
     # web address is ever an href (a row written before the changeset
     # checked, or by hand, renders no button).
@@ -4648,27 +4670,59 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             %URI{scheme: s, host: h} when s in ["http", "https"] and h not in [nil, ""],
             URI.parse(url)
           ),
-        label: present_or(assigns.project.external_label, gettext("Open link"))
+        label: present_or(assigns.project.external_label, gettext("Open link")),
+        shown?:
+          case header["link_show"] do
+            "always" -> true
+            "never" -> false
+            _auto -> not embedded?
+          end,
+        here?: header["link_target"] == "here",
+        icon: header["link_icon"]
       )
 
-    # An outlined button with the external-link icon, in a new tab for a
-    # path on this site too (the boss, 2026-10-30: a ghost link next to the
-    # key was not seen as one, and following it lost the project page).
     ~H"""
-    <a
-      :if={@local? or @web?}
-      href={@url}
-      target="_blank"
-      rel="noopener noreferrer"
-      class="btn btn-sm btn-outline gap-1"
-      data-project-link
-    >
-      {@label} <.icon name="hero-arrow-top-right-on-square" class="w-4 h-4" />
-    </a>
+    <%= if @shown? and (@local? or @web?) do %>
+      <.link
+        :if={@here? and @local?}
+        navigate={@url}
+        class="btn btn-sm btn-outline gap-1"
+        data-project-link
+      >
+        <.link_icon icon={@icon} before />{@label}<.link_icon icon={@icon} />
+      </.link>
+      <a
+        :if={not (@here? and @local?)}
+        href={@url}
+        target={if not @here?, do: "_blank"}
+        rel={if not @here?, do: "noopener noreferrer"}
+        class="btn btn-sm btn-outline gap-1"
+        data-project-link
+      >
+        <.link_icon icon={@icon} before />{@label}<.link_icon icon={@icon} />
+      </a>
+    <% end %>
     """
   end
 
   defp project_link(assigns), do: ~H""
+
+  attr(:icon, :string, required: true)
+  attr(:before, :boolean, default: false)
+
+  # The arrows that point back sit before the label, the external-link icon
+  # after it. The external-link icon is drawn 1px higher: its arrow is thin,
+  # so on the text's centre it reads low (the boss, 2026-11-02).
+  defp link_icon(%{icon: "back", before: true} = assigns),
+    do: ~H|<.icon name="hero-arrow-up-left" class="w-4 h-4 shrink-0" />|
+
+  defp link_icon(%{icon: "left", before: true} = assigns),
+    do: ~H|<.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" />|
+
+  defp link_icon(%{icon: "external", before: false} = assigns),
+    do: ~H|<.icon name="hero-arrow-top-right-on-square" class="w-4 h-4 shrink-0 -translate-y-px" />|
+
+  defp link_icon(assigns), do: ~H""
 
   defp present_or(text, fallback) do
     case is_binary(text) && String.trim(text) do
@@ -6609,7 +6663,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             resource_uuid={@project.uuid}
             current_user={assigns[:phoenix_kit_current_user]}
             show_title={false}
-            show_likes={true}
+            show_likes={false}
           />
         <% end %>
       </div>
@@ -6998,7 +7052,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           resource_uuid={@comments_resource.uuid}
           current_user={assigns[:phoenix_kit_current_user]}
           title=""
-          show_likes={not notes?}
+          show_likes={false}
           decoration_keys={if notes?, do: TaskNotes.decoration_keys(), else: []}
           comment_decorations={if notes?, do: TaskNotes.decorations(TaskNotes.list(@comments_resource.uuid)), else: %{}}
         />
@@ -7032,10 +7086,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # ── Status from the ⋮ menu (the boss, 2026-10-31) ───────────────────
   #
-  # "Change status ›" opens a side list of the statuses inside the row's
+  # "‹ Change status" opens a side list of the statuses inside the row's
   # menu — on hover, or on a press (touch, keyboard; the module's JS keeps
   # the menu open for that press). One press on a status runs it as the
   # popup did (`set_status`, its step's own gate and dialogs).
+  #
+  # Not on focus alone: the core menu focuses its first item as it opens,
+  # and the list was open before anyone asked (the boss, 2026-11-02). Focus
+  # opens it only when it is the keyboard's (`:focus-visible`). The ‹ sits
+  # on the side the list opens to.
   attr(:a, :map, required: true)
   attr(:choices, :list, required: true)
 
@@ -7050,9 +7109,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         data-pkp-submenu-toggle
         class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm w-full text-left hover:bg-base-200 transition-colors cursor-pointer"
       >
-        <.icon name="hero-arrows-right-left" class="w-4 h-4 shrink-0 opacity-70" />
+        <.icon name="hero-chevron-left" class="w-4 h-4 shrink-0 opacity-70" />
         <span class="flex-1">{pgettext("task action", "Change status")}</span>
-        <.icon name="hero-chevron-right" class="w-3.5 h-3.5 opacity-60" />
       </button>
       <ul
         role="menu"
@@ -7060,7 +7118,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         class={[
           "hidden absolute right-full top-0 mr-1 min-w-[11rem] rounded-box bg-base-100",
           "border border-base-200 shadow-xl p-1 z-10",
-          "group-hover/pkpsub:block group-focus-within/pkpsub:block group-data-[open]/pkpsub:block"
+          "group-hover/pkpsub:block group-has-[:focus-visible]/pkpsub:block group-data-[open]/pkpsub:block"
         ]}
       >
         <.status_menu_items a={@a} choices={@choices} />

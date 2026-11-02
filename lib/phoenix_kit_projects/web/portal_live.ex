@@ -565,6 +565,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           current_user={commenter(assigns)}
           enabled={@view.may_comment}
           show_title={false}
+          show_likes={false}
           rich_text={false}
           withhold_mention_titles
           project_attribution={@project_attribution}
