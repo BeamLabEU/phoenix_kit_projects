@@ -56,6 +56,9 @@ portal), dashboard widgets and a public issue portal.
   embeddable: drop `handle_params/3` and move its body into the mount tail.
 - **No event-debounce / minimal-delta on `OverviewLive`'s `handle_info`** —
   every `{:projects, _, _}` broadcast triggers a full dashboard reload.
+  `TimeLive` is the same, and also reloads on its minute tick while the
+  range holds today (about twenty reads per viewer per minute); the tick
+  could recompute the live bars in memory instead.
 - **No status-helper extraction** — `status_color/1` / `status_badge_class/1` /
   `status_label/1` are duplicated between `OverviewLive` and `ProjectShowLive`.
   Cosmetic; extract when a third call site appears.
@@ -189,12 +192,26 @@ Repo-local aliases:
   The `_form` suffix on the public function is a deliberate smell: reaching for
   it from non-form code should trigger a second look. `current_status_slug` is
   server-owned the same way (`Project.current_status_changeset/2` only).
+  The changesets still cast the row's `project_uuid`, `task_uuid`,
+  `child_project_uuid`, `position` and progress for the context's own
+  callers, so the FORMS filter what they post: the task form drops them
+  (`strip_server_owned/2` — a new row's library task is the picker's own
+  tick, its assignees the picker's server-held list, and a status change
+  needs `:update_status` and one of the offered choices), and the
+  sub-project short editor writes only the fields it draws
+  (`@subproject_fields`; archiving, the template flag, the key and a start
+  stamp are the project form's, under owner rights). `add_dependency/3`
+  refuses a pair from two projects.
 - **Cross-module people lookups**: NEVER call `PhoenixKitStaff.*` directly
   (staff is optional) — go through `PhoenixKitProjects.People`, read-only
   shadow schemas over the CORE-owned staff tables, trashed-excluded by default,
   staff-parity label semantics. The doorway's reads rescue to safe defaults;
-  the only sanctioned staff reference is `People.staff_admin_available?/0`'s
-  guarded probe, which gates admin-UI affordances only.
+  the sanctioned staff references are its guarded `apply/3` probes —
+  `People.staff_admin_available?/0` (gates admin-UI affordances only),
+  `People.staff_page_path/2` (a person's/team's/department's staff page, nil
+  while staff is off: the name then renders without a link) and
+  `People.ensure_person_for_user/2`'s create. `WITHOUT_STAFF=1` compiles
+  prove nothing else slipped in.
 - **Soft-hide is a timestamp, not a status enum.** `projects.archived_at`
   follows the workspace `trashed_at` convention: null = visible, non-null =
   hidden + audit-friendly. Public API `Projects.archive_project/1` /
@@ -448,6 +465,8 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.ApiKeyUsage` | `phoenix_kit_project_api_key_usage` (V25 — requests, errors and refusals per key, project and UTC day; see "API key usage") |
 | `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation; who holds it is a Postgres session advisory lock pinned for the request, so a live holder is 409 `in_progress` and a dead one's row is taken over — see `ApiKeys.idempotent/3`) |
 | `Schemas.ProjectKey` | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained, read-only schema) |
+| `Schemas.AssignmentFile` | `phoenix_kit_project_assignment_files` (V27 — which task holds which Storage file; `inline` for a description picture) |
+| `Schemas.AssignmentAssignee` | `phoenix_kit_project_assignment_assignees` (V29 — a task's assignees, one person/team/department each; written only through `Assignment.changeset/2`, under the task row's lock) |
 | (no schema module) | `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
@@ -678,10 +697,13 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V28** (V27: `phoenix_kit_project_assignment_files`,
+`phoenix_kit_projects`, currently **V29** (V27: `phoenix_kit_project_assignment_files`,
 a task's own files — `assignment_uuid` / `file_uuid` both `ON DELETE CASCADE`,
 `inline` for an image placed in the description; V28: `repeat_rule JSONB` on
-assignments). ⚠️ `ExpectedSchema` was extended by hand for V27/V28: core's
+assignments; V29: `phoenix_kit_project_assignment_assignees`, several
+assignees per task — the task's `assigned_*` columns stay as a one-assignee
+mirror, and `down` refuses while a task has several). ⚠️ `ExpectedSchema` was
+extended by hand for V27–V29: core's
 generator cannot build this chain without the staff/entities prerequisites —
 regenerate it with core when that is possible. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
@@ -1338,7 +1360,9 @@ modules and its agent's key behind.
   drawer opens from the list, board and calendar; "Edit" swaps the drawer frame
   to `AssignmentFormLive` (`PopupHostLive` `:swap`). Its next-step buttons are
   sent to the page under the drawer with `WebHelpers.emit_intent/3` — only
-  `ProjectShowLive` listens for them.
+  `ProjectShowLive` listens for them, and only for its own viewer's
+  (`user_uuid` on the intent): a host topic shared by everyone who has the
+  record open reaches every viewer's page.
 - **Task form**: tabs, a live header, an assignee search
   (`Assignees.search_assignees/3`, `recent_for_project/3`); faces of the
   assignees come from `Assignees.faces/2` (batched, through the `People`
@@ -1753,10 +1777,19 @@ reference:
   `:assignment_updated` so an open task view reloads. A picture in the
   description is kept by FILE, `![alt](pkfile:<uuid>)` (`InlineImages`):
   the changeset turns an app file address the editor wrote back into the
-  reference, `RichText` resolves it per viewer through
-  `Storage.authorized_url/4` (a private library's file gets a time-window
-  URL; one the viewer may not read is left out), and the editor is handed
-  the text resolved. The reference names the file, not the task, so a
+  reference, `RichText` resolves it for the reader by the text's HOLDER
+  (`holder:`): a file the project holds — any task's own file, or one in
+  the project's folder; the task library's folder for a library task — is
+  signed for whoever may read the text while it is in Media (where only the
+  uploader and an Owner/Admin may read, so the reader's own right showed it
+  to nobody else); any other file needs the reader's own
+  `Storage.authorized_url/4` (a private library's gets a time-window URL;
+  one the reader may not open is left out). A shared API key acts for
+  nobody: it gets the project's pictures and public ones, never its
+  minter's storage rights. Lists read the pictures once
+  (`InlineImages.urls_for/3`, `RichText`'s `urls`). The editor is handed
+  the text resolved, with raw HTML shown as text (`DescriptionEditor.safe_content/1`:
+  Leaf renders its markdown unsanitised). The reference names the file, not the task, so a
   repeat's copied description still shows it (the file rows stay with
   their occurrence). Removing an inline file takes it out of the text in
   every language; a picture pasted into a task not saved yet is refused

@@ -203,6 +203,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
     end
 
     test "one person assigned links to their staff page", %{conn: conn} do
+      {:ok, _} = PhoenixKit.Settings.update_boolean_setting("staff_enabled", true)
       n = System.unique_integer([:positive])
       {:ok, dept} = Departments.create(%{"name" => "Dept-#{n}"})
       {:ok, team} = Teams.create(%{"name" => "Fitters-#{n}", "department_uuid" => dept.uuid})
@@ -211,6 +212,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert has_element?(view, ~s(a[href*="/admin/staff/teams/#{team.uuid}"]), "Fitters-#{n}")
+    end
+
+    test "with the staff module off the name shows, with no dead link", %{conn: conn} do
+      # Through the People doorway (`People.staff_page_path/2`), never a
+      # direct `PhoenixKitStaff.Paths` call: staff off, its pages are gone.
+      {:ok, _} = PhoenixKit.Settings.update_boolean_setting("staff_enabled", false)
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "Dept-#{n}"})
+      {:ok, team} = Teams.create(%{"name" => "Fitters-#{n}", "department_uuid" => dept.uuid})
+      project = started_project()
+      assignment!(project, %{"assigned_team_uuid" => team.uuid})
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert html =~ "Fitters-#{n}"
+      refute has_element?(view, ~s(a[href*="/admin/staff/teams/#{team.uuid}"]))
     end
   end
 

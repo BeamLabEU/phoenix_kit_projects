@@ -118,6 +118,16 @@ defmodule PhoenixKitProjects.Web.TimeInputTest do
       assert TimeInput.parse_clock("13 pm") == nil
       assert TimeInput.parse_clock("7:61") == nil
       assert TimeInput.parse_clock("soon") == nil
+      # Another script's digits (a CJK input method's full-width ones,
+      # Arabic-Indic) are no time — they used to match and then raise.
+      assert TimeInput.parse_clock("１７") == nil
+      assert TimeInput.parse_clock("٥:٣٠") == nil
+    end
+
+    test "a crafted nested part reads as nothing, never a crash" do
+      assert TimeInput.fold(%{"date" => %{"x" => "1"}, "time" => "9:30"}) == ""
+      assert TimeInput.fold(%{"time" => %{"x" => "1"}}) == ""
+      assert TimeInput.fold(%{"hour" => ["1"], "minute" => "5"}) == ""
     end
 
     test "folded with its day" do

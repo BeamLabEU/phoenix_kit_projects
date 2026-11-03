@@ -64,7 +64,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       |> assign_assignee_picker()
       |> assign_ai_translate()
       |> assign(dirty?: false)
-      |> DescriptionImages.allow(&description_image_target/1)
+      |> DescriptionImages.allow(&description_image_target/1, &ai_translate_allowed?/1)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -669,7 +669,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
                   PhoenixKitProjects.InlineImages.resolve(
                     description_value(@form, @current_lang, @primary_language, @multilang_enabled),
                     assigns[:phoenix_kit_current_scope],
-                    keep_missing: true
+                    keep_missing: true,
+                    holder: @task
                   )
                 }
                 placeholder={gettext("Description…")}

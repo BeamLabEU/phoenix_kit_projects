@@ -370,6 +370,20 @@ defmodule PhoenixKitProjects.Attachments do
 
   defp description_folder(_holder, _actor_uuid), do: {:error, :not_saved}
 
+  @doc """
+  The task library's picture folder, if one was made yet (a read; never
+  makes it).
+  """
+  @spec task_library_folder_uuid() :: binary() | nil
+  def task_library_folder_uuid do
+    case ResourceFolders.find_under(@task_library_folder, nil) do
+      %Folder{uuid: uuid} -> uuid
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
   # ── A task's own files (V27) ────────────────────────────────────────
   #
   # The boss, 2026-10-30: "tasks should be able to hold their own images as

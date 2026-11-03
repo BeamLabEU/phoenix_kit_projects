@@ -25,7 +25,7 @@ defmodule PhoenixKitProjects.Web.TimeLive do
 
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.Routes
-  alias PhoenixKitProjects.{L10n, Paths, TimeBoard}
+  alias PhoenixKitProjects.{CalendarDisplay, L10n, Paths, TimeBoard}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.Components.TimeInput
@@ -68,6 +68,9 @@ defmodule PhoenixKitProjects.Web.TimeLive do
          view: :day,
          date: today,
          full_day?: false,
+         # The site's first weekday (core's `week_start_day`, 1 = Monday),
+         # as the calendars honour it; read once, not on every tick.
+         week_start: CalendarDisplay.read().week_start,
          project_filter: nil,
          expanded: MapSet.new(),
          deadline_edit: nil,
@@ -89,7 +92,7 @@ defmodule PhoenixKitProjects.Web.TimeLive do
   defp load(socket) do
     %{view: view, date: date} = socket.assigns
     scope = socket.assigns[:phoenix_kit_current_scope]
-    {from, to} = range(view, date)
+    {from, to} = range(view, date, socket.assigns[:week_start] || 1)
     now = DateTime.utc_now()
     lang = L10n.current_content_lang()
 
@@ -119,11 +122,11 @@ defmodule PhoenixKitProjects.Web.TimeLive do
     )
   end
 
-  defp range(:day, date), do: {date, date}
+  defp range(:day, date, _week_start), do: {date, date}
 
-  defp range(:week, date) do
-    monday = Date.add(date, 1 - Date.day_of_week(date))
-    {monday, Date.add(monday, 6)}
+  defp range(:week, date, week_start) do
+    first = Date.add(date, -rem(Date.day_of_week(date) - week_start + 7, 7))
+    {first, Date.add(first, 6)}
   end
 
   # The board's columns: one lane per day, each with its visible minutes.

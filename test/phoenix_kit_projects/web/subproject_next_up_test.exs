@@ -70,6 +70,28 @@ defmodule PhoenixKitProjects.Web.SubprojectNextUpTest do
     assert_activity_logged("projects.assignment_made_ready", resource_uuid: ctx.fit.uuid)
   end
 
+  test "a member of the sub-project alone is not shown the parent's tasks", ctx do
+    {:ok, member} =
+      Auth.register_user(%{
+        "email" => "child-only-#{System.unique_integer([:positive])}@example.com",
+        "password" => "ActorPass123!"
+      })
+
+    {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.child, member.uuid, role: "member")
+    {:ok, _} = Projects.set_visibility(ctx.project, "private")
+
+    {:ok, view, _html} =
+      ctx.conn
+      |> put_test_scope(fake_scope(user_uuid: member.uuid, permissions: ["projects"]))
+      |> live("/en/admin/projects/#{ctx.child.uuid}")
+
+    render_click(view, "complete", %{"uuid" => ctx.cut.uuid})
+
+    assert status(ctx.cut) == "done"
+    refute render(view) =~ "Fit the worktop"
+    assert status(ctx.fit) == "waiting"
+  end
+
   test "Cancel leaves what it unlocks waiting", ctx do
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.child.uuid}")
 

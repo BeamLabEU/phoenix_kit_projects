@@ -129,7 +129,13 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     |> load_home()
   end
 
-  # The opening lists: five of each kind and whether there are more.
+  # The opening lists: five of each kind and whether there are more —
+  # only for someone who may assign (the lists are not drawn otherwise).
+  defp load_home(%{assigns: %{can_assign?: false}} = socket) do
+    home = Map.new(~w(team department person), &{&1, %{rows: [], more?: false}})
+    Phoenix.Component.assign(socket, :assignee_home, home)
+  end
+
   defp load_home(socket) do
     lang = L10n.current_content_lang()
 
@@ -253,24 +259,19 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   """
   @spec handle_event(String.t(), map(), LiveView.Socket.t(), module()) ::
           {:noreply, LiveView.Socket.t()}
-  def handle_event("assignee_search", %{"q" => q} = params, socket, _mod) when is_binary(q) do
-    limit =
-      case Integer.parse(to_string(params["limit"] || "")) do
-        {n, _} when n > 0 -> n
-        _ -> 20
-      end
-
-    {rows, more?} = Assignees.search_assignees(q, limit, L10n.current_content_lang())
-    rows = Enum.map(rows, &Map.take(&1, [:kind, :uuid, :label, :sublabel, :icon]))
-
-    {:noreply,
-     LiveView.push_event(socket, "assignee_results", %{q: q, results: rows, has_more: more?})}
-  end
-
-  def handle_event("assignee_search", _params, socket, _mod), do: {:noreply, socket}
-
   # A user with no staff person yet: assigning them makes one, so it asks
   # first (`staff_confirm`).
+  # The lists name every staff person, team and department and every
+  # account with no staff record yet, with their email: they are read for
+  # someone who may assign here and nobody else, whatever a crafted event
+  # asks (`picker_allowed?/1`, the right as it is now).
+  def handle_event(event, params, socket, mod)
+      when event in ~w(assignee_search assignee_browse assignee_query assignee_more) do
+    if mod.picker_allowed?(socket),
+      do: list_event(event, params, socket),
+      else: {:noreply, socket}
+  end
+
   def handle_event("assignee_pick", %{"kind" => "user", "uuid" => uuid}, socket, mod) do
     {:noreply,
      socket |> assign_user(uuid, :other, mod) |> LiveView.push_event("assignee_staged", %{})}
@@ -278,7 +279,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
 
   def handle_event("assignee_pick", %{"kind" => kind, "uuid" => uuid}, socket, mod) do
     socket =
-      case Assignees.describe(kind, uuid) do
+      case Assignees.describe_pick(kind, uuid) do
         %{kind: kind, uuid: uuid} -> choose(socket, kind, uuid, mod)
         nil -> socket
       end
@@ -354,7 +355,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
         %{assigns: %{assignee_multi?: false}} = socket,
         mod
       ) do
-    case Assignees.describe(kind, uuid) do
+    case Assignees.describe_pick(kind, uuid) do
       %{kind: kind, uuid: uuid} ->
         {:noreply, socket |> choose(kind, uuid, mod) |> close_if_single()}
 
@@ -374,7 +375,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
         {:noreply, set_keys(socket, List.delete(keys, {kind, uuid}), mod)}
 
       true ->
-        case Assignees.describe(kind, uuid) do
+        case Assignees.describe_pick(kind, uuid) do
           %{kind: kind, uuid: uuid} -> {:noreply, choose(socket, kind, uuid, mod)}
           nil -> {:noreply, socket}
         end
@@ -389,21 +390,8 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
       else: {:noreply, socket}
   end
 
-  def handle_event("assignee_browse", %{"kind" => kind}, socket, _mod)
-      when kind in ~w(team department person),
-      do: {:noreply, open_list(socket, {:browse, kind})}
-
   def handle_event("assignee_back", _params, socket, _mod),
     do: {:noreply, open_list(socket, :home)}
-
-  def handle_event("assignee_query", %{"assignee_q" => q}, socket, _mod) when is_binary(q) do
-    socket = Phoenix.Component.assign(socket, :assignee_open?, true)
-
-    case String.trim(q) do
-      "" -> {:noreply, open_list(socket, :home)}
-      text -> {:noreply, open_list(socket, {:search, String.slice(text, 0, 100)})}
-    end
-  end
 
   # The dropdown under the search field: opened by focusing it, closed by
   # a click elsewhere. Closing only hides it — the list, its page and its
@@ -414,9 +402,42 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   def handle_event("assignee_close", _params, socket, _mod),
     do: {:noreply, Phoenix.Component.assign(socket, :assignee_open?, false)}
 
+  def handle_event(_event, _params, socket, _mod), do: {:noreply, socket}
+
+  defp list_event("assignee_search", %{"q" => q} = params, socket) when is_binary(q) do
+    # A page, never the whole table, whatever the event asks for.
+    limit =
+      case params["limit"] do
+        n when is_integer(n) and n > 0 -> min(n, 50)
+        text when is_binary(text) -> text |> Integer.parse() |> page_size()
+        _ -> 20
+      end
+
+    {rows, more?} = Assignees.search_assignees(q, limit, L10n.current_content_lang())
+    rows = Enum.map(rows, &Map.take(&1, [:kind, :uuid, :label, :sublabel, :icon]))
+
+    {:noreply,
+     LiveView.push_event(socket, "assignee_results", %{q: q, results: rows, has_more: more?})}
+  end
+
+  defp list_event("assignee_search", _params, socket), do: {:noreply, socket}
+
+  defp list_event("assignee_browse", %{"kind" => kind}, socket)
+       when kind in ~w(team department person),
+       do: {:noreply, open_list(socket, {:browse, kind})}
+
+  defp list_event("assignee_query", %{"assignee_q" => q}, socket) when is_binary(q) do
+    socket = Phoenix.Component.assign(socket, :assignee_open?, true)
+
+    case String.trim(q) do
+      "" -> {:noreply, open_list(socket, :home)}
+      text -> {:noreply, open_list(socket, {:search, String.slice(text, 0, 100)})}
+    end
+  end
+
   # The list's bottom came into view: the next page, once, for the list
   # that asked (a page for a list since left is dropped).
-  def handle_event("assignee_more", _params, socket, _mod) do
+  defp list_event("assignee_more", _params, socket) do
     case {socket.assigns[:assignee_view], socket.assigns[:assignee_cursor]} do
       {{_, _} = view, cursor} when not is_nil(cursor) ->
         {:noreply, load_page(socket, view, cursor)}
@@ -426,7 +447,10 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     end
   end
 
-  def handle_event(_event, _params, socket, _mod), do: {:noreply, socket}
+  defp list_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp page_size({n, _}) when n > 0, do: min(n, 50)
+  defp page_size(_parsed), do: 20
 
   defp close_if_single(%{assigns: %{assignee_multi?: false}} = socket),
     do: Phoenix.Component.assign(socket, :assignee_open?, false)

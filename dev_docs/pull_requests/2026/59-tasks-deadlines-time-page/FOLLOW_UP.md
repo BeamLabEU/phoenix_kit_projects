@@ -37,3 +37,23 @@ temporary build path: warnings-as-errors compilation, unused-lock and Hex
 audit checks, formatting, strict Credo, and Dialyzer. No new warning
 suppressions were added. The gate is run in `dev` because this repository's
 Dialyzer configuration does not include ExUnit for the test-support modules.
+
+## Claude's review (2026-11-03)
+
+Findings in `CLAUDE_REVIEW.md`, reviewed after #60 had reworked much of this code:
+
+- **Fixed, with a test that fails when the fix is reverted:**
+  - HIGH: the sub-project rights bypass through another spelling of a task's uuid, plus `save_duration`,
+    `detach_subproject` and `save_work_entry`.
+  - HIGH: the assignee picker's lists read for someone who may not assign.
+  - MEDIUM: task-view intents run by every viewer's page on a shared host topic.
+  - MEDIUM: the weekend-counting walk-back.
+  - MEDIUM: one assignee's row taking others' logged time.
+  - NITPICK: the Time page's week start.
+- **Left, with the reason on record:**
+  - which accounts an assigner may pick from (they still see every account and its email);
+  - the Time page's one-segment multi-day plan;
+  - its per-minute reload;
+  - deadlines read while Dates is off.
+
+Validation: one run covers both PRs, see `../60-boss-review-lists/FOLLOW_UP.md`.

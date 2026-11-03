@@ -179,6 +179,23 @@ defmodule PhoenixKitProjects.Web.HubPermissionEnforcementTest do
              "a right held in the parent changed a sub-project's task"
     end
 
+    test "another spelling of the child's task is judged by the child's rights too", ctx do
+      # The handlers resolve a task ref and an upper-case or padded uuid;
+      # the child check compared the raw string, read any other spelling
+      # as "not on this page", and let the parent's right write.
+      lv = expanded(ctx, ctx.viewer)
+      child = Projects.get_project(ctx.child.uuid)
+      ref = "#{child.key}-#{Projects.get_assignment(ctx.child_task.uuid).number}"
+
+      for spelling <- [String.upcase(ctx.child_task.uuid), " #{ctx.child_task.uuid} ", ref] do
+        render_click(lv, "complete", %{"uuid" => spelling})
+        render_click(lv, "make_idle", %{"uuid" => spelling})
+      end
+
+      assert Projects.get_assignment(ctx.child_task.uuid).status == "todo",
+             "a right held in the parent changed a sub-project's task"
+    end
+
     test "the owner, who holds the child's right, still acts on it", ctx do
       lv = expanded(ctx, ctx.owner)
 

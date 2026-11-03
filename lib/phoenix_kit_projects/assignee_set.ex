@@ -348,6 +348,13 @@ defmodule PhoenixKitProjects.AssigneeSet do
   # save's transaction: the task's rows become exactly `keys`.
   @spec write_rows(module(), String.t(), [key()]) :: :ok
   def write_rows(repo, assignment_uuid, keys) when is_binary(assignment_uuid) do
+    # The task's row first (a new task has none yet: nothing to wait on).
+    # Two saves replacing the set at once otherwise interleave their
+    # delete and insert: the second deletes none of the first's new rows
+    # and adds its own (a union of both), or trips the pair index.
+    from(a in Assignment, where: a.uuid == ^assignment_uuid, lock: "FOR NO KEY UPDATE", select: 1)
+    |> repo.all()
+
     from(r in AssignmentAssignee, where: r.assignment_uuid == ^assignment_uuid)
     |> repo.delete_all()
 

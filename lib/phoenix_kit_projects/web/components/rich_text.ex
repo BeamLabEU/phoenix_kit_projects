@@ -27,18 +27,32 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
   alias PhoenixKitProjects.InlineImages
   alias PhoenixKitWeb.Components.Core.MentionText
 
+  # MDEx's allow-list keeps `class` and `style` on `div`, `span`, `code`
+  # and `pre`: a writer could pin a `position:fixed` box (or the host's
+  # `fixed inset-0` classes) over every viewer's page, a sign-in look-alike
+  # on the task list. A description styles nothing, so both come off.
   @render_opts [
     render: [hardbreaks: true, unsafe: true],
     sanitize:
       Keyword.put(
         MDEx.Document.default_sanitize_options(),
         :rm_tag_attributes,
-        %{"div" => ["style"]}
+        Map.new(~w(div span code pre), &{&1, ~w(class style)})
       )
   ]
 
   attr(:text, :string, default: nil)
   attr(:scope, :any, default: nil, doc: "the viewer — decides what each mention resolves to")
+
+  attr(:holder, :any,
+    default: nil,
+    doc: "the record the text belongs to — whose pictures it shows (`InlineImages`)"
+  )
+
+  attr(:urls, :map,
+    default: nil,
+    doc: "pictures already read for a list (`InlineImages.urls_for/3`), so a row reads none"
+  )
 
   attr(:compact, :boolean,
     default: false,
@@ -51,7 +65,12 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
   def rich_text(%{text: text} = assigns) when text in [nil, ""], do: ~H""
 
   def rich_text(assigns) do
-    assigns = assign(assigns, :html, to_html(assigns.text, assigns.scope, assigns.allow_request))
+    assigns =
+      assign(
+        assigns,
+        :html,
+        to_html(assigns.text, assigns.scope, assigns.allow_request, assigns.holder, assigns.urls)
+      )
 
     ~H"""
     <div class={[
@@ -78,14 +97,14 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
   The text as sanitised HTML with its mentions drawn for `scope`. Blank
   text is `""`; a text the renderer refuses comes back escaped.
   """
-  @spec to_html(String.t() | nil, term(), boolean()) :: String.t()
-  def to_html(text, scope \\ nil, allow_request \\ true)
-  def to_html(text, _scope, _allow) when text in [nil, ""], do: ""
+  @spec to_html(String.t() | nil, term(), boolean(), term(), map() | nil) :: String.t()
+  def to_html(text, scope \\ nil, allow_request \\ true, holder \\ nil, urls \\ nil)
+  def to_html(text, _scope, _allow, _holder, _urls) when text in [nil, ""], do: ""
 
-  def to_html(text, scope, allow_request) when is_binary(text) do
+  def to_html(text, scope, allow_request, holder, urls) when is_binary(text) do
     # The description's own pictures are kept by file (`pkfile:`): each
     # becomes an address this viewer may open, or is left out.
-    text = InlineImages.resolve(text, scope)
+    text = InlineImages.resolve(text, scope, holder: holder, urls: urls || %{})
     pieces = Token.split(text)
     tokens = for %Token{} = t <- pieces, do: t
 
@@ -108,7 +127,7 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
       else: put_mentions(html, tokens, nonce, text, scope, allow_request)
   end
 
-  def to_html(_text, _scope, _allow), do: ""
+  def to_html(_text, _scope, _allow, _holder, _urls), do: ""
 
   # Most descriptions are a line or two of plain words, drawn on every row
   # of a list and again on each change: those are put in paragraphs here,

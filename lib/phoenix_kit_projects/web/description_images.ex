@@ -17,20 +17,31 @@ defmodule PhoenixKitProjects.Web.DescriptionImages do
   use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
 
-  import Phoenix.LiveView, only: [allow_upload: 3, consume_uploaded_entry: 3, put_flash: 3]
+  import Phoenix.LiveView,
+    only: [allow_upload: 3, cancel_upload: 3, consume_uploaded_entry: 3, put_flash: 3]
 
   alias PhoenixKitProjects.{Activity, Attachments, InlineImages}
   alias PhoenixKitProjects.Web.Components.DescriptionEditor
 
   @upload :description_images
 
-  @doc "Turns on the image button's upload; `target` answers `{holder, editor_id}` or nil."
-  @spec allow(Phoenix.LiveView.Socket.t(), (Phoenix.LiveView.Socket.t() ->
-                                              {struct(), String.t()} | nil)) ::
-          Phoenix.LiveView.Socket.t()
-  def allow(socket, target) when is_function(target, 1) do
+  @doc """
+  Turns on the image button's upload; `target` answers `{holder, editor_id}`
+  or nil, `allowed?` whether the socket may write the holder now — the
+  right its own save needs, read from the live scope. A paste is a
+  `handle_info` and an upload a progress callback, so neither passes the
+  form's `WriteGate` hook: every picture asks `allowed?` before it is
+  stored.
+  """
+  @spec allow(
+          Phoenix.LiveView.Socket.t(),
+          (Phoenix.LiveView.Socket.t() -> {struct(), String.t()} | nil),
+          (Phoenix.LiveView.Socket.t() -> boolean())
+        ) :: Phoenix.LiveView.Socket.t()
+  def allow(socket, target, allowed?) when is_function(target, 1) and is_function(allowed?, 1) do
     socket
     |> Phoenix.Component.assign(:description_images_target, target)
+    |> Phoenix.Component.assign(:description_images_allowed, allowed?)
     |> allow_upload(@upload,
       accept: ~w(image/*),
       max_entries: 5,
@@ -49,71 +60,90 @@ defmodule PhoenixKitProjects.Web.DescriptionImages do
   @doc "`paste/3` for a holder named by the caller (`{holder, editor_id}` or nil)."
   @spec paste_for(Phoenix.LiveView.Socket.t(), {struct(), String.t()} | nil, String.t(), map()) ::
           Phoenix.LiveView.Socket.t()
-  def paste_for(socket, target, editor_id, paste) do
-    case target do
-      {holder, _id} ->
-        case Attachments.store_pasted_image(
-               holder,
-               paste[:data_url] || "",
-               paste[:name],
-               Activity.actor_uuid(socket)
-             ) do
-          {:ok, file} ->
-            DescriptionEditor.insert_image(editor_id, url(socket, file), "")
-            socket
+  def paste_for(socket, nil, _editor_id, _paste),
+    do: put_flash(socket, :error, gettext("Save it first to add images."))
 
-          {:error, :not_an_image} ->
-            put_flash(socket, :error, gettext("Only an image can be pasted here."))
+  def paste_for(socket, {holder, _id}, editor_id, paste) do
+    if allowed?(socket),
+      do: store_paste(socket, holder, editor_id, paste),
+      else: refused(socket)
+  end
 
-          _ ->
-            put_flash(socket, :error, gettext("Upload failed. Please try again."))
-        end
+  defp store_paste(socket, holder, editor_id, paste) do
+    case Attachments.store_pasted_image(
+           holder,
+           paste[:data_url] || "",
+           paste[:name],
+           Activity.actor_uuid(socket)
+         ) do
+      {:ok, file} ->
+        DescriptionEditor.insert_image(editor_id, url(socket, file), "")
+        socket
 
-      nil ->
-        put_flash(socket, :error, gettext("Save it first to add images."))
+      {:error, :not_an_image} ->
+        put_flash(socket, :error, gettext("Only an image can be pasted here."))
+
+      _ ->
+        put_flash(socket, :error, gettext("Upload failed. Please try again."))
     end
   end
 
   @doc false
-  def progress(@upload, entry, socket) do
-    if entry.done? do
-      case target(socket) do
-        {holder, editor_id} ->
-          result =
-            consume_uploaded_entry(socket, entry, fn %{path: path} ->
-              {:ok,
-               Attachments.store_description_image(
-                 holder,
-                 path,
-                 [
-                   filename: entry.client_name,
-                   content_type: entry.client_type,
-                   size_bytes: entry.client_size
-                 ],
-                 Activity.actor_uuid(socket)
-               )}
-            end)
+  def progress(@upload, %{done?: true} = entry, socket) do
+    case target(socket) do
+      nil ->
+        {:noreply, put_flash(socket, :error, gettext("Save it first to add images."))}
 
-          case result do
-            {:ok, file} ->
-              DescriptionEditor.insert_image(
-                editor_id,
-                url(socket, file),
-                to_string(file.original_file_name)
-              )
-
-              {:noreply, socket}
-
-            _ ->
-              {:noreply, put_flash(socket, :error, gettext("Upload failed. Please try again."))}
-          end
-
-        nil ->
-          {:noreply, put_flash(socket, :error, gettext("Save it first to add images."))}
-      end
-    else
-      {:noreply, socket}
+      {holder, editor_id} ->
+        if allowed?(socket),
+          do: store_upload(socket, holder, editor_id, entry),
+          else: {:noreply, socket |> cancel_upload(@upload, entry.ref) |> refused()}
     end
+  end
+
+  def progress(@upload, _entry, socket), do: {:noreply, socket}
+
+  defp store_upload(socket, holder, editor_id, entry) do
+    result =
+      consume_uploaded_entry(socket, entry, fn %{path: path} ->
+        {:ok,
+         Attachments.store_description_image(
+           holder,
+           path,
+           [
+             filename: entry.client_name,
+             content_type: entry.client_type,
+             size_bytes: entry.client_size
+           ],
+           Activity.actor_uuid(socket)
+         )}
+      end)
+
+    case result do
+      {:ok, file} ->
+        DescriptionEditor.insert_image(
+          editor_id,
+          url(socket, file),
+          to_string(file.original_file_name)
+        )
+
+        {:noreply, socket}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Upload failed. Please try again."))}
+    end
+  end
+
+  defp refused(socket),
+    do: put_flash(socket, :error, gettext("You don't have permission to manage files here."))
+
+  defp allowed?(socket) do
+    case socket.assigns[:description_images_allowed] do
+      fun when is_function(fun, 1) -> fun.(socket) == true
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   attr(:uploads, :map, required: true)

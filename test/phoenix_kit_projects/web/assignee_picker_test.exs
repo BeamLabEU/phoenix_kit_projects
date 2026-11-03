@@ -10,7 +10,8 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Assignees, Projects}
+  alias PhoenixKitProjects.{Assignees, AssigneeSet, Projects}
+  alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitStaff.Schemas.Person
 
@@ -164,6 +165,83 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
 
       view |> element(sel) |> render_click()
       assert has_element?(view, sel <> "[aria-selected='true']")
+    end
+  end
+
+  describe "who the lists are read for" do
+    # They name every staff person and every account with no staff record
+    # yet, with their email. Only someone who may assign here reads them.
+    setup ctx do
+      {:ok, outsider} =
+        Auth.register_user(%{
+          "email" => "listleak-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      {:ok, viewer} =
+        Auth.register_user(%{
+          "email" => "viewer-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.project, viewer.uuid, role: "viewer")
+
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(ctx.project, %{"assign_tasks" => "managers"})
+
+      {:ok,
+       outsider: outsider, viewer: fake_scope(user_uuid: viewer.uuid, permissions: ["projects"])}
+    end
+
+    test "a crafted search, query, browse or page from someone who may not assign reads nothing",
+         ctx do
+      {:ok, view, _} =
+        ctx.conn
+        |> put_test_scope(ctx.viewer)
+        |> live("/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
+
+      render_hook(view, "assignee_search", %{"q" => "listleak", "limit" => 1000})
+      refute_push_event(view, "assignee_results", _)
+
+      html = render_hook(view, "assignee_query", %{"assignee_q" => "listleak"})
+      refute html =~ ctx.outsider.email
+      html = render_hook(view, "assignee_browse", %{"kind" => "person"})
+      refute html =~ "assignment-assignee-options"
+    end
+
+    test "a trashed person cannot be ticked, nor a forged one saved", ctx do
+      gone = person!("Gone#{System.unique_integer([:positive])}")
+      gone |> Ecto.Changeset.change(status: "trashed") |> Repo.update!()
+
+      {:ok, view, _} = edit(ctx)
+      render_hook(view, "assignee_toggle", %{"kind" => "person", "uuid" => gone.uuid})
+      refute has_element?(view, "#assignment-assignee-chip-person-#{gone.uuid}")
+
+      {:ok, view, _} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new")
+
+      # Saved and gone back to the project (the foreign key used to fail
+      # inside the save and take the form down), with nobody it was not
+      # picked for.
+      assert {:error, {:live_redirect, _}} =
+               render_submit(view, "save", %{
+                 "task_mode" => "new",
+                 "task" => %{"title" => "Forged assignee"},
+                 "assignment" => %{"assignees" => ["", "person:#{Ecto.UUID.generate()}"]}
+               })
+
+      assert Enum.any?(Projects.list_assignments(ctx.project.uuid), fn a ->
+               Assignment.label(a) == "Forged assignee"
+             end)
+
+      for a <- Projects.list_assignments(ctx.project.uuid) do
+        assert AssigneeSet.keys_by_task([a.uuid])[a.uuid] in [nil, []]
+      end
+    end
+
+    test "someone who may assign still finds the account", ctx do
+      {:ok, view, _} = edit(ctx)
+      html = render_hook(view, "assignee_query", %{"assignee_q" => "listleak"})
+      assert html =~ ctx.outsider.email
     end
   end
 

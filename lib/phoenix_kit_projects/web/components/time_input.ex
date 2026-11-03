@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   @doc "One posted part map as the string `normalize/2` puts in its place."
   @spec fold(map()) :: String.t()
   def fold(%{"date" => date} = parts) do
-    case {String.trim(to_string(date)), clock(parts)} do
+    case {String.trim(text(date)), clock(parts)} do
       {"", _} -> ""
       {day, nil} -> day <> "T00:00"
       # A time that does not read is passed on as typed, so the receiver's
@@ -84,7 +84,7 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   # `"HH:MM"` of the typed time, or of the posted hour, minute and AM/PM;
   # nil for none, `{:invalid, text}` for typed text that is not a time.
   defp clock(%{"time" => typed}) do
-    text = typed |> to_string() |> String.trim()
+    text = typed |> text() |> String.trim()
 
     case {text, parse_clock(text)} do
       {"", _} -> nil
@@ -94,10 +94,10 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   end
 
   defp clock(parts) do
-    case Integer.parse(to_string(parts["hour"] || "")) do
+    case Integer.parse(text(parts["hour"])) do
       {h, ""} when h in 0..23 ->
         m =
-          case Integer.parse(to_string(parts["minute"] || "")) do
+          case Integer.parse(text(parts["minute"])) do
             {m, ""} when m in 0..59 -> m
             _ -> 0
           end
@@ -121,7 +121,10 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
         String.replace(acc, String.downcase(L10n.day_half_label(half)), half)
       end)
 
-    case Regex.run(~r/^(\d{1,2})(?:\s*[:.h]?\s*(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?$/u, text) do
+    # ASCII digits: under `/u` a `\d` takes any script's digits (the
+    # full-width `１７` a CJK input method types), which
+    # `String.to_integer/1` then refuses with a raise.
+    case Regex.run(~r/^([0-9]{1,2})(?:\s*[:.h]?\s*([0-9]{2}))?\s*(?:([ap])\.?\s*m?\.?)?$/u, text) do
       [_, h | rest] -> to_clock(String.to_integer(h), minute_of(rest), half_of(rest))
       _ -> nil
     end
@@ -148,6 +151,12 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   defp from_half(h, _half), do: h
 
   defp pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
+
+  # A posted part as text: a crafted nested param (`deadline[date][x]=…`)
+  # reads as nothing rather than raising in `to_string/1`.
+  defp text(value) when is_binary(value), do: value
+  defp text(value) when is_integer(value), do: Integer.to_string(value)
+  defp text(_value), do: ""
 
   # ── Reading a value for the selects ────────────────────────────────
 

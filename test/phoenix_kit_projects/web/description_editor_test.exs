@@ -9,7 +9,7 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKitProjects.Projects
-  alias PhoenixKitProjects.Web.Components.RichText
+  alias PhoenixKitProjects.Web.Components.{DescriptionEditor, RichText}
 
   setup %{conn: conn} do
     me = embed_user_uuid!()
@@ -58,6 +58,59 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
       assert html =~ "Ann"
       assert html =~ "<strong>today</strong>"
       refute html =~ "PKMENTION"
+    end
+  end
+
+  describe "the read view carries no layout" do
+    test "a writer's style or class cannot pin a box over the page" do
+      html =
+        RichText.to_html(
+          ~S|<span style="position:fixed;inset:0">x</span> <div class="fixed inset-0">y</div>| <>
+            "\n\n<pre class=\"fixed\"><code class=\"fixed\">z</code></pre>"
+        )
+
+      refute html =~ "position:fixed"
+      refute html =~ "class="
+      refute html =~ "style="
+      assert html =~ "x" and html =~ "y" and html =~ "z"
+    end
+  end
+
+  describe "the editor never renders raw HTML" do
+    # Leaf renders its markdown with MDEx `unsafe: true` into a
+    # contenteditable: a stored `<img onerror>` would run for whoever opens
+    # the form (a portal submission, an API key, a hand-made post).
+    test "safe_content shows a tag as text, and leaves code and markdown alone" do
+      assert DescriptionEditor.safe_content("x <img src=x onerror=alert(1)> y") ==
+               "x &lt;img src=x onerror=alert(1)> y"
+
+      # An unclosed block opener would carry the next line's tag along.
+      refute DescriptionEditor.safe_content("<div\n<img src=x onerror=1>") =~ "<img"
+      # Escaped backticks open no code span: the tag inside is live.
+      refute DescriptionEditor.safe_content("\\`<img src=x onerror=1>\\`") =~ "<img"
+
+      for kept <- [
+            "**Oak**, oiled @[user:0190a3b4-0000-7000-8000-000000000001|Ann]",
+            "a `<img src=x>` b",
+            "```\n<b>code</b>\n```",
+            "x<sup>2</sup> and H<sub>2</sub>O"
+          ] do
+        assert DescriptionEditor.safe_content(kept) == kept
+      end
+    end
+
+    test "a stored description's tag reaches the task form's editor as text", ctx do
+      evil = ~S|Call them <img src=x onerror="alert(1)"> today|
+
+      {:ok, _} =
+        Projects.update_task(Projects.get_task(ctx.a.task_uuid), %{"description" => evil})
+
+      {:ok, _view, html} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
+
+      refute html =~ ~s(<img src="x" onerror)
+      refute html =~ ~s(<img src=x onerror)
+      assert html =~ "Call them"
     end
   end
 

@@ -693,6 +693,31 @@ defmodule PhoenixKitProjects.Assignees do
   def describe(_kind, _uuid, _lang), do: nil
 
   @doc """
+  `describe/3` for a new pick. A trashed person is offered nowhere (the
+  lists, Recent, the API), so a pick naming one — a crafted event, or a
+  list row drawn before the trashing — takes nobody. An assignee already
+  on a task keeps its chip through `describe/3`.
+  """
+  @spec describe_pick(String.t() | nil, String.t() | nil) :: map() | nil
+  def describe_pick("person", uuid) do
+    if trashed_person?(uuid), do: nil, else: describe("person", uuid)
+  end
+
+  def describe_pick(kind, uuid), do: describe(kind, uuid)
+
+  defp trashed_person?(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, id} ->
+        repo().exists?(from(p in Person, where: p.uuid == ^id and p.status == "trashed"))
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> true
+  end
+
+  @doc """
   Whom a project's tasks went to lately — people, teams and departments,
   newest first, at most `limit` — as picker rows: the one-click "Recent"
   chips under the task form's assignee picker. A project with no assigned

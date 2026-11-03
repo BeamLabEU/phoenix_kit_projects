@@ -21,13 +21,31 @@ defmodule PhoenixKitProjects.InlineImages do
   The reference names the file, not the task, so a description copied to a
   task's next occurrence (`Repeats`) shows the same pictures: the file rows
   stay with the occurrence they were added to.
+
+  ## Whose pictures a reader sees
+
+  The pictures are stored in Media, where only their uploader and an
+  Owner/Admin may read a file (core's library rules) — so checking the
+  reader's own storage right alone showed a description's pictures to
+  nobody else on the project. The text's `holder:` (a task, a project, a
+  library task) decides instead: a file its project holds — one of its
+  tasks' own files (`AssignmentFile`, any task, so a repeat's copied text
+  still shows them) or a file in the project's folder (the project's,
+  sub-project's and template's description pictures) — and for a library
+  task a file in the task library's folder, is signed for whoever may read
+  the text, as the task's Files list signs it — while it is in Media; a
+  file moved into a library keeps that library's rule. Any other reference
+  needs the reader's own right (`Storage.authorized_url/4`): a `pkfile:`
+  typed for somebody else's file shows nobody anything new.
   """
 
   import Ecto.Query, warn: false
 
   alias PhoenixKit.Modules.Storage
-  alias PhoenixKit.Modules.Storage.File
+  alias PhoenixKit.Modules.Storage.{File, FolderLink, Libraries, URLSigner}
   alias PhoenixKit.Users.Auth.Scope
+  alias PhoenixKitProjects.Attachments
+  alias PhoenixKitProjects.Schemas.{Assignment, AssignmentFile, Project, Task}
 
   @uuid "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 
@@ -109,8 +127,9 @@ defmodule PhoenixKitProjects.InlineImages do
   An image the viewer may not see, or whose file is gone, is left out —
   or, with `keep_missing: true` (the editor), kept as its reference.
 
-  `urls:` hands in addresses already read for this viewer (`urls_for/2`,
+  `urls:` hands in addresses already read for this viewer (`urls_for/3`,
   one read for a whole list); a file it does not name is read here.
+  `holder:` is the record the text belongs to (see the moduledoc).
   """
   @spec resolve(term(), term(), keyword()) :: term()
   def resolve(text, scope, opts \\ [])
@@ -119,7 +138,7 @@ defmodule PhoenixKitProjects.InlineImages do
     if refs?(text) do
       known = Keyword.get(opts, :urls, %{})
       {have, missing} = Enum.split_with(uuids(text), &Map.has_key?(known, &1))
-      urls = Map.merge(Map.take(known, have), urls(missing, scope))
+      urls = Map.merge(Map.take(known, have), urls(missing, scope, opts[:holder]))
       keep? = Keyword.get(opts, :keep_missing, false)
 
       Regex.replace(@image, text, fn whole, alt, target ->
@@ -150,11 +169,11 @@ defmodule PhoenixKitProjects.InlineImages do
   read: `%{file uuid => url | nil}`, for `resolve/3`'s `urls:` — a list's
   descriptions resolved without a read per row.
   """
-  @spec urls_for([term()], term()) :: %{binary() => String.t() | nil}
-  def urls_for(texts, scope) when is_list(texts) do
+  @spec urls_for([term()], term(), keyword()) :: %{binary() => String.t() | nil}
+  def urls_for(texts, scope, opts \\ []) when is_list(texts) do
     uuids = texts |> Enum.filter(&refs?/1) |> Enum.flat_map(&uuids/1) |> Enum.uniq()
     # a file that is gone is named too (nil), so it is not read again
-    Map.merge(Map.new(uuids, &{&1, nil}), urls(uuids, scope))
+    Map.merge(Map.new(uuids, &{&1, nil}), urls(uuids, scope, opts[:holder]))
   end
 
   @doc """
@@ -194,21 +213,84 @@ defmodule PhoenixKitProjects.InlineImages do
   end
 
   # One read for every file the text names, then each one's address.
-  defp urls([], _scope), do: %{}
+  defp urls([], _scope, _holder), do: %{}
 
-  defp urls(uuids, scope) do
+  defp urls(uuids, scope, holder) do
     scope = scope_or_nil(scope)
+    held = held(holder, uuids)
 
     from(f in File,
       where: f.uuid in ^uuids,
       where: f.status != "trashed" and not coalesce(f.system_managed, false)
     )
     |> PhoenixKit.RepoHelper.repo().all()
-    |> Map.new(&{String.downcase(to_string(&1.uuid)), authorized(scope, &1)})
+    |> Map.new(fn file ->
+      uuid = String.downcase(to_string(file.uuid))
+      {uuid, if(uuid in held and media?(file), do: signed(file), else: authorized(scope, file))}
+    end)
   rescue
     _ -> %{}
   catch
     :exit, _ -> %{}
+  end
+
+  # The files among `uuids` the text's holder holds (lower-case uuids).
+  defp held(%Assignment{project_uuid: project_uuid}, uuids), do: project_held(project_uuid, uuids)
+  defp held(%Project{uuid: uuid}, uuids), do: project_held(uuid, uuids)
+  defp held(%Task{}, uuids), do: in_folder(Attachments.task_library_folder_uuid(), uuids)
+  defp held(_holder, _uuids), do: []
+
+  defp project_held(project_uuid, uuids) when is_binary(project_uuid) do
+    tasks_own =
+      from(af in AssignmentFile,
+        join: a in Assignment,
+        on: a.uuid == af.assignment_uuid,
+        where: a.project_uuid == ^project_uuid and af.file_uuid in ^uuids,
+        select: af.file_uuid
+      )
+      |> PhoenixKit.RepoHelper.repo().all()
+
+    Enum.map(tasks_own, &String.downcase(to_string(&1))) ++
+      in_folder(Attachments.folder_uuid(project_uuid), uuids)
+  end
+
+  defp project_held(_project_uuid, _uuids), do: []
+
+  # A file is in a folder as its home or through a link (core's folders).
+  defp in_folder(nil, _uuids), do: []
+
+  defp in_folder(folder_uuid, uuids) do
+    homes =
+      from(f in File,
+        where: f.uuid in ^uuids and f.folder_uuid == ^folder_uuid,
+        select: f.uuid
+      )
+
+    links =
+      from(l in FolderLink,
+        where: l.file_uuid in ^uuids and l.folder_uuid == ^folder_uuid,
+        select: l.file_uuid
+      )
+
+    homes
+    |> union(^links)
+    |> PhoenixKit.RepoHelper.repo().all()
+    |> Enum.map(&String.downcase(to_string(&1)))
+  end
+
+  # Only a file still in Media, where no one but its uploader and an
+  # Owner/Admin may read and nobody can grant more: a file someone moved
+  # into a library of their own keeps that library's rule.
+  defp media?(file), do: Libraries.media?(file.library_uuid || Libraries.media_uuid())
+
+  # As `Storage.authorized_url/4` signs a file once its check passed.
+  defp signed(file) do
+    URLSigner.signed_url(to_string(file.uuid), "original",
+      locale: :none,
+      private: Libraries.private_file?(file)
+    )
+  rescue
+    _ -> nil
   end
 
   defp authorized(scope, file) do

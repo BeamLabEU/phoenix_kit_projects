@@ -535,6 +535,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
             <.rich_text
               text={desc}
               scope={@phoenix_kit_current_scope}
+              holder={@assignment}
               class={["text-sm", not @desc_open? && "line-clamp-6"]}
             />
             <button

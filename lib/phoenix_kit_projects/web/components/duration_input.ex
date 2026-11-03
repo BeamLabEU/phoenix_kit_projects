@@ -60,7 +60,10 @@ defmodule PhoenixKitProjects.Web.Components.DurationInput do
   """
   @spec to_minutes(term()) :: {:ok, pos_integer()} | :error
   def to_minutes(%{"amount" => amount, "unit" => unit}) when is_map_key(@minutes_per, unit) do
+    # Bounded before it is multiplied: a huge amount (`1e308` days is a
+    # number an input of type number posts) overflowed the float product.
     with {:ok, n} <- parse_amount(amount),
+         true <- n <= WorkEntry.max_minutes(),
          minutes = round(n * Map.fetch!(@minutes_per, unit)),
          true <- minutes > 0 and minutes <= WorkEntry.max_minutes() do
       {:ok, minutes}

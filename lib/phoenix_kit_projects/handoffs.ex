@@ -425,7 +425,12 @@ defmodule PhoenixKitProjects.Handoffs do
           position: a.position,
           assigned_person_uuid: a.assigned_person_uuid,
           assigned_team_uuid: a.assigned_team_uuid,
-          assigned_department_uuid: a.assigned_department_uuid
+          assigned_department_uuid: a.assigned_department_uuid,
+          child_assignee: %{
+            assigned_person_uuid: cp.assigned_person_uuid,
+            assigned_team_uuid: cp.assigned_team_uuid,
+            assigned_department_uuid: cp.assigned_department_uuid
+          }
         }
       )
       |> RepoHelper.repo().all()
@@ -488,8 +493,22 @@ defmodule PhoenixKitProjects.Handoffs do
 
   # Each row's assignees (V29: several), read for the whole project at once
   # so telling them costs no read per row (`AssigneeSet.keys/1` takes them).
+  # A sub-project's row has no assignee rows of its own: whose it is is the
+  # sub-project's (its one assignee), as the page's "next up" dialog names
+  # it — so the hand-off tells the same people the dialog listed.
   defp with_assignee_sets(rows) do
     keys = rows |> Enum.map(& &1.uuid) |> PhoenixKitProjects.AssigneeSet.keys_by_task()
-    Enum.map(rows, &Map.put(&1, :assignee_keys, Map.get(keys, &1.uuid, [])))
+
+    Enum.map(rows, fn row ->
+      {child, row} = Map.pop(row, :child_assignee)
+
+      own =
+        case Map.get(keys, row.uuid, []) do
+          [] -> PhoenixKitProjects.AssigneeSet.legacy_keys(child || %{})
+          own -> own
+        end
+
+      Map.put(row, :assignee_keys, own)
+    end)
   end
 end

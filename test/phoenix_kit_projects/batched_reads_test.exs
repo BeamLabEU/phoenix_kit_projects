@@ -304,4 +304,64 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
       assert Attachments.download_urls([]) == %{}
     end
   end
+
+  describe "InlineImages.urls_for/3 with a holder" do
+    # The project page reads every row's pictures once (`row_image_urls/2`):
+    # the count must not follow the number of rows with a picture.
+    test "the pictures of one row or of five, in the same number of reads" do
+      project = fixture_project()
+      viewer = LiveCase.fake_scope(roles: [], permissions: ["projects"])
+
+      {:ok, uploader} =
+        Auth.register_user(%{
+          "email" => "uploader-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      texts = fn n ->
+        for i <- 1..n do
+          {:ok, %{assignment: a}} =
+            Projects.create_task_with_assignment(
+              project.uuid,
+              %{"title" => "Row #{i} #{System.unique_integer([:positive])}", "ad_hoc" => true},
+              %{}
+            )
+
+          path = Path.join(System.tmp_dir!(), "pkp-batched-#{System.unique_integer([:positive])}")
+          Elixir.File.write!(path, "pic #{System.unique_integer()}")
+
+          {:ok, file} =
+            Attachments.store_task_file(
+              a,
+              path,
+              [filename: "p.txt", content_type: "text/plain", size_bytes: 3, inline: true],
+              uploader.uuid
+            )
+
+          Elixir.File.rm(path)
+          "![p](pkfile:#{file.uuid})"
+        end
+      end
+
+      one = texts.(1)
+      five = texts.(5)
+      holder = project
+
+      {urls1, q1} =
+        QueryCounter.count(fn ->
+          PhoenixKitProjects.InlineImages.urls_for(one, viewer, holder: holder)
+        end)
+
+      {urls5, q5} =
+        QueryCounter.count(fn ->
+          PhoenixKitProjects.InlineImages.urls_for(five, viewer, holder: holder)
+        end)
+
+      assert q5 == q1
+      # Held by the project and in Media: signed for a reader who is not
+      # the uploader nor an Owner/Admin.
+      assert Enum.all?(Map.values(urls1) ++ Map.values(urls5), &is_binary/1)
+      assert map_size(urls5) == 5
+    end
+  end
 end

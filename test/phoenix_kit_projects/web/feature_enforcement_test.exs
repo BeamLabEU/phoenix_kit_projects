@@ -353,6 +353,9 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       refute html =~ ~s(name="assign_type")
 
+      # The library task is the picker's tick (a posted uuid alone is not).
+      render_click(view, "library_toggle", %{"uuid" => task.uuid})
+
       # Submit with smuggled assignee fields — the server strips them.
       render_submit(view, "save", %{
         "assignment" => %{

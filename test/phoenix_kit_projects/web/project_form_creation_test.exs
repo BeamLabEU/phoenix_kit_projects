@@ -300,6 +300,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       assert PhoenixKitProjects.Portal.capability?(project, :submit)
     end
 
+    test "a site default is what a box starts at and is pinned against", %{conn: conn} do
+      # The site turned time on the project as a whole on (its catalog
+      # default is off). Switching it off here must stick: compared with
+      # the catalog default, the off box looked unchanged, was not pinned,
+      # and the project inherited the site's on.
+      {:ok, _} = Features.set_site_default("project_time", true)
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "flag" => %{"project_time" => "false"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "SiteDefault #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("SiteDefault")
+      assert project.settings["features"]["project_time"] == false
+    end
+
     test "a disabled extension's flags are not pinned", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 

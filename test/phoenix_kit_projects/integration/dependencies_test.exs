@@ -62,6 +62,15 @@ defmodule PhoenixKitProjects.Integration.DependenciesTest do
       assert %{depends_on_uuid: [_ | _]} = errors_on(cs)
     end
 
+    test "rejects a task of another project" do
+      a = new_assignment!(new_project!(), new_task!())
+      foreign = new_assignment!(new_project!(), new_task!())
+
+      assert {:error, cs} = Projects.add_dependency(a.uuid, foreign.uuid)
+      assert %{depends_on_uuid: ["must be a task of the same project"]} = errors_on(cs)
+      assert Projects.list_dependencies(a.uuid) == []
+    end
+
     test "rejects a duplicate edge — unique-pair error on :depends_on_uuid" do
       project = new_project!()
       a = new_assignment!(project, new_task!())

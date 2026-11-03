@@ -1677,6 +1677,49 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
+  Sets (a file uuid) or clears (`nil`) a project's cover picture,
+  `settings["cover_file_uuid"]` — that one key, atomically, like
+  `set_visibility/3`: the form holds the settings it read at mount, and
+  writing the whole map back would undo a feature, access or completion
+  change made since.
+  """
+  @spec set_cover(Project.t(), String.t() | nil) :: {:ok, Project.t()} | {:error, :not_found}
+  def set_cover(%Project{uuid: uuid} = project, file_uuid) do
+    base = from(p in Project, where: p.uuid == ^uuid, select: p.settings)
+
+    query =
+      if is_binary(file_uuid) do
+        update(base,
+          set: [
+            settings:
+              fragment(
+                "jsonb_set(COALESCE(settings, '{}'::jsonb), '{cover_file_uuid}', to_jsonb(?::text))",
+                ^file_uuid
+              ),
+            updated_at: fragment("NOW()")
+          ]
+        )
+      else
+        update(base,
+          set: [
+            settings: fragment("COALESCE(settings, '{}'::jsonb) - 'cover_file_uuid'"),
+            updated_at: fragment("NOW()")
+          ]
+        )
+      end
+
+    case repo().update_all(query, []) do
+      {1, [settings]} ->
+        updated = %{project | settings: settings}
+        broadcast_project_updated(updated)
+        {:ok, updated}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
   Sets a project's visibility (`"private"` | `"everyone"`).
 
   Written with the same atomic jsonb_set as the feature flags and authz
@@ -5184,20 +5227,35 @@ defmodule PhoenixKitProjects.Projects do
     result =
       repo().transaction(
         fn ->
-          if would_create_cycle?(assignment_uuid, depends_on_uuid) do
-            cs =
-              Ecto.Changeset.add_error(
-                changeset,
-                :depends_on_uuid,
-                gettext("would create a dependency cycle")
-              )
+          cond do
+            # The pair lives in one project (`Dependency`'s contract): a form
+            # posting another project's task would otherwise wire it in and
+            # show its title and status under "Waits on".
+            not same_project?(assignment_uuid, depends_on_uuid) ->
+              cs =
+                Ecto.Changeset.add_error(
+                  changeset,
+                  :depends_on_uuid,
+                  gettext("must be a task of the same project")
+                )
 
-            repo().rollback(%{cs | action: :insert})
-          else
-            case repo().insert(changeset) do
-              {:ok, dep} -> dep
-              {:error, cs} -> repo().rollback(cs)
-            end
+              repo().rollback(%{cs | action: :insert})
+
+            would_create_cycle?(assignment_uuid, depends_on_uuid) ->
+              cs =
+                Ecto.Changeset.add_error(
+                  changeset,
+                  :depends_on_uuid,
+                  gettext("would create a dependency cycle")
+                )
+
+              repo().rollback(%{cs | action: :insert})
+
+            true ->
+              case repo().insert(changeset) do
+                {:ok, dep} -> dep
+                {:error, cs} -> repo().rollback(cs)
+              end
           end
         end,
         isolation: :serializable
@@ -5232,6 +5290,17 @@ defmodule PhoenixKitProjects.Projects do
 
   # Returns true when `depends_on_uuid` already reaches `assignment_uuid`
   # transitively — inserting the new edge would close a cycle.
+  defp same_project?(assignment_uuid, depends_on_uuid) do
+    projects =
+      from(a in Assignment,
+        where: a.uuid in ^[assignment_uuid, depends_on_uuid],
+        select: a.project_uuid
+      )
+      |> repo().all()
+
+    match?([p, p], projects)
+  end
+
   defp would_create_cycle?(assignment_uuid, depends_on_uuid) do
     walk_dependencies([depends_on_uuid], %{}, assignment_uuid)
   end

@@ -58,7 +58,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       |> assign_status_init()
       |> assign_ai_translate()
       |> assign(dirty?: false)
-      |> DescriptionImages.allow(&description_image_target/1)
+      |> DescriptionImages.allow(&description_image_target/1, &WriteGate.allowed?/1)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -514,7 +514,8 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
                   PhoenixKitProjects.InlineImages.resolve(
                     description_value(@form, @current_lang, @primary_language, @multilang_enabled),
                     assigns[:phoenix_kit_current_scope],
-                    keep_missing: true
+                    keep_missing: true,
+                    holder: @project
                   )
                 }
                 placeholder={gettext("Description…")}

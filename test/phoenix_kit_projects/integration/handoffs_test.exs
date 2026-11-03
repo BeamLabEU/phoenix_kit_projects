@@ -102,6 +102,26 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
   end
 
   describe "your turn" do
+    test "a sub-project's row tells the sub-project's assignee", ctx do
+      # A sub-project's row carries no assignee of its own: whose it is is
+      # the sub-project's, as the page's "next up" dialog shows it.
+      %{alice: alice, bob: bob} = ctx.people
+      measure = task!(ctx.project, "Measure the room", alice)
+
+      {:ok, %{assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{
+          "name" => "Kitchen",
+          "assigned_person_uuid" => bob.person
+        })
+
+      {:ok, _} = Projects.add_dependency(link.uuid, measure.uuid)
+
+      set_status!(measure, "done", alice.user)
+
+      assert [notice] = notices("projects.assignment_ready", bob.user)
+      assert notice.resource_uuid == link.uuid
+    end
+
     test "the task waiting on a finished one tells its assignee, with a line and a link", ctx do
       %{alice: alice, bob: bob} = ctx.people
       measure = task!(ctx.project, "Measure the room", alice)

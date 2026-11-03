@@ -1475,6 +1475,11 @@ msgstr "heute"
 msgid "tomorrow"
 msgstr "morgen"
 
+#: lib/phoenix_kit_projects/projects.ex:5238
+#, elixir-autogen, elixir-format
+msgid "must be a task of the same project"
+msgstr "muss eine Aufgabe desselben Projekts sein"
+
 #: lib/phoenix_kit_projects/projects.ex:5188
 #, elixir-autogen, elixir-format
 msgid "would create a dependency cycle"

@@ -1026,7 +1026,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     ~H"""
     <div
       :if={@draft && Map.get(@draft, :slot) == @slot}
-      id="outline-draft-row"
+      id={"outline-draft-row-#{@draft.key}"}
       class="relative flex py-1"
       style={"margin-left: #{if @indent, do: Map.get(@draft, :depth, 0) * 2, else: 0}rem"}
     >

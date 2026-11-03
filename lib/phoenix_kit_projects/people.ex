@@ -59,6 +59,27 @@ defmodule PhoenixKitProjects.People do
     :exit, _ -> false
   end
 
+  @staff_page %{"person" => :person, "team" => :team, "department" => :department}
+
+  @doc """
+  The staff admin page of a person, team or department, or nil when the
+  staff module is not there to show it (`staff_admin_available?/0`) — a
+  page then names the assignee without a link. Called through `apply/3`
+  for the same reason as `staff_enabled?/0`.
+  """
+  @spec staff_page_path(String.t(), binary()) :: String.t() | nil
+  def staff_page_path(kind, uuid) when is_binary(uuid) do
+    fun = Map.get(@staff_page, kind, :person)
+
+    if staff_admin_available?() and Code.ensure_loaded?(PhoenixKitStaff.Paths) and
+         function_exported?(PhoenixKitStaff.Paths, fun, 1),
+       do: apply(PhoenixKitStaff.Paths, fun, [uuid])
+  rescue
+    _ -> nil
+  end
+
+  def staff_page_path(_kind, _uuid), do: nil
+
   # `apply/3` is deliberate (the CRM StaffLink precedent): a direct call
   # would emit an undefined-function warning — fatal under
   # warnings-as-errors — when compiled WITHOUT_STAFF.
@@ -315,8 +336,14 @@ defmodule PhoenixKitProjects.People do
   def assignee_keys(%PhoenixKitProjects.Schemas.Project{} = p),
     do: PhoenixKitProjects.AssigneeSet.legacy_keys(p)
 
+  # A library task names its DEFAULT assignee (`default_assigned_*`).
   def assignee_keys(%PhoenixKitProjects.Schemas.Task{} = t),
-    do: PhoenixKitProjects.AssigneeSet.legacy_keys(t)
+    do:
+      PhoenixKitProjects.AssigneeSet.legacy_keys(%{
+        assigned_person_uuid: t.default_assigned_person_uuid,
+        assigned_team_uuid: t.default_assigned_team_uuid,
+        assigned_department_uuid: t.default_assigned_department_uuid
+      })
 
   def assignee_keys(record) when is_map(record),
     do: PhoenixKitProjects.AssigneeSet.keys(record)

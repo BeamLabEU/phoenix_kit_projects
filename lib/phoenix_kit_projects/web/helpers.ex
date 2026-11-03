@@ -1136,10 +1136,20 @@ defmodule PhoenixKitProjects.Web.Helpers do
   "Ready to start", "Done" or "Reopen" opens that page's dialog
   (`ProjectShowLive` listens on its popup topic). The page runs it as its
   own event, under its own gates and permission checks.
+
+  The intent names whose click it was (`user_uuid`): a host's topic is
+  often one record's (an order) and shared by everyone who has it open, so
+  every viewer's page hears it — and a page acts only on its own viewer's,
+  never running one person's click under another's name.
   """
   @spec emit_intent(Phoenix.LiveView.Socket.t(), String.t(), String.t()) :: :ok
   def emit_intent(socket, event, uuid) when is_binary(event) and is_binary(uuid) do
-    do_broadcast(socket, :intent, %{event: event, uuid: uuid})
+    do_broadcast(socket, :intent, %{
+      event: event,
+      uuid: uuid,
+      user_uuid: PhoenixKitProjects.Activity.actor_uuid(socket)
+    })
+
     :ok
   end
 

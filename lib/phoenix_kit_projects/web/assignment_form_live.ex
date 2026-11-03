@@ -87,6 +87,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   @picker_events PhoenixKitProjects.Web.Components.AssigneePicker.events()
 
+  # What the sub-project short editor draws: the words, whose it is and
+  # its workflow status list (settings are folded in from their own
+  # controls). The project changeset casts far more — archiving, the
+  # template flag, the key, a start stamp, a feature preset — which belong
+  # to the project's own form and its owner-level rights, never to the
+  # parent's `:edit_tasks` this form is written with.
+  @subproject_fields ~w(name description translations assigned_person_uuid assigned_team_uuid
+                        assigned_department_uuid status_entity_uuid)
+
   @impl true
   def mount(params, session, socket) do
     WebHelpers.maybe_put_locale(session)
@@ -144,6 +153,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> assign_edit_title()
       |> assign_times_form()
       |> assign_assignee_picker()
+      |> then(&assign(&1, :can_set_status?, can_set_status?(&1)))
       |> assign_outline(resolved_params)
       |> assign_ai_translate()
       |> assign_task_files()
@@ -531,6 +541,23 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp can_assign?(_socket), do: false
 
+  # The status radios are the project page's status steps in another
+  # place: `:update_status` (the record decides an assignee's own grant),
+  # not the `:edit_tasks` the rest of the form needs.
+  defp can_set_status?(%{assigns: %{project: %Project{uuid: uuid} = project}} = socket)
+       when is_binary(uuid) do
+    record = socket.assigns[:assignment]
+
+    PhoenixKitProjects.Authz.can?(
+      socket.assigns[:phoenix_kit_current_scope],
+      project,
+      :update_status,
+      if(match?(%Assignment{uuid: id} when is_binary(id), record), do: record)
+    )
+  end
+
+  defp can_set_status?(_socket), do: false
+
   # Every assignee the task's form holds now (V29), in chip order: the set
   # just chosen, else the task's own.
   defp form_assignee_keys(%Phoenix.HTML.Form{source: %Ecto.Changeset{} = cs}) do
@@ -856,7 +883,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # The description as the editor is handed it: its pictures by an address
   # the viewer may open, one it cannot kept as it is.
-  defp editor_content(text, scope), do: InlineImages.resolve(text, scope, keep_missing: true)
+  # `holder`: whose pictures the text shows (`InlineImages`) — the task's
+  # project for a task (the rule is the project's), the sub-project for its
+  # own description.
+  defp editor_content(text, scope, holder),
+    do: InlineImages.resolve(text, scope, keep_missing: true, holder: holder)
 
   defp remove_file_now(socket, file_uuid, shown, inline?) do
     case Attachments.remove_task_file(
@@ -955,7 +986,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       send_update(Leaf,
         id: DescriptionEditor.editor_id("assignment-description", lang),
         action: :set_content,
-        content: editor_content(shown || "", socket.assigns[:phoenix_kit_current_scope])
+        content:
+          DescriptionEditor.safe_content(
+            editor_content(
+              shown || "",
+              socket.assigns[:phoenix_kit_current_scope],
+              socket.assigns.project
+            )
+          )
       )
 
       socket
@@ -2200,6 +2238,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> clear_other_assignees(assign_type)
       |> strip_gated_attrs(fx)
       |> strip_unassignable(socket)
+      |> strip_server_owned(socket)
       |> merge_attrs(socket)
 
     case {socket.assigns.live_action, task_mode} do
@@ -2438,22 +2477,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     if fx.subprojects do
       assign_type = Map.get(params, "assign_type", "")
+      # The right to hand it out, as now (the task save asks the same).
+      socket = assign(socket, can_assign?: can_assign?(socket))
+      # The child's settings as stored now: the folds below write the whole
+      # map, and the one read at mount would undo a feature or access change
+      # made since.
+      source = fresh_sp_source(socket)
 
       attrs =
         attrs
+        |> Map.take(@subproject_fields)
         |> clear_other_assignees(assign_type)
         |> sp_translations(socket)
         |> strip_gated_attrs(fx)
+        |> strip_unassignable(socket)
         |> then(fn a ->
           if fx.statuses, do: a, else: Map.drop(a, ~w(status_entity_uuid))
         end)
-        |> WSF.apply_mode(params, sp_source(socket))
+        |> WSF.apply_mode(params, source)
 
       attrs =
         fold_completion(
           attrs,
           params,
-          if(socket.assigns.live_action == :new, do: nil, else: sp_source(socket))
+          if(socket.assigns.live_action == :new, do: nil, else: source)
         )
 
       case socket.assigns.live_action do
@@ -2798,6 +2845,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # The base struct the sub-project form edits (a fresh `%Project{}` on :new,
   # the embedded child on :edit). Read off the form's changeset data.
   defp sp_source(socket), do: socket.assigns.sp_form.source.data
+
+  defp fresh_sp_source(socket) do
+    case sp_source(socket) do
+      %Project{uuid: uuid} = held when is_binary(uuid) -> Projects.get_project(uuid) || held
+      held -> held
+    end
+  end
 
   # The sub-project's name and description per language (its words block):
   # what a secondary tab posted folded into the translations typed so far,
@@ -3612,6 +3666,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> clear_other_assignees(assign_type)
       |> strip_gated_attrs(fx)
       |> strip_unassignable(socket)
+      |> strip_server_owned(socket)
       |> merge_attrs(socket)
 
     {attrs, task_words} = split_task_words(socket, attrs)
@@ -4070,6 +4125,56 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         else: Map.drop(a, ~w(start_date end_date start_time end_time deadline))
     end)
   end
+
+  # What the form never draws, whatever a crafted submit says.
+  # `Assignment.changeset/2` casts these for the context's own callers: the
+  # row's project, a sub-project link (made only through
+  # `link_existing_subproject`, which checks the project), its place in
+  # the list and the page's progress slider. The task a row stands for is
+  # fixed once made; a new row's is the library picker's own tick (one,
+  # checked against the library), never a posted uuid. A status is the
+  # project page's status step: `:update_status`, and one of the choices
+  # the radios offer, read now.
+  @server_owned ~w(project_uuid child_project_uuid position progress_pct track_progress)
+
+  defp strip_server_owned(attrs, socket) do
+    attrs
+    |> Map.drop(@server_owned)
+    |> own_task_uuid(socket)
+    |> own_assignees(socket)
+    |> settable_status(socket)
+  end
+
+  # The assignees are the picker's own list (`assignee_selected`, each one
+  # looked up when it was picked), not the posted copy of it: a crafted
+  # `kind:uuid` named a trashed person, or a row that does not exist, whose
+  # foreign key then failed inside a new task's save.
+  defp own_assignees(%{"assignees" => _} = attrs, %{assigns: %{assignee_selected: keys}})
+       when is_list(keys),
+       do: Map.put(attrs, "assignees", Enum.map(keys, fn {kind, uuid} -> "#{kind}:#{uuid}" end))
+
+  defp own_assignees(attrs, _socket), do: attrs
+
+  defp own_task_uuid(attrs, %{assigns: %{live_action: :new} = assigns}) do
+    if Map.has_key?(attrs, "task_uuid"),
+      do: Map.put(attrs, "task_uuid", single_pick(assigns[:library_picked] || [])),
+      else: attrs
+  end
+
+  defp own_task_uuid(attrs, _socket), do: Map.delete(attrs, "task_uuid")
+
+  defp settable_status(%{"status" => to} = attrs, socket) do
+    record = socket.assigns[:assignment]
+    from = record && Map.get(record, :status)
+
+    if to == from or
+         (to in AssignmentStatusBadge.choices(record, socket.assigns.fx) and
+            can_set_status?(socket)),
+       do: attrs,
+       else: Map.delete(attrs, "status")
+  end
+
+  defp settable_status(attrs, _socket), do: attrs
 
   # Who may not hand tasks out (`:assign_tasks`) leaves the assignee as it
   # is, whatever a forged submit says — the picker is not drawn for them.
@@ -4558,7 +4663,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 content={
                   editor_content(
                     description_value(@sp_form, @current_lang, @primary_language, @multilang_enabled),
-                    assigns[:phoenix_kit_current_scope]
+                    assigns[:phoenix_kit_current_scope],
+                    @sp_form.source.data
                   )
                 }
                 placeholder={gettext("Description…")}
@@ -4947,7 +5053,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 content={
                   editor_content(
                     description_value(@form, @current_lang, @primary_language, @multilang_enabled),
-                    assigns[:phoenix_kit_current_scope]
+                    assigns[:phoenix_kit_current_scope],
+                    @project
                   )
                 }
                 placeholder={gettext("Description…")}
@@ -4961,6 +5068,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <%!-- Where it stands: the list's own status colours, one press each
                — a radio group, so the choice posts with the form. --%>
           <.status_choices
+            :if={@can_set_status?}
             id="assignment-status"
             name={@form[:status].name}
             value={to_string(@form[:status].value)}
@@ -5808,10 +5916,28 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp allow_subproject_images(%{assigns: %{kind: "subproject", live_action: :edit}} = socket) do
     if socket.assigns[:sp_nest],
       do: socket,
-      else: DescriptionImages.allow(socket, &subproject_image_target/1)
+      else:
+        DescriptionImages.allow(
+          socket,
+          &subproject_image_target/1,
+          &subproject_images_allowed?/1
+        )
   end
 
   defp allow_subproject_images(socket), do: socket
+
+  # This form's write right (the parent's), and the sub-project's own
+  # right to add files: the pictures land in its folder, on its Files tab.
+  defp subproject_images_allowed?(socket) do
+    WriteGate.allowed?(socket) and
+      case fresh_sp_source(socket) do
+        %Project{uuid: uuid} = sub when is_binary(uuid) ->
+          Authz.can?(socket.assigns[:phoenix_kit_current_scope], sub, :upload_files)
+
+        _ ->
+          false
+      end
+  end
 
   defp subproject_image_target(socket) do
     case sp_source(socket) do

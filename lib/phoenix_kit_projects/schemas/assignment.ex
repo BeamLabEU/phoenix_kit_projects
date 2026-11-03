@@ -238,7 +238,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_inclusion(:priority, ~w(urgent high normal low))
     |> validate_task_xor_child()
     |> validate_inclusion(:status, @statuses)
-    |> validate_number(:estimated_duration, greater_than: 0)
+    |> validate_number(:estimated_duration, greater_than: 0, less_than: 2_147_483_648)
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
     |> validate_number(:progress_pct, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
     |> validate_translations_shape()

@@ -122,7 +122,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
     # Pictures kept by file, served per viewer (`InlineImages`).
     |> PhoenixKitProjects.InlineImages.put_refs()
-    |> validate_number(:estimated_duration, greater_than: 0)
+    |> validate_number(:estimated_duration, greater_than: 0, less_than: 2_147_483_648)
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
     |> validate_translations_shape()
     |> validate_single_default_assignee()

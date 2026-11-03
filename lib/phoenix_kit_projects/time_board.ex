@@ -328,9 +328,9 @@ defmodule PhoenixKitProjects.TimeBoard do
         |> workers(entries, by_actor)
         |> Enum.map(fn {person, mine} -> worker_line(base, person, mine, a, nil) end)
 
-      {[u], []} ->
-        [{{:person, u}, %{base | logged: Enum.map(entries, &entry/1), role: :own}}]
-
+      # One person or several, the same rule: someone else who logged time
+      # on it gets a line of their own with it (a second assignee used to
+      # move their hours there, while with one they sat on the assignee's).
       _ ->
         shared_lines(a, base, entries, by_actor, persons, groups)
     end
@@ -410,10 +410,24 @@ defmodule PhoenixKitProjects.TimeBoard do
      }}
   end
 
+  # The estimate in WORK hours (a day of 8): the walk back from a deadline
+  # spends it through work days (08:00–17:00). A task that counts weekends
+  # walks through Saturday and Sunday too, but its "2 days" stays 16 hours
+  # — the calendar's 24-hour day (`ScheduleLayout.assignment_hours/2`, right
+  # for a span) planned it three times as long.
+  defp work_hours(%Assignment{estimated_duration: n, estimated_duration_unit: unit})
+       when not is_nil(n) and not is_nil(unit),
+       do: Task.to_hours(n, unit, false)
+
+  defp work_hours(%Assignment{task: %Task{} = task}),
+    do: Task.to_hours(task.estimated_duration, task.estimated_duration_unit, false)
+
+  defp work_hours(_assignment), do: 0
+
   defp base_line(%Assignment{} = a, now, lang) do
     project = loaded(a.project)
     weekends? = if project, do: ScheduleLayout.task_counts_weekends?(a, project), else: false
-    hours = if project, do: ScheduleLayout.assignment_hours(a, project), else: 0
+    hours = if project, do: work_hours(a), else: 0
     deadline = a.deadline && local_naive(a.deadline)
     {planned, source} = planned_window(a, deadline, hours, weekends?)
     completed = a.completed_at && local_naive(a.completed_at)

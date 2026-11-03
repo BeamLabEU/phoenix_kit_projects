@@ -47,6 +47,10 @@ defmodule PhoenixKitProjects.Integration.RepeatsTest do
 
     assert Repeats.normalize(%{"every" => 0, "unit" => "week"}) == nil
     assert Repeats.normalize(%{"every" => 1, "unit" => "year"}) == nil
+    # A crafted nested param is no rule, never a crash.
+    assert Repeats.normalize(%{"every" => %{"x" => "1"}, "unit" => "week"}) == nil
+    assert Repeats.normalize(%{"every" => 1, "unit" => %{"x" => "week"}}) == nil
+    assert Repeats.normalize(%{"every" => ["-1"], "unit" => "week"}) == nil
 
     assert Repeats.from_params(%{"repeat" => "2weeks", "x" => 1}) ==
              %{"repeat_rule" => %{"every" => 2, "unit" => "week"}, "x" => 1}
@@ -115,6 +119,20 @@ defmodule PhoenixKitProjects.Integration.RepeatsTest do
     assert Enum.count(Projects.list_assignments(p.uuid), &(&1.repeat_rule != nil)) == 1
   end
 
+  test "finished through the form, the project stays open for the next one", %{project: p} do
+    # The form's path decided the completion inside the hand-off batch,
+    # before the next occurrence existed: the only task done, the project
+    # read complete with an open task in it.
+    a =
+      task!(p, "Check in with the client", %{"repeat_rule" => %{"every" => 1, "unit" => "week"}})
+
+    {:ok, _} = Projects.update_assignment_form(a, %{"status" => "done"})
+
+    open = Enum.reject(Projects.list_assignments(p.uuid), &(&1.status == "done"))
+    assert [_next] = open
+    assert is_nil(Projects.get_project(p.uuid).completed_at)
+  end
+
   test "a task that does not repeat makes nothing", %{project: p} do
     one = task!(p, "Once")
     done!(one)
@@ -175,6 +193,28 @@ defmodule PhoenixKitProjects.Integration.RepeatsTest do
       actor_uuid: user.uuid,
       metadata_has: %{"repeat_of" => weekly.uuid, "task" => "Weekly call"}
     )
+  end
+
+  describe "on the finisher's wall clock" do
+    # The zone `L10n` holds for the process (a LiveView sets it per viewer).
+    setup do
+      Process.put(:phoenix_kit_projects_viewer_zone, "Europe/Tallinn")
+      :ok
+    end
+
+    test "every Friday 17:00 stays 17:00 across the clocks going back" do
+      # Fri 23 Oct 2026 17:00 in Tallinn is 14:00 UTC (summer time); the
+      # clocks go back on 25 Oct, so the next Friday's 17:00 is 15:00 UTC —
+      # a shift of the UTC instant made it 16:00 there all winter.
+      assert Repeats.shift(~U[2026-10-23 14:00:00Z], %{"every" => 1, "unit" => "week"}) ==
+               ~U[2026-10-30 15:00:00Z]
+    end
+
+    test "a month rule takes its day from the local date" do
+      # 31 Jan 2027 01:00 in Tallinn is still 30 Jan 23:00 in UTC.
+      rule = Repeats.anchored(%{"every" => 1, "unit" => "month"}, ~U[2027-01-30 23:00:00Z])
+      assert rule["day"] == 31
+    end
   end
 
   describe "a month rule keeps its day" do

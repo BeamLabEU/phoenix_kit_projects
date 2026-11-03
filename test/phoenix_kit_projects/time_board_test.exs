@@ -191,6 +191,27 @@ defmodule PhoenixKitProjects.TimeBoardTest do
       refute line.overdue?
     end
 
+    test "a task that counts weekends plans its days as work days, not 24 hours each" do
+      p = person("Ann", "u-ann")
+
+      a =
+        task(
+          assigned_person_uuid: p.uuid,
+          project: %{project() | counts_weekends: true},
+          deadline: ~U[2026-10-28 17:00:00Z],
+          estimated_duration: 2,
+          estimated_duration_unit: "days"
+        )
+
+      [line] = build([a], [p]) |> lines({:person, p.uuid})
+      # 16 work hours back from Wednesday 17:00: Wednesday, then Tuesday
+      # 10:00 — not six days of 48 calendar hours.
+      assert line.planned == [
+               {~N[2026-10-27 10:00:00], ~N[2026-10-27 17:00:00]},
+               {~N[2026-10-28 08:00:00], ~N[2026-10-28 17:00:00]}
+             ]
+    end
+
     test "deadline without an estimate is a pin only" do
       p = person("Ann", "u-ann")
       a = task(assigned_person_uuid: p.uuid, deadline: ~U[2026-10-28 15:00:00Z])
@@ -433,6 +454,38 @@ defmodule PhoenixKitProjects.TimeBoardTest do
                lines(board, {:person, sam.uuid})
 
       assert [%{role: :plan, logged: [], worked_by: ["Sam"]}] = lines(board, {:team, "t1"})
+    end
+
+    test "time someone else logged on a person's task is on their own row" do
+      # With two assignees it already was; with one it sat on the assignee's
+      # row, and the person who did the work showed nothing.
+      ann = person("Ann", "u-ann")
+      bob = person("Bob", "u-bob")
+
+      a =
+        task(
+          title: "Fit the doors",
+          assigned_person_uuid: ann.uuid,
+          deadline: ~U[2026-10-28 17:00:00Z]
+        )
+
+      entry = %WorkEntry{
+        uuid: "e-bob",
+        assignment_uuid: a.uuid,
+        actor_kind: "user",
+        actor_uuid: "u-bob",
+        amount: Decimal.new(120),
+        started_at: ~U[2026-10-28 10:00:00Z],
+        ended_at: ~U[2026-10-28 12:00:00Z],
+        inserted_at: ~U[2026-10-28 12:00:00Z]
+      }
+
+      board = build([a], [ann, bob], [entry])
+
+      assert [%{role: :own, logged: []}] = lines(board, {:person, ann.uuid})
+
+      assert [%{role: :worker, logged: [%{uuid: "e-bob", minutes: 120.0}]}] =
+               lines(board, {:person, bob.uuid})
     end
 
     test "a trashed person has no row, as an assignee or listed" do

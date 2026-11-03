@@ -32,7 +32,7 @@ defmodule PhoenixKitProjects.Repeats do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{Activity, Outline, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Outline, Projects}
   alias PhoenixKitProjects.Schemas.{Assignment, Task}
 
   @units ~w(day week month)
@@ -59,9 +59,8 @@ defmodule PhoenixKitProjects.Repeats do
   """
   @spec normalize(term()) :: map() | nil
   def normalize(%{} = rule) do
-    with unit when unit in @units <- to_string(rule["unit"] || rule[:unit] || ""),
-         {n, ""} when n in 1..@max_every <-
-           Integer.parse(to_string(rule["every"] || rule[:every] || "")) do
+    with unit when unit in @units <- text(rule["unit"] || rule[:unit]),
+         {n, ""} when n in 1..@max_every <- Integer.parse(text(rule["every"] || rule[:every])) do
       put_day(%{"every" => n, "unit" => unit}, rule["day"] || rule[:day])
     else
       _ -> nil
@@ -69,6 +68,13 @@ defmodule PhoenixKitProjects.Repeats do
   end
 
   def normalize(_), do: nil
+
+  # A posted value as text: a crafted nested param (`repeat_unit[x]=y`)
+  # reads as no rule rather than raising in `to_string/1`.
+  defp text(value) when is_binary(value), do: value
+  defp text(value) when is_integer(value), do: Integer.to_string(value)
+  defp text(value) when is_atom(value) and not is_nil(value), do: Atom.to_string(value)
+  defp text(_value), do: ""
 
   defp put_day(%{"unit" => "month"} = rule, day) when is_integer(day) and day in 1..31,
     do: Map.put(rule, "day", day)
@@ -84,7 +90,9 @@ defmodule PhoenixKitProjects.Repeats do
   def anchored(rule, %DateTime{} = base) do
     case normalize(rule) do
       %{"unit" => "month", "day" => _} = rule -> rule
-      %{"unit" => "month"} = rule -> Map.put(rule, "day", base.day)
+      # The day on the wall clock: 30 Jan 17:00 in California is already
+      # 31 Jan in UTC, and would make every later month land a day early.
+      %{"unit" => "month"} = rule -> Map.put(rule, "day", L10n.local(base).day)
       rule -> rule
     end
   end
@@ -180,17 +188,27 @@ defmodule PhoenixKitProjects.Repeats do
   rule with a `"day"` lands on that day of the month, or the month's last
   day when it has fewer.
   """
+  #
+  # Moved on the wall clock, in the zone of whoever finished it (`L10n`'s,
+  # set by the LiveView; a process with none — a job, the API — moves it in
+  # UTC): "every Friday 17:00" stays 17:00 across a daylight-saving change,
+  # where a shift of the UTC instant came out an hour off all winter.
   @spec shift(DateTime.t(), map()) :: DateTime.t()
   def shift(%DateTime{} = at, rule) do
-    case normalize(rule) do
-      %{"every" => n, "unit" => "month", "day" => day} ->
-        shifted = DateTime.shift(at, month: n)
-        target = min(day, Calendar.ISO.days_in_month(shifted.year, shifted.month))
-        DateTime.shift(shifted, day: target - shifted.day)
+    wall = at |> L10n.local() |> DateTime.to_naive()
 
-      %{"every" => n, "unit" => unit} ->
-        DateTime.shift(at, [{String.to_existing_atom(unit), n}])
-    end
+    shifted =
+      case normalize(rule) do
+        %{"every" => n, "unit" => "month", "day" => day} ->
+          moved = NaiveDateTime.shift(wall, month: n)
+          target = min(day, Calendar.ISO.days_in_month(moved.year, moved.month))
+          NaiveDateTime.shift(moved, day: target - moved.day)
+
+        %{"every" => n, "unit" => unit} ->
+          NaiveDateTime.shift(wall, [{String.to_existing_atom(unit), n}])
+      end
+
+    L10n.from_wall(shifted) || DateTime.from_naive!(shifted, "Etc/UTC")
   end
 
   @doc "A `Date` moved on by `rule`."
@@ -293,6 +311,12 @@ defmodule PhoenixKitProjects.Repeats do
     PhoenixKitProjects.PubSub.broadcast_assignment(:assignment_reordered, %{
       project_uuid: made.project_uuid
     })
+
+    # The finish was counted while this was not made yet: on the task
+    # form's path (`update_assignment_form/3`) the completion was decided
+    # inside the hand-off batch, with the finished task as the last open
+    # one, so the project could read done with its next occurrence open.
+    _ = Projects.recompute_project_completion(made.project_uuid)
 
     {:ok, made}
   end

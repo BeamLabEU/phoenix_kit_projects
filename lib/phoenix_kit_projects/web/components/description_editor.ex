@@ -118,6 +118,49 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
 
   def suggest(socket, _msg, _context), do: socket
 
+  # Leaf renders the markdown it is given with MDEx `unsafe: true` and no
+  # allow-list, straight into its contenteditable: an `<img onerror>` in a
+  # stored description (the portal, the API, a hand-made post) would run
+  # in the session of whoever opens the editor. The read view sanitises
+  # (`RichText`); the editor is handed text with no raw HTML in it.
+  @editor_tags ~r/\A<\/?(?:sub|sup|u|br)\s*\/?>\z/i
+  @tag_open ~r/<\/?(?:sub|sup|u|br)\s*\/?>|<(?=[A-Za-z\/!?])/i
+
+  @doc """
+  The markdown as the editor may be handed it: unchanged unless it holds
+  raw HTML, which is then shown as text (every tag's `<` as `&lt;`). Only
+  the bare tags Leaf itself writes (`<sub>`, `<sup>`, `<u>`, `<br>`) stay.
+  Raw HTML is found by MDEx's own parser — the engine and options Leaf
+  renders with — so a tag in a code span or a fenced block is left alone.
+  """
+  @spec safe_content(String.t() | nil) :: String.t() | nil
+  def safe_content(text) when is_binary(text) do
+    if raw_html?(text) do
+      escaped =
+        Regex.replace(@tag_open, text, fn
+          "<" -> "&lt;"
+          tag -> tag
+        end)
+
+      if raw_html?(escaped), do: String.replace(text, "<", "&lt;"), else: escaped
+    else
+      text
+    end
+  end
+
+  def safe_content(other), do: other
+
+  defp raw_html?(text) do
+    case MDEx.parse_document(text) do
+      {:ok, doc} -> Enum.any?(doc, &unsafe_node?/1)
+      _ -> true
+    end
+  end
+
+  defp unsafe_node?(%MDEx.HtmlBlock{}), do: true
+  defp unsafe_node?(%MDEx.HtmlInline{literal: literal}), do: not (literal =~ @editor_tags)
+  defp unsafe_node?(_node), do: false
+
   @doc "Places a stored image in the editor at the cursor."
   @spec insert_image(String.t(), String.t(), String.t()) :: :ok
   def insert_image(editor_id, url, alt \\ "") do
@@ -158,7 +201,7 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
     assigns =
       assign(assigns,
         value: assigns.value || "",
-        content: assigns.content || assigns.value || "",
+        content: safe_content(assigns.content || assigns.value || ""),
         image_button:
           if(is_nil(assigns.image_button), do: assigns.uploads, else: assigns.image_button),
         suggestions: [

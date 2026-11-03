@@ -746,12 +746,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # A step asked for by the task view in the drawer: run as this page's own
   # event, through the same feature gate and permission check as a click.
-  def handle_info({:projects, :intent, %{event: event, uuid: uuid}}, socket)
+  # Only this page's viewer's own click (`WebHelpers.emit_intent/3`): a
+  # host topic shared by everyone who has the record open reaches every
+  # viewer's page, which would otherwise each run it under its own name.
+  def handle_info({:projects, :intent, %{event: event, uuid: uuid} = intent}, socket)
       when event in ~w(ask_ready complete start_task ask_reopen reopen make_idle) and
              is_binary(uuid) do
-    case handle_event(event, %{"uuid" => uuid}, socket) do
-      {:noreply, socket} -> {:noreply, socket}
-      {:reply, _reply, socket} -> {:noreply, socket}
+    if Map.get(intent, :user_uuid) == Activity.actor_uuid(socket) do
+      case handle_event(event, %{"uuid" => uuid}, socket) do
+        {:noreply, socket} -> {:noreply, socket}
+        {:reply, _reply, socket} -> {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
     end
   end
 
@@ -851,6 +858,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       # read for the rows and the expanded children's, refreshed with them.
       assignee_faces:
         Assignees.faces(assignments ++ Enum.flat_map(Map.values(subproject_child_tasks), & &1)),
+      # The pictures in the rows' descriptions, signed for this viewer in a
+      # fixed number of reads per project shown — never a read per row.
+      desc_image_urls:
+        row_image_urls(
+          assignments ++ Enum.flat_map(Map.values(subproject_child_tasks), & &1),
+          socket.assigns[:phoenix_kit_current_scope]
+        ),
       # A sub-project's assignee is its own project's.
       child_faces:
         assignments
@@ -1920,6 +1934,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:assignment_labels, :map, default: %{})
   # Who has each task, as faces (`Assignees.faces/2`), keyed by uuid.
   attr(:faces, :map, default: %{})
+  # The descriptions' pictures, read for the page (`row_image_urls/2`).
+  attr(:image_urls, :map, default: %{})
   # How many rows sit under it (deleted with it — the delete question says so).
   attr(:below, :integer, default: 0)
   # The outline bits of a row (`OutlineList`): permissions, the "3 of 7" of
@@ -2147,7 +2163,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <% lang = L10n.current_content_lang() %>
           <% shown_desc = Assignment.localized_description(@a, lang) || TaskSchema.localized_description(@a.task, lang) %>
           <div :if={shown_desc} class="text-base-content/60">
-            <.rich_text text={shown_desc} scope={@scope} compact />
+            <.rich_text text={shown_desc} scope={@scope} holder={@a} urls={@image_urls} compact />
           </div>
 
           <%!-- Meta row: duration, assignee, completed by. Each chip is
@@ -2490,38 +2506,41 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     entries =
       assigns.a
       |> PhoenixKitProjects.AssigneeSet.named()
-      |> Enum.map(fn {key, name} -> {key, name || ""} end)
+      |> Enum.map(fn {{kind, uuid} = key, name} ->
+        {key, name || "", PhoenixKitProjects.People.staff_page_path(kind, uuid)}
+      end)
 
     assigns = assign(assigns, entries: entries)
 
     ~H"""
     <%= case @entries do %>
       <% [] -> %>
-      <% [{{kind, uuid}, _name}] -> %>
-        <.link navigate={staff_path(kind, uuid)} class="min-w-0 hover:underline" title={gettext("Open their page")}>
+      <% [{_key, _name, path}] -> %>
+        <.link :if={path} navigate={path} class="min-w-0 hover:underline" title={gettext("Open their page")}>
           <.assignee_shown a={@a} faces={@faces} />
         </.link>
+        <span :if={!path} class="min-w-0"><.assignee_shown a={@a} faces={@faces} /></span>
       <% _several -> %>
         <details class="dropdown min-w-0" id={"row-assignees-pop-#{@a.uuid}"}>
           <summary class="list-none cursor-pointer [&::-webkit-details-marker]:hidden min-w-0">
             <.assignee_shown a={@a} faces={@faces} />
           </summary>
           <ul class="dropdown-content z-30 mt-1 min-w-[12rem] rounded-box bg-base-100 border border-base-200 shadow-xl p-1">
-            <li :for={{{kind, uuid}, name} <- @entries}>
-              <.link navigate={staff_path(kind, uuid)} class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-base-200">
+            <li :for={{{kind, _uuid}, name, path} <- @entries}>
+              <.link :if={path} navigate={path} class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-base-200">
                 <.icon name={assignee_kind_icon(kind)} class="w-4 h-4 shrink-0 opacity-70" />
                 <span class="truncate">{name}</span>
               </.link>
+              <span :if={!path} class="flex items-center gap-2 px-3 py-2 text-sm">
+                <.icon name={assignee_kind_icon(kind)} class="w-4 h-4 shrink-0 opacity-70" />
+                <span class="truncate">{name}</span>
+              </span>
             </li>
           </ul>
         </details>
     <% end %>
     """
   end
-
-  defp staff_path("team", uuid), do: PhoenixKitStaff.Paths.team(uuid)
-  defp staff_path("department", uuid), do: PhoenixKitStaff.Paths.department(uuid)
-  defp staff_path(_person, uuid), do: PhoenixKitStaff.Paths.person(uuid)
 
   defp assignee_kind_icon("team"), do: "hero-users"
   defp assignee_kind_icon("department"), do: "hero-building-office"
@@ -2715,7 +2734,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # here (rather than passing nil) is what keeps "assignees can update
   # their own status" true through the interceptor.
   @record_param_events ~w(set_status complete next_up_confirm make_ready ask_ready make_idle start_task reopen ask_reopen change_workflow_status
-                          update_progress toggle_tracking remove_assignment save_duration save_deadline)
+                          update_progress toggle_tracking remove_assignment save_duration save_deadline
+                          detach_subproject)
 
   @doc false
   # For the tests: the events checked against a record's own project.
@@ -2796,6 +2816,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp authorized_handle_event(event, params, socket) do
+    params = canonical_record(event, params, socket)
+
     case Map.get(@event_actions, event) do
       nil ->
         run_step(event, params, socket)
@@ -2839,8 +2861,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp offer_subproject_next_up(socket, finished) do
     Enum.find_value(finished, socket, fn %{link_uuid: link_uuid, project_uuid: project_uuid} = f ->
+      # The rows are the PARENT's (titles, assignees, who is told): offered
+      # only to someone who may open that project — roles are per project,
+      # and finishing a sub-project's last task needs none in its parent.
       with %Assignment{} = link <- Projects.get_assignment(link_uuid),
            %Project{} = project <- next_up_project(socket, project_uuid),
+           true <-
+             Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :view),
            rows when rows != [] <- fresh_next_up_rows(f.row_uuids) do
         next_up =
           socket
@@ -2894,6 +2921,43 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # Every description a row may show (each language's, the task's own),
+  # its pictures read once per project — a row's pictures are its
+  # project's (`InlineImages`' holder rule).
+  defp row_image_urls(rows, scope) do
+    rows
+    |> Enum.group_by(& &1.project_uuid)
+    |> Enum.reduce(%{}, fn {_project, group}, acc ->
+      texts = Enum.flat_map(group, &description_texts/1)
+
+      Map.merge(
+        acc,
+        PhoenixKitProjects.InlineImages.urls_for(texts, scope, holder: hd(group))
+      )
+    end)
+  end
+
+  defp description_texts(%Assignment{} = a) do
+    task = if match?(%TaskSchema{}, a.task), do: a.task
+
+    [a.description, task && task.description] ++
+      translated_descriptions(a.translations) ++
+      translated_descriptions(task && task.translations)
+  end
+
+  defp translated_descriptions(%{} = translations),
+    do: for({_lang, %{"description" => d}} <- translations, do: d)
+
+  defp translated_descriptions(_), do: []
+
+  defp record_project(socket, %Assignment{project_uuid: pid}) when is_binary(pid) do
+    if pid == socket.assigns.project.uuid,
+      do: socket.assigns.project,
+      else: Projects.get_project(pid) || socket.assigns.project
+  end
+
+  defp record_project(socket, _record), do: socket.assigns.project
+
   defp child_project_allows?(scope, action, uuid) do
     with %Assignment{} = a <- Projects.get_assignment(uuid),
          %Project{} = child <- Projects.get_project(a.project_uuid) do
@@ -2906,6 +2970,44 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp record_param("board_move", %{"moved_id" => uuid}), do: uuid
   defp record_param(event, %{"uuid" => uuid}) when event in @record_param_events, do: uuid
   defp record_param(_event, _params), do: nil
+
+  # The record param as the uuid the handler will act on. The handlers
+  # resolve it through `scoped_assignment/2`, which also takes a task ref
+  # or an upper-case or padded uuid; the checks above compare strings, so
+  # any other spelling of a sub-project's task read as "not on this page"
+  # there and was then written with this project's rights. `save_duration`
+  # writes the row the page holds open, whatever the event says.
+  defp canonical_record("save_duration", params, socket),
+    do: Map.put(params, "uuid", socket.assigns[:editing_duration_uuid])
+
+  defp canonical_record(event, params, _socket) do
+    key = if event == "board_move", do: "moved_id", else: "uuid"
+
+    case params do
+      %{^key => raw}
+      when is_binary(raw) and (event == "board_move" or event in @record_param_events) ->
+        Map.put(params, key, canonical_uuid(raw))
+
+      _ ->
+        params
+    end
+  end
+
+  defp canonical_uuid(raw) do
+    case Refs.parse(raw) do
+      {:uuid, uuid} ->
+        uuid
+
+      {:task, _key, _number} ->
+        case Projects.get_assignment(raw) do
+          %Assignment{uuid: uuid} -> uuid
+          nil -> raw
+        end
+
+      _ ->
+        raw
+    end
+  end
 
   # Honour the drop position without ever renumbering from what the client
   # could see.
@@ -3257,6 +3359,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # A status the menu never offers (a crafted event): nothing, not a crash.
+  defp gated_handle_event("set_status", _params, socket), do: {:noreply, socket}
+
   # Reopen asks why (the panel, 2026-10-25): the dialog's reason is posted
   # to the task's thread and quoted by the reopen's notice and history line,
   # so the person whose work came back reads ONE message that says what is
@@ -3435,11 +3540,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       nil ->
         {:noreply, socket}
 
-      _a ->
+      a ->
         # Just flip the assign — the template sources the prefilled
         # values directly from the assignment row via the `:for=` loop
         # variable, so there's nothing to stage into a form here.
-        {:noreply, assign(socket, editing_duration_uuid: uuid)}
+        {:noreply, assign(socket, editing_duration_uuid: a.uuid)}
     end
   end
 
@@ -3806,9 +3911,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          |> assign(log_time_open: false, log_time_uuid: nil)
          |> put_flash(:error, gettext("That task is no longer in this project."))}
 
+      # A sub-project's task (expanded here) is judged by its own project.
       not Authz.can?(
         socket.assigns[:phoenix_kit_current_scope],
-        socket.assigns.project,
+        record_project(socket, record),
         :log_time,
         record
       ) ->
@@ -5537,6 +5643,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             :if={desc}
             text={desc}
             scope={@phoenix_kit_current_scope}
+            holder={@project}
             class="text-sm text-base-content/60"
           />
         </div>
@@ -6389,7 +6496,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                            they may open it, the author's words if it's gone,
                            a locked chip if it isn't theirs to see. --%>
                       <div :if={sp_desc} class="text-base-content/60">
-                        <.rich_text text={sp_desc} scope={@phoenix_kit_current_scope} compact />
+                        <.rich_text
+                          text={sp_desc}
+                          scope={@phoenix_kit_current_scope}
+                          holder={child}
+                          compact
+                        />
                       </div>
 
                       <%!-- Rolled-up meta (read-only — driven by the child) --%>
@@ -6502,6 +6614,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       assignment_note_counts={@assignment_note_counts}
                                       assignment_labels={@assignment_labels}
                                       faces={assigns[:assignee_faces] || %{}}
+                                      image_urls={assigns[:desc_image_urls] || %{}}
                                       below={Map.get(assigns[:below_counts] || %{}, ct.uuid, 0)}
                                       deps_by_assignment={@deps_by_assignment}
                                       held_by={@held_by}
@@ -6543,6 +6656,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       assignment_note_counts={@assignment_note_counts}
                       assignment_labels={@assignment_labels}
                       faces={assigns[:assignee_faces] || %{}}
+                      image_urls={assigns[:desc_image_urls] || %{}}
                       below={Map.get(assigns[:below_counts] || %{}, a.uuid, 0)}
                       deps_by_assignment={@deps_by_assignment}
                       held_by={@held_by}

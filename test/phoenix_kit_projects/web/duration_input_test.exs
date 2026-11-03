@@ -24,6 +24,8 @@ defmodule PhoenixKitProjects.Web.DurationInputTest do
             %{"amount" => "", "unit" => "hours"},
             %{"amount" => "0", "unit" => "hours"},
             %{"amount" => "2", "unit" => "fortnights"},
+            # A number input posts it; the product used to overflow and raise.
+            %{"amount" => "1e308", "unit" => "days"},
             "1h 30m",
             nil
           ] do

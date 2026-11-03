@@ -12,10 +12,11 @@ defmodule PhoenixKitProjects.Web.ApiDescriptionImagesTest do
   import Ecto.Query
 
   alias PhoenixKit.Modules.Storage.File, as: StorageFile
-  alias PhoenixKit.Modules.Storage.URLSigner
+  alias PhoenixKit.Modules.Storage.{Libraries, URLSigner}
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Attachments, Members, Projects}
   alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitProjects.Web.Components.RichText
 
   @base "/api/projects/v1"
 
@@ -103,7 +104,12 @@ defmodule PhoenixKitProjects.Web.ApiDescriptionImagesTest do
       ApiKeys.create(project, %{"name" => "Member's AI", "user_uuid" => other.uuid})
 
     {:ok,
-     a: a, pic: file, owner_key: owner_key, owner_token: owner_token, other_token: other_token}
+     a: a,
+     pic: file,
+     owner_key: owner_key,
+     owner_token: owner_token,
+     other_token: other_token,
+     other_key_user: other.uuid}
   end
 
   test "a task's picture reaches the key's person as a time-window address", ctx do
@@ -139,6 +145,73 @@ defmodule PhoenixKitProjects.Web.ApiDescriptionImagesTest do
       |> json_response(200)
 
     assert task["description"] == "Before ![shot](pkfile:#{ctx.pic.uuid}) after"
+  end
+
+  test "a shared key is not handed its minter's storage rights", ctx do
+    # The owner may open the private-library picture; a shared key the
+    # owner made acts for nobody, so it gets no address for it.
+    owner_uuid = ctx.owner_key.user_uuid
+
+    {:ok, _key, shared_token} =
+      ApiKeys.create(ctx.a.project_uuid, %{"name" => "Shared AI"}, actor_uuid: owner_uuid)
+
+    %{"task" => task} =
+      ctx.conn
+      |> api(shared_token)
+      |> get("#{@base}/tasks/#{ctx.a.uuid}")
+      |> json_response(200)
+
+    assert task["description"] == "Before ![shot](pkfile:#{ctx.pic.uuid}) after"
+  end
+
+  test "a picture the project holds in Media reaches every reader of the task", ctx do
+    # Media lets only the uploader and an Owner/Admin read a file: by the
+    # reader's own right a member saw none of a task's pictures.
+    Repo.update_all(from(f in StorageFile, where: f.uuid == ^ctx.pic.uuid),
+      set: [library_uuid: Libraries.media_uuid()]
+    )
+
+    %{"task" => task} =
+      ctx.conn
+      |> api(ctx.other_token)
+      |> get("#{@base}/tasks/#{ctx.a.uuid}")
+      |> json_response(200)
+
+    assert task["description"] =~ "/file/#{ctx.pic.uuid}/original/"
+
+    member = fake_scope(user_uuid: ctx.other_key_user, roles: [], permissions: ["projects"])
+    text = "![shot](pkfile:#{ctx.pic.uuid})"
+    a = Projects.get_assignment(ctx.a.uuid)
+    assert RichText.to_html(text, member, true, a) =~ "/file/"
+
+    # A file the project does not hold is not signed for the member.
+    other_project = fixture_project(%{"start_mode" => "immediate"})
+
+    {:ok, %{assignment: foreign}} =
+      Projects.create_task_with_assignment(
+        other_project.uuid,
+        %{"title" => "Elsewhere", "ad_hoc" => true},
+        %{}
+      )
+
+    path = Path.join(System.tmp_dir!(), "pkp-api-pic-#{System.unique_integer([:positive])}")
+    Elixir.File.write!(path, "other #{System.unique_integer()}")
+    on_exit(fn -> Elixir.File.rm(path) end)
+
+    {:ok, foreign_file} =
+      Attachments.store_task_file(
+        foreign,
+        path,
+        [filename: "o.txt", content_type: "text/plain", size_bytes: 10, inline: true],
+        ctx.owner_key.user_uuid
+      )
+
+    refute RichText.to_html(
+             "![o](pkfile:#{foreign_file.uuid})",
+             member,
+             true,
+             a
+           ) =~ "/file/"
   end
 
   test "the text written back as it was read keeps the picture by its file", ctx do

@@ -327,8 +327,28 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       # It opens the view saying this page runs the view's next step.
       assert html =~ "step_intents"
 
-      send(view.pid, {:projects, :intent, %{event: "ask_ready", uuid: ctx.measure.uuid}})
+      send(
+        view.pid,
+        {:projects, :intent,
+         %{event: "ask_ready", uuid: ctx.measure.uuid, user_uuid: ctx.user.uuid}}
+      )
+
       assert render(view) =~ "Allow “"
+    end
+
+    test "a step another viewer's drawer asked for is not run here", ctx do
+      # A host's topic is shared by everyone who has its record open: the
+      # click was somebody else's, and must not run under this viewer.
+      {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
+
+      send(
+        view.pid,
+        {:projects, :intent,
+         %{event: "start_task", uuid: ctx.model.uuid, user_uuid: Ecto.UUID.generate()}}
+      )
+
+      refute render(view) =~ "Allow “"
+      assert Projects.get_assignment(ctx.model.uuid).status == ctx.model.status
     end
 
     test "a step the page does not own is ignored", ctx do

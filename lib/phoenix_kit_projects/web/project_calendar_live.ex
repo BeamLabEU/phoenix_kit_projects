@@ -183,7 +183,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # (meetings), as calendar events — drawn while no filter narrows the
       # calendar to tasks.
       happenings: [],
-      today: Date.utc_today(),
+      today: local_today(),
+      now_time: local_now(),
       # Per-project PubSub topics already subscribed (the whole rendered tree;
       # grows as sub-projects appear). Avoids double-subscribing on reload.
       subscribed_projects: MapSet.new(),
@@ -423,7 +424,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       calendar_items: {items, layout},
       happenings: happenings(project),
       click_targets: click_targets,
-      today: Date.utc_today(),
+      today: local_today(),
+      now_time: local_now(),
       calendar_loading: false,
       # The person picker offers only people relevant to THIS project tree's
       # assignments (sub-projects included) — anyone else would only ever
@@ -436,15 +438,21 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
           Enum.all?(assignment_refs(it, items), &Assignees.unassigned?/1)
         end),
       # Late bars and missed deadlines in the RAW tree — the Overdue-only
-      # toggle hides at 0.
+      # toggle hides at 0. A task both late and past its deadline is one.
       overdue_count:
-        Enum.count(top_items, fn it ->
-          CalendarDisplay.task_late?(it.assignment, Map.fetch!(layout, it.uuid), now)
-        end) +
-          Enum.count(
-            deadline_items(items),
-            &CalendarDisplay.deadline_missed?(&1.assignment, DateTime.utc_now())
-          )
+        Enum.uniq(
+          for(
+            it <- top_items,
+            CalendarDisplay.task_late?(it.assignment, Map.fetch!(layout, it.uuid), now),
+            do: it.assignment.uuid
+          ) ++
+            for(
+              it <- deadline_items(items),
+              CalendarDisplay.deadline_missed?(it.assignment, DateTime.utc_now()),
+              do: it.assignment.uuid
+            )
+        )
+        |> length()
     )
     |> apply_calendar_filter()
   end
@@ -831,6 +839,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
               time_format={CalendarDisplay.time_format()}
               date={@anchor_date}
               today={@today}
+              now={@now_time}
               week_start={@overdue_anim.week_start}
               show_weekends={@overdue_anim.show_weekends}
               show_week_numbers={@overdue_anim.show_week_numbers}
@@ -900,4 +909,11 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     </div>
     """
   end
+
+  # The viewer's day and clock: the deadline markers and timed events are
+  # drawn in the viewer's zone (`L10n.local/1`), so the today highlight, the
+  # snap to today and the Week/Day now line are too — the component's own
+  # default is UTC (`Time.utc_now()`), which put the line hours off.
+  defp local_today, do: L10n.local_date(DateTime.utc_now())
+  defp local_now, do: DateTime.utc_now() |> L10n.local() |> DateTime.to_time()
 end

@@ -482,7 +482,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   defp description(a) do
     a
     |> raw_description()
-    |> InlineImages.resolve(viewer(), urls: images(), keep_missing: true)
+    |> InlineImages.resolve(viewer(), urls: images(), keep_missing: true, holder: a)
   end
 
   defp raw_description(%Assignment{description: d}) when is_binary(d) and d != "", do: d
@@ -495,30 +495,44 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   """
   @spec prefetch_images([Assignment.t()]) :: :ok
   def prefetch_images(assignments) when is_list(assignments) do
-    texts = Enum.map(assignments, &raw_description/1)
-    Process.put(:pk_api_images, InlineImages.urls_for(texts, viewer()))
+    # Per project: whose pictures a description shows is its project's
+    # (`InlineImages`' holder rule).
+    urls =
+      assignments
+      |> Enum.group_by(& &1.project_uuid)
+      |> Enum.reduce(%{}, fn {_project, rows}, acc ->
+        texts = Enum.map(rows, &raw_description/1)
+        Map.merge(acc, InlineImages.urls_for(texts, viewer(), holder: hd(rows)))
+      end)
+
+    Process.put(:pk_api_images, urls)
     :ok
   end
 
   defp images, do: Process.get(:pk_api_images, %{})
 
   # The person the request's key acts as, as a scope the storage checks
-  # read (`ApiKey.accountable_uuid/1`; never narrowed to a session's
-  # active role — a key has no session). Read once per request.
+  # read (`ApiKey.user_uuid`; never narrowed to a session's active role — a
+  # key has no session). Read once per request. A shared key acts for
+  # nobody: it is not handed its minter's storage rights (an admin's would
+  # sign any file on the site for whoever holds the token) — it sees the
+  # pictures its project holds (`InlineImages`' holder rule) and public ones.
   defp viewer do
-    with %ApiKey{} = key <- Process.get(:pk_api_view),
-         uuid when is_binary(uuid) <- ApiKey.accountable_uuid(key) do
-      case Process.get(:pk_api_viewer) do
-        {^uuid, scope} ->
-          scope
-
-        _ ->
-          scope = uuid |> Auth.get_user() |> then(&(&1 && Scope.for_user(&1, narrow: false)))
-          Process.put(:pk_api_viewer, {uuid, scope})
-          scope
-      end
-    else
+    case Process.get(:pk_api_view) do
+      %ApiKey{user_uuid: uuid} when is_binary(uuid) -> person_scope(uuid)
       _ -> nil
+    end
+  end
+
+  defp person_scope(uuid) do
+    case Process.get(:pk_api_viewer) do
+      {^uuid, scope} ->
+        scope
+
+      _ ->
+        scope = uuid |> Auth.get_user() |> then(&(&1 && Scope.for_user(&1, narrow: false)))
+        Process.put(:pk_api_viewer, {uuid, scope})
+        scope
     end
   end
 

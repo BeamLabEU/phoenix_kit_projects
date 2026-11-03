@@ -98,7 +98,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_ai_translate()
       |> assign_cue_baseline()
       |> assign(dirty?: false)
-      |> DescriptionImages.allow(&description_image_target/1)
+      |> DescriptionImages.allow(&description_image_target/1, &WriteGate.allowed?/1)
       |> allow_upload(:project_cover,
         accept: ~w(image/*),
         max_entries: 1,
@@ -421,10 +421,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     # capabilities are the load-bearing case): both live in one
     # `flag_states` map, so tracking, pinning and the union rule need no
     # special case for either.
+    # A flag with a site default starts where a new project would land
+    # without a choice (`Features.site_default_values/0`), not at the
+    # catalog's default: the box shows what the project will get.
+    site = Features.site_default_values()
+
     flag_states =
       (assigns.flag_defs ++ Enum.flat_map(assigns.ext_flag_defs, fn {_k, flags} -> flags end))
       |> Map.new(fn flag ->
-        seeded = Map.get(preset_flags, flag.key, flag.default)
+        seeded = Map.get(preset_flags, flag.key, Map.get(site, flag.key, flag.default))
         {flag.key, Map.get(template_flags, flag.key, seeded)}
       end)
 
@@ -854,7 +859,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # calling `handle_event/3` directly, past the hook, so it gates the event
   # it replays (a confirmed Close is no write and still leaves).
   def write_events,
-    do: ~w(save generate_default_statuses end_project resume_project)
+    do: ~w(save generate_default_statuses end_project resume_project remove_cover)
 
   @doc false
   # What opening this form needed (`apply_action/3`): the projects module
@@ -1792,6 +1797,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # carries the template's pins as its base layer, so a minimal diff
   # against the catalog alone left such a pin standing against the form
   # (codex, 2026-09-05); the form is the user's visible truth.
+  # A box differing from what the project would get unpinned — the site's
+  # default for a `site_default` flag, else the catalog's — is pinned: one
+  # left as shown follows the site, one changed from it is the project's.
   defp flags_to_pin(assigns, flag_defs) do
     carried =
       case assigns.template_preview do
@@ -1799,10 +1807,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         _ -> %{}
       end
 
+    site = Features.site_default_values()
+
     flag_defs
     |> Enum.filter(fn flag ->
-      state = Map.get(assigns.flag_states, flag.key, flag.default)
-      state != flag.default or (Map.has_key?(carried, flag.key) and carried[flag.key] != state)
+      default = Map.get(site, flag.key, flag.default)
+      state = Map.get(assigns.flag_states, flag.key, default)
+      state != default or (Map.has_key?(carried, flag.key) and carried[flag.key] != state)
     end)
     |> Map.new(fn flag -> {flag.key, Map.get(assigns.flag_states, flag.key)} end)
   end
@@ -2625,7 +2636,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   PhoenixKitProjects.InlineImages.resolve(
                     description_value(@form, @current_lang, @primary_language, @multilang_enabled),
                     assigns[:scope],
-                    keep_missing: true
+                    keep_missing: true,
+                    holder: assigns[:project]
                   )
                 }
                 placeholder={gettext("Description…")}
@@ -3739,7 +3751,21 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp assign_cover(socket), do: assign(socket, cover_url: nil)
 
+  # An upload's progress is no event, so the form's `WriteGate` hook never
+  # sees it: the right the form's save needs is asked here.
   defp cover_progress(:project_cover, %{done?: true} = entry, socket) do
+    if WriteGate.allowed?(socket),
+      do: store_cover(socket, entry),
+      else:
+        {:noreply,
+         socket
+         |> cancel_upload(:project_cover, entry.ref)
+         |> put_flash(:error, gettext("You don't have permission to do that here."))}
+  end
+
+  defp cover_progress(_upload, _entry, socket), do: {:noreply, socket}
+
+  defp store_cover(socket, entry) do
     project = socket.assigns.project
 
     result =
@@ -3763,15 +3789,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end
   end
 
-  defp cover_progress(_upload, _entry, socket), do: {:noreply, socket}
-
+  # The one key, written atomically (`Projects.set_cover/2`): the settings
+  # this form read at mount are not written back over newer ones.
   defp put_cover(%{assigns: %{project: %Project{} = project}} = socket, uuid) do
-    settings =
-      if uuid,
-        do: Map.put(project.settings || %{}, "cover_file_uuid", uuid),
-        else: Map.delete(project.settings || %{}, "cover_file_uuid")
-
-    case Projects.update_project(project, %{"settings" => settings}) do
+    case Projects.set_cover(project, uuid) do
       {:ok, project} -> socket |> assign(project: project) |> assign_cover()
       _ -> put_flash(socket, :error, gettext("Something went wrong. Please try again."))
     end

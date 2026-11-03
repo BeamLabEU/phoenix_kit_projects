@@ -134,6 +134,59 @@ defmodule PhoenixKitProjects.Web.WriteGateTest do
       assert render_click(view, "save", %{"project" => %{"name" => "After"}}) =~ @refusal
       assert Projects.get_project(project.uuid).name == "Before"
     end
+
+    test "removing the cover after :edit_settings is gone writes nothing", %{conn: conn} do
+      project = fixture_project()
+      {:ok, project} = Projects.set_cover(project, Ecto.UUID.generate())
+      view = open_as_admin(conn, "/en/admin/projects/#{project.uuid}/edit")
+      swap_scope(view, revoked())
+
+      assert render_click(view, "remove_cover", %{}) =~ @refusal
+      assert Projects.get_project(project.uuid).settings["cover_file_uuid"]
+    end
+
+    test "the cover is its own key: settings changed since mount are kept", %{conn: conn} do
+      project = fixture_project()
+      {:ok, project} = Projects.set_cover(project, Ecto.UUID.generate())
+      view = open_as_admin(conn, "/en/admin/projects/#{project.uuid}/edit")
+
+      # Elsewhere, after this form read the project: a feature switched on.
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"billable" => true})
+
+      render_click(view, "remove_cover", %{})
+
+      settings = Projects.get_project(project.uuid).settings
+      refute settings["cover_file_uuid"]
+      assert settings["features"]["billable"] == true
+    end
+
+    test "a picture pasted after :edit_settings is gone is not stored", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, view, html} =
+        live(put_test_scope(conn, fake_scope()), "/en/admin/projects/#{project.uuid}/edit")
+
+      [id] =
+        Regex.run(~r/data-description-editor="(project-description--[^"]+)"/, html,
+          capture: :all_but_first
+        )
+
+      swap_scope(view, revoked())
+
+      send(
+        view.pid,
+        {:leaf_paste_image,
+         %{
+           editor_id: id,
+           data_url:
+             "data:image/png;base64," <> Base.encode64(<<137, 80, 78, 71, 13, 10, 26, 10>>),
+           name: "shot.png",
+           mime: "image/png"
+         }}
+      )
+
+      assert render(view) =~ "permission to manage files"
+    end
   end
 
   describe "the template form" do

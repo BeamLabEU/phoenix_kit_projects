@@ -289,6 +289,14 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
     assert html =~ "Sun"
   end
 
+  test "the week starts on the site's first weekday, as the calendars do", %{conn: conn} do
+    {:ok, _} = PhoenixKit.Settings.update_setting("week_start_day", "7")
+    {:ok, view, _html} = live(conn, @path)
+    html = view |> element("button[phx-value-view=week]") |> render_click()
+
+    assert [_, "Sun"] = Regex.run(~r/<span>(Mon|Tue|Wed|Thu|Fri|Sat|Sun)<\/span>/, html)
+  end
+
   test "the Time tab sits next to the Overview" do
     tabs = PhoenixKitProjects.admin_tabs()
     time = Enum.find(tabs, &(&1.id == :admin_projects_time))
