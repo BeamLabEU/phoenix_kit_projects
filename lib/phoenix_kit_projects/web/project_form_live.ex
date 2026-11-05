@@ -1046,6 +1046,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         attrs
         |> Map.delete("settings")
         |> merge_attrs(socket)
+        |> AssigneePicker.vet_posted(socket.assigns.project)
         |> maybe_apply_status_mode(params, project, fx)
         |> apply_project_type(params, project, socket.assigns[:can_manage_modules] == true)
         |> apply_new_completion(params, socket.assigns.live_action)

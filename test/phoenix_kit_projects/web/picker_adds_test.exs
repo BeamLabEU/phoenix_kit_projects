@@ -8,6 +8,8 @@ defmodule PhoenixKitProjects.Web.PickerAddsTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import Ecto.Query
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{AssigneeSet, Projects}
   alias PhoenixKitProjects.Test.Repo
@@ -72,5 +74,62 @@ defmodule PhoenixKitProjects.Web.PickerAddsTest do
 
     assert html =~ ~s(value="person:#{ctx.ann.uuid}")
     assert html =~ ~s(value="person:#{ctx.bob.uuid}")
+  end
+
+  describe "a posted set is checked at save" do
+    # A crafted `kind:uuid` (a row that does not exist, a trashed person) or
+    # a person hard-deleted since the pick failed on a foreign key inside
+    # the save and crashed the form.
+    defp forged(ctx) do
+      trashed = person!("Trashed")
+      Repo.update_all(from(p in Person, where: p.uuid == ^trashed.uuid), set: [status: "trashed"])
+      ["person:#{ctx.ann.uuid}", "person:#{Ecto.UUID.generate()}", "person:#{trashed.uuid}"]
+    end
+
+    test "the project form saves only the people that exist", ctx do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{project.uuid}/edit")
+
+      view
+      |> element("form[id^=project-form]")
+      |> render_submit(%{"project" => %{"name" => project.name, "assignees" => forged(ctx)}})
+
+      assert AssigneeSet.keys(Projects.get_project(project.uuid)) == [{"person", ctx.ann.uuid}]
+    end
+
+    test "the project form keeps a person trashed since they were assigned", ctx do
+      {:ok, project} =
+        Projects.create_project(%{
+          "name" => "Hall #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate",
+          "assignees" => [{"person", ctx.bob.uuid}]
+        })
+
+      Repo.update_all(from(p in Person, where: p.uuid == ^ctx.bob.uuid), set: [status: "trashed"])
+      {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{project.uuid}/edit")
+
+      view
+      |> element("form[id^=project-form]")
+      |> render_submit(%{
+        "project" => %{
+          "name" => project.name,
+          "assignees" => ["person:#{ctx.bob.uuid}", "person:#{ctx.ann.uuid}"]
+        }
+      })
+
+      assert AssigneeSet.keys(Projects.get_project(project.uuid)) ==
+               [{"person", ctx.bob.uuid}, {"person", ctx.ann.uuid}]
+    end
+
+    test "the library task form saves only the people that exist", ctx do
+      task = fixture_task()
+      {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
+
+      view
+      |> element("form[id^=task-form]")
+      |> render_submit(%{"task" => %{"title" => task.title, "assignees" => forged(ctx)}})
+
+      assert AssigneeSet.keys(Projects.get_task(task.uuid)) == [{"person", ctx.ann.uuid}]
+    end
   end
 end

@@ -319,7 +319,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
   defp library_write("save", %{"task" => attrs}, socket) do
     if socket.assigns.ai_in_flight == [] do
-      attrs = merge_attrs(attrs, socket)
+      attrs =
+        attrs
+        |> merge_attrs(socket)
+        |> AssigneePicker.vet_posted(socket.assigns.task)
 
       save(socket, socket.assigns.live_action, attrs)
     else

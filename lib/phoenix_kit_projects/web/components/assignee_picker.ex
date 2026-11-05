@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   alias Phoenix.LiveView
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
-  alias PhoenixKitProjects.{Activity, Assignees, L10n, People}
+  alias PhoenixKitProjects.{Activity, AssigneeSet, Assignees, L10n, People}
 
   @events ~w(assignee_search assignee_pick assignee_recent assign_to_me
              staff_create_confirm staff_create_cancel assignee_noop assignee_clear
@@ -121,6 +121,31 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   end
 
   def changeset_keys(_), do: []
+
+  @doc """
+  A form's posted `assignees`, cut down to the ones that can be saved: the
+  record's own current assignees, and anyone else who still exists and is
+  not trashed. A crafted `kind:uuid` (or a person hard-deleted since the
+  pick) would otherwise fail on a foreign key inside the save. A list that
+  is not a list of assignees is left for the changeset to report.
+  """
+  @spec vet_posted(map(), map()) :: map()
+  def vet_posted(%{"assignees" => posted} = attrs, record) do
+    case AssigneeSet.normalize(posted) do
+      {:ok, keys} ->
+        held = AssigneeSet.keys(record)
+        keep =
+          Enum.filter(keys, fn {kind, uuid} = key ->
+            key in held or Assignees.describe_pick(kind, uuid) != nil
+          end)
+        Map.put(attrs, "assignees", posted(keep))
+
+      :error ->
+        attrs
+    end
+  end
+
+  def vet_posted(attrs, _record), do: attrs
 
   @doc """
   A set as a form posts it: `"kind:uuid"` each, after an empty first entry
