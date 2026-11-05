@@ -144,6 +144,71 @@ defmodule PhoenixKitProjects.HolderAssigneesTest do
     end
   end
 
+  # codex review of V30.
+  describe "the set's mirror, the lock, a forged save and the API filter" do
+    test "a staff record deleted out of a two-member set: the same set posted again repairs the mirror",
+         ctx do
+      {:ok, p} =
+        Projects.create_project(%{
+          "name" => "Pantry #{uniq()}",
+          "assignees" => [{"person", ctx.ann.uuid}, {"team", ctx.team.uuid}]
+        })
+
+      Repo.delete!(ctx.team)
+      p = Repo.get!(Project, p.uuid)
+      assert p.assigned_person_uuid == nil
+      assert AssigneeSet.keys(p) == [{"person", ctx.ann.uuid}]
+
+      {:ok, p} = Projects.update_project(p, %{"assignees" => [{"person", ctx.ann.uuid}]})
+      assert Repo.get!(Project, p.uuid).assigned_person_uuid == ctx.ann.uuid
+    end
+
+    test "the down's mirror rebuild fills the one survivor and empties a holder with none", ctx do
+      {:ok, p} =
+        Projects.create_project(%{
+          "name" => "Larder #{uniq()}",
+          "assignees" => [{"person", ctx.ann.uuid}, {"team", ctx.team.uuid}]
+        })
+
+      Repo.delete!(ctx.team)
+
+      Repo.query!(
+        Schema.rebuild_mirror_sql(
+          "public.",
+          "phoenix_kit_project_assignees",
+          "project_uuid",
+          "phoenix_kit_projects",
+          "assigned"
+        )
+      )
+
+      assert Repo.get!(Project, p.uuid).assigned_person_uuid == ctx.ann.uuid
+    end
+
+    test "a replacement locks the holder's row first", ctx do
+      p = fixture_project()
+      event = Repo.config()[:telemetry_prefix] ++ [:query]
+      handler = "lock-test-#{uniq()}"
+      parent = self()
+
+      :telemetry.attach(
+        handler,
+        event,
+        fn _e, _m, %{query: q}, _ -> if q =~ "FOR UPDATE", do: send(parent, {:locked, q}) end,
+        nil
+      )
+
+      try do
+        {:ok, _} = Projects.update_project(p, %{"assignees" => [{"person", ctx.ann.uuid}]})
+      after
+        :telemetry.detach(handler)
+      end
+
+      assert_received {:locked, q}
+      assert q =~ "phoenix_kit_projects"
+    end
+  end
+
   test "the chain is at V30" do
     assert Schema.current_version() >= 30
   end

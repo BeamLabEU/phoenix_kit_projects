@@ -191,6 +191,47 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       assert json_response(refused, 422)
     end
 
+    # codex review: a sub-project row's people are its child project's, for
+    # the filter and the briefing too.
+    test "the filter and the briefing find a sub-project by its child's people", %{
+      conn: conn,
+      me: me,
+      colleague: colleague
+    } do
+      resp =
+        conn
+        |> put_req_header("idempotency-key", Ecto.UUID.generate())
+        |> post(
+          "#{@base}/subprojects",
+          Jason.encode!(%{name: "Pantry", assignees: ["me"]})
+        )
+
+      row_uuid = json_response(resp, 201)["task"]["uuid"]
+
+      # The colleague joins the sub-project itself (its project, not the row).
+      child = Projects.get_project(Projects.get_assignment(row_uuid).child_project_uuid)
+
+      {:ok, _} =
+        Projects.update_project(child, %{
+          "assignees" => [{"person", me.person.uuid}, {"person", colleague.person.uuid}]
+        })
+
+      found = fn query ->
+        conn
+        |> get("#{@base}/tasks?assignee=#{query}")
+        |> json_response(200)
+        |> Map.fetch!("tasks")
+        |> Enum.map(& &1["uuid"])
+      end
+
+      assert row_uuid in found.(colleague.person.uuid)
+      assert row_uuid in found.("me")
+      refute row_uuid in found.("none")
+
+      brief = conn |> get("#{@base}/briefing") |> json_response(200)
+      assert brief["counts"]["assigned_to_me"] >= 1
+    end
+
     test "a team or a department, one at a time", %{conn: conn, me: me} do
       {:ok, team} = Teams.create(%{"name" => "Team-#{uniq()}", "department_uuid" => me.dept.uuid})
 

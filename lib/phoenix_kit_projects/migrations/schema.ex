@@ -1268,8 +1268,48 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       END $$;
       """)
 
+      rebuild_mirror(p, table, holder_col, holder_of(table), legacy_of(table))
       execute("DROP TABLE IF EXISTS #{p}#{table}")
     end
+  end
+
+  defp holder_of("phoenix_kit_project_assignees"), do: "phoenix_kit_projects"
+  defp holder_of("phoenix_kit_project_task_assignees"), do: "phoenix_kit_project_tasks"
+  defp legacy_of("phoenix_kit_project_task_assignees"), do: "default_assigned"
+  defp legacy_of(_table), do: "assigned"
+
+  # Before a down drops the rows, the old one-assignee columns are made to
+  # say what the rows say (codex review): a staff record deleted out of a
+  # two-member set cascades its row away and leaves the one survivor with
+  # an empty mirror, which the drop would otherwise lose. Runs after the
+  # "several" check, so a holder has at most one row here.
+  defp rebuild_mirror(p, table, holder_col, holder_table, legacy),
+    do: execute(rebuild_mirror_sql(p, table, holder_col, holder_table, legacy))
+
+  @doc false
+  # The statement `rebuild_mirror/5` runs (exposed for the tests, which run
+  # it on the real tables without dropping anything).
+  def rebuild_mirror_sql(p, table, holder_col, holder_table, legacy) do
+    """
+    DO $$
+    BEGIN
+      IF to_regclass('#{p}#{table}') IS NOT NULL THEN
+        UPDATE #{p}#{holder_table} h
+        SET #{legacy}_person_uuid = r.person_uuid,
+            #{legacy}_team_uuid = r.team_uuid,
+            #{legacy}_department_uuid = r.department_uuid
+        FROM #{p}#{table} r
+        WHERE r.#{holder_col} = h.uuid;
+
+        UPDATE #{p}#{holder_table} h
+        SET #{legacy}_person_uuid = NULL,
+            #{legacy}_team_uuid = NULL,
+            #{legacy}_department_uuid = NULL
+        WHERE num_nonnulls(h.#{legacy}_person_uuid, h.#{legacy}_team_uuid, h.#{legacy}_department_uuid) > 0
+          AND NOT EXISTS (SELECT 1 FROM #{p}#{table} r WHERE r.#{holder_col} = h.uuid);
+      END IF;
+    END $$;
+    """
   end
 
   # Down refuses while any task has several assignees: the old shape holds
@@ -1287,6 +1327,14 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       END IF;
     END $$;
     """)
+
+    rebuild_mirror(
+      p,
+      "phoenix_kit_project_assignment_assignees",
+      "assignment_uuid",
+      "phoenix_kit_project_assignments",
+      "assigned"
+    )
 
     execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignment_assignees")
   end

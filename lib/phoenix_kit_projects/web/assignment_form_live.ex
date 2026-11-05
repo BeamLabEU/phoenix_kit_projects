@@ -2459,7 +2459,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> clear_other_assignees(assign_type)
         |> sp_translations(socket)
         |> strip_gated_attrs(fx)
-        |> strip_unassignable(socket)
+        # Asked again at the submit, of the live rights (codex review): the
+        # picker's own events refuse, but a forged save could carry a set.
+        |> strip_unassignable(assign(socket, can_assign?: can_assign?(socket)))
         |> then(fn a ->
           if fx.statuses, do: a, else: Map.drop(a, ~w(status_entity_uuid))
         end)

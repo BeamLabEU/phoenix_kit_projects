@@ -445,14 +445,10 @@ defmodule PhoenixKitProjects.AssigneeSet do
   def write_rows(repo, holder \\ :assignment, holder_uuid, keys) when is_binary(holder_uuid) do
     {schema, fk} = rows_of(holder)
 
-    # The task's row first (a new task has none yet: nothing to wait on).
-    # Two saves replacing the set at once otherwise interleave their
-    # delete and insert: the second deletes none of the first's new rows
-    # and adds its own (a union of both), or trips the pair index.
-    if holder == :assignment do
-      from(a in Assignment, where: a.uuid == ^holder_uuid, lock: "FOR NO KEY UPDATE", select: 1)
-      |> repo.all()
-    end
+    # The holder's row first, locked: two saves of one record replace its
+    # set one after the other, never interleaved into a merge of both
+    # (codex review). A new record has no row yet — nothing to wait for.
+    lock_holder(repo, holder, holder_uuid)
 
     from(r in schema, where: field(r, ^fk) == ^holder_uuid)
     |> repo.delete_all()
@@ -478,6 +474,22 @@ defmodule PhoenixKitProjects.AssigneeSet do
     :ok
   end
 
+  @doc false
+  def lock_holder(repo, holder, holder_uuid) do
+    from(h in holder_schema(holder),
+      where: h.uuid == ^holder_uuid,
+      select: h.uuid,
+      lock: "FOR UPDATE"
+    )
+    |> repo.all()
+
+    :ok
+  end
+
+  defp holder_schema(:assignment), do: Assignment
+  defp holder_schema(:project), do: Project
+  defp holder_schema(:task), do: Task
+
   # ── Changesets ─────────────────────────────────────────────────────
 
   @doc """
@@ -497,7 +509,7 @@ defmodule PhoenixKitProjects.AssigneeSet do
         # The same list again (a form posts it with every change): nothing
         # to write — unless the single fields beside it changed it.
         if keys == keys(changeset.data) do
-          legacy_changeset(changeset, holder)
+          changeset |> legacy_changeset(holder) |> repair_mirror(keys, holder)
         else
           mirror = mirror(keys, holder)
 
@@ -515,6 +527,23 @@ defmodule PhoenixKitProjects.AssigneeSet do
   end
 
   def put_changeset(changeset, _attrs, _holder), do: changeset
+
+  # The same set posted again still puts the mirror right when it went
+  # stale (a staff record deleted out of a two-member set leaves the one
+  # survivor with an empty mirror — codex review).
+  defp repair_mirror(changeset, keys, holder) do
+    if Ecto.Changeset.get_change(changeset, :assignee_keys) do
+      changeset
+    else
+      mirror = mirror(keys, holder)
+
+      Enum.reduce(mirror_fields(holder), changeset, fn field, cs ->
+        if Map.get(cs.data, field) == mirror[field],
+          do: cs,
+          else: Ecto.Changeset.put_change(cs, field, mirror[field])
+      end)
+    end
+  end
 
   defp legacy_changeset(changeset, holder) do
     fields = mirror_fields(holder)

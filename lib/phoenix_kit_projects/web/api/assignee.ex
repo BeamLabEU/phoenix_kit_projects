@@ -252,13 +252,13 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
     # a key that acts for nobody has no tasks of its own
     case person_uuid(key) do
       nil -> {:ok, []}
-      uuid -> {:ok, Enum.filter(tasks, &has_person?(&1, uuid))}
+      uuid -> {:ok, with_person(tasks, uuid)}
     end
   end
 
   def filter(tasks, _key, value) when is_binary(value) do
     if Regex.match?(@uuid, value),
-      do: {:ok, Enum.filter(tasks, &has_person?(&1, String.downcase(value)))},
+      do: {:ok, with_person(tasks, String.downcase(value))},
       else: invalid("assignee is `me`, `none`, or a person's uuid.")
   end
 
@@ -284,7 +284,40 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   defp group_name(_), do: nil
 
   # The person among the task's assignees (any of several; a team's or a
-  # department's members are not "assigned" by this filter).
-  defp has_person?(%Assignment{} = a, uuid), do: {"person", uuid} in AssigneeSet.keys(a)
-  defp has_person?(_a, _uuid), do: false
+  # department's members are not "assigned" by this filter). A sub-project
+  # row's people are its child project's (codex review), read for the whole
+  # list at once.
+  defp with_person(tasks, uuid) do
+    held = held_keys_by(tasks)
+    Enum.filter(tasks, &({"person", uuid} in Map.get(held, &1.uuid, [])))
+  end
+
+  @doc """
+  Who holds each row, as `list_json/1` shows it: a task's own set, a
+  sub-project row's child project's. `%{assignment_uuid => [key]}`, the
+  child projects read in one query.
+  """
+  @spec held_keys_by([Assignment.t()]) :: %{String.t() => [AssigneeSet.key()]}
+  def held_keys_by(tasks) do
+    child_uuids = for %Assignment{child_project_uuid: u} when is_binary(u) <- tasks, do: u
+    children = AssigneeSet.keys_by(:project, child_uuids)
+
+    Map.new(tasks, fn
+      %Assignment{uuid: id, child_project_uuid: u} when is_binary(u) ->
+        {id, Map.get(children, u, [])}
+
+      %Assignment{uuid: id} = a ->
+        {id, AssigneeSet.keys(a)}
+
+      other ->
+        {Map.get(other, :uuid), []}
+    end)
+  end
+
+  @doc "`held_keys_by/1` for one row."
+  @spec held_keys(Assignment.t()) :: [AssigneeSet.key()]
+  def held_keys(%Assignment{uuid: id} = a),
+    do: a |> List.wrap() |> held_keys_by() |> Map.get(id, [])
+
+  def held_keys(_), do: []
 end

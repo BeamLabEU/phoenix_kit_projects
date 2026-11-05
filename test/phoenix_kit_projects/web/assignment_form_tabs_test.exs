@@ -13,7 +13,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.{AssigneeSet, Projects}
+  alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitStaff.Schemas.{Department, Person, Team}
 
@@ -679,6 +680,37 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       autosave(view)
 
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == nil
+    end
+
+    # codex review: a forged sub-project save carrying a set is stripped when
+    # the person may not assign.
+    test "a forged new sub-project carrying assignees saves without them", ctx do
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(ctx.project, %{"assign_tasks" => "managers"})
+
+      bob = person!("Bob")
+      user = embed_user_uuid!()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.project, user, role: "member")
+      conn = put_test_scope(ctx.conn, fake_scope(user_uuid: user, permissions: ["projects"]))
+
+      {:ok, view, _} =
+        live(conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new?kind=subproject")
+
+      render_submit(view, "save_subproject", %{
+        "subproject" => %{
+          "name" => "Forged #{System.unique_integer([:positive])}",
+          "assignees" => ["person:#{bob.uuid}"]
+        }
+      })
+
+      child =
+        ctx.project.uuid
+        |> Projects.list_assignments()
+        |> Enum.find(&Assignment.subproject?/1)
+
+      assert child, "the sub-project was not created"
+      child_project = Projects.get_project(child.child_project_uuid)
+      assert AssigneeSet.keys(child_project) == []
     end
   end
 end
