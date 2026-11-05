@@ -311,12 +311,9 @@ defmodule PhoenixKitProjects.AssigneeSet do
   @spec task_uuids(kind(), String.t() | [String.t()]) :: Ecto.Query.t()
   def task_uuids(kind, uuids) when kind in @kinds, do: holder_uuids(:assignment, kind, uuids)
 
-  @doc """
-  The uuids of the holders (tasks, projects, library tasks) having `kind`
-  `uuids` among their assignees, as a query.
-  """
-  @spec holder_uuids(holder(), kind(), String.t() | [String.t()]) :: Ecto.Query.t()
-  def holder_uuids(holder, kind, uuids) when kind in @kinds do
+  # The uuids of the holders (tasks, projects, library tasks) having `kind`
+  # `uuids` among their assignees, as a query.
+  defp holder_uuids(holder, kind, uuids) do
     uuids = List.wrap(uuids)
     col = column(kind)
     {schema, fk} = rows_of(holder)
@@ -325,13 +322,6 @@ defmodule PhoenixKitProjects.AssigneeSet do
       where: field(r, ^col) in type(^uuids, {:array, UUIDv7}),
       select: field(r, ^fk)
     )
-  end
-
-  @doc "A `dynamic` true for a holder (the query's first binding) with `kind` `uuids` on it."
-  @spec holder_subject_exists(holder(), kind(), String.t() | [String.t()]) ::
-          Ecto.Query.dynamic_expr()
-  def holder_subject_exists(holder, kind, uuids) when kind in @kinds do
-    dynamic([h], h.uuid in subquery(holder_uuids(holder, kind, uuids)))
   end
 
   @doc "A `dynamic` true for a task (the first binding) with anyone on it."
