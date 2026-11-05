@@ -39,6 +39,7 @@ defmodule PhoenixKitProjects.AssigneeSet do
 
   @type kind :: String.t()
   @type key :: {kind(), String.t()}
+  @typep record :: Assignment.t() | Project.t() | Task.t()
 
   @kinds ~w(person team department)
 
@@ -166,11 +167,11 @@ defmodule PhoenixKitProjects.AssigneeSet do
   def of_kind(keys, kind), do: for({^kind, uuid} <- keys, do: uuid)
 
   @doc """
-  The tasks with their assignee rows loaded (one query for the lot), so
-  `keys/1` reads no more. Accepts one task, a list, or `nil`.
+  The holders (tasks, projects, library tasks) with their assignee rows
+  loaded (one query per kind of holder), so `keys/1` reads no more. Accepts
+  one record, a list, or `nil`.
   """
-  @spec preload(Assignment.t() | [Assignment.t()] | nil) ::
-          Assignment.t() | [Assignment.t()] | nil
+  @spec preload(record() | [record()] | nil) :: record() | [record()] | nil
   def preload(nil), do: nil
   def preload([]), do: []
 
