@@ -28,7 +28,19 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
+
+  alias PhoenixKitProjects.{
+    Activity,
+    Archetypes,
+    AssigneeSet,
+    Authz,
+    Errors,
+    Features,
+    L10n,
+    Paths,
+    Projects
+  }
+
   alias PhoenixKitProjects.{Attachments, Extensions, Grants, Members, Statuses}
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
@@ -550,7 +562,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             gettext("Edit %{name}",
               name: Project.localized_name(project, L10n.current_content_lang())
             ),
-          project: project,
+          # Its assignee rows with it: every change of the form asks who the
+          # project has now (a record with none or several has no mirror).
+          project: AssigneeSet.preload(project),
           live_action: :edit,
           can_manage_modules:
             not project.is_template and

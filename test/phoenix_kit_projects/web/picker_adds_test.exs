@@ -132,4 +132,61 @@ defmodule PhoenixKitProjects.Web.PickerAddsTest do
       assert AssigneeSet.keys(Projects.get_task(task.uuid)) == [{"person", ctx.ann.uuid}]
     end
   end
+
+  describe "typing in the form" do
+    # A record with none or several assignees has an empty mirror, so each
+    # `phx-change` used to read its rows again.
+    defp assignee_reads(fun) do
+      event = Repo.config()[:telemetry_prefix] ++ [:query]
+      handler = "reads-#{System.unique_integer([:positive])}"
+      parent = self()
+
+      :telemetry.attach(
+        handler,
+        event,
+        fn _e, _m, %{query: q}, _ ->
+          if q =~ ~r/FROM "phoenix_kit_project_assignees"/, do: send(parent, :read)
+        end,
+        nil
+      )
+
+      try do
+        fun.()
+      after
+        :telemetry.detach(handler)
+      end
+
+      drain(0)
+    end
+
+    defp drain(n) do
+      receive do
+        :read -> drain(n + 1)
+      after
+        0 -> n
+      end
+    end
+
+    test "the project form reads the assignee rows at mount, not on every change", ctx do
+      {:ok, project} =
+        Projects.create_project(%{
+          "name" => "Hall #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate",
+          "assignees" => [{"person", ctx.ann.uuid}, {"person", ctx.bob.uuid}]
+        })
+
+      {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{project.uuid}/edit")
+
+      reads =
+        assignee_reads(fn ->
+          for name <- ["A", "AB", "ABC"] do
+            view
+            |> element("form[id^=project-form]")
+            |> render_change(%{"project" => %{"name" => name}})
+          end
+        end)
+
+      assert reads == 0
+    end
+  end
 end
