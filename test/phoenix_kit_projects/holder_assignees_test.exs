@@ -194,7 +194,7 @@ defmodule PhoenixKitProjects.HolderAssigneesTest do
       :telemetry.attach(
         handler,
         event,
-        fn _e, _m, %{query: q}, _ -> if q =~ "FOR UPDATE", do: send(parent, {:locked, q}) end,
+        fn _e, _m, %{query: q}, _ -> if q =~ ~r/FOR (NO KEY )?UPDATE/, do: send(parent, {:locked, q}) end,
         nil
       )
 
@@ -206,6 +206,20 @@ defmodule PhoenixKitProjects.HolderAssigneesTest do
 
       assert_received {:locked, q}
       assert q =~ "phoenix_kit_projects"
+
+      # `FOR NO KEY UPDATE` keeps two replacements apart without blocking the
+      # foreign-key inserts (tasks, members, ledger rows) that point at the
+      # row; a plain `FOR UPDATE` would.
+      locks = collect_locks([q])
+      assert Enum.all?(locks, &(&1 =~ "FOR NO KEY UPDATE"))
+    end
+  end
+
+  defp collect_locks(acc) do
+    receive do
+      {:locked, q} -> collect_locks([q | acc])
+    after
+      0 -> acc
     end
   end
 

@@ -479,7 +479,7 @@ defmodule PhoenixKitProjects.AssigneeSet do
     from(h in holder_schema(holder),
       where: h.uuid == ^holder_uuid,
       select: h.uuid,
-      lock: "FOR UPDATE"
+      lock: "FOR NO KEY UPDATE"
     )
     |> repo.all()
 
