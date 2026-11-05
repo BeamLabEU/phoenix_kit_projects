@@ -746,7 +746,18 @@ core's chain, which stays authoritative for installs migrating through it —
 
 Every statement in every version guards itself, so `up/1` always runs the whole
 chain start-to-finish and re-running is safe — which is also how the baseline's
-idempotency is proved on every test boot. `down/1` exists for protocol
+idempotency is proved on every test boot. Before its own versions `up/1` runs
+staff's and entities' chains (passed as module values and called only when
+loaded, so the `WITHOUT_STAFF=1` gate holds): this chain's foreign keys point at their tables, core 3.x no longer
+creates them, and a host's migration files written under core 2.x run this
+chain before theirs. After its own versions it adds
+`phoenix_kit_doc_documents_project_uuid_fkey` when document_creator's table is
+there and the key is not, in that chain's exact definition: document_creator
+does not depend on this package and skips the key while `phoenix_kit_projects`
+is missing, so whichever of the two installs second creates it. Links to
+projects deleted while the key was missing are set to NULL first (with a
+NOTICE), as the key's `ON DELETE SET NULL` would have done; otherwise its
+check would fail the whole migration. `down/1` exists for protocol
 completeness only: on installs whose tables core created, a module-level down
 is NOT supported (core's marker still claims the tables); it drops data and is
 meant for scratch schemas.

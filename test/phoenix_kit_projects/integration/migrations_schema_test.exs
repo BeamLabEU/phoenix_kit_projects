@@ -12,11 +12,71 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
 
   use PhoenixKitProjects.DataCase, async: false
 
-  alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.Migrations.Schema
   import Ecto.Query
 
+  alias Ecto.Migration.Runner
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.Migrations.Schema
   alias PhoenixKitProjects.Test.Repo, as: TestRepo
+  alias PhoenixKitProjects.Test.SchemaMigration
+
+  # document_creator links a document to a project but does not depend on
+  # this package: its chain skips the key while `phoenix_kit_projects` is
+  # missing and still stamps itself current. Where it ran first (a fresh
+  # install replaying a host's history), this chain adds the key. Without the
+  # documents table (this suite's boot) it must do nothing and not fail.
+  test "the chain adds document_creator's project key when that table is there" do
+    TestRepo.query!("""
+    CREATE TABLE public.phoenix_kit_doc_documents (uuid uuid PRIMARY KEY, project_uuid uuid)
+    """)
+
+    Runner.run(
+      TestRepo,
+      TestRepo.config(),
+      1,
+      SchemaMigration,
+      :forward,
+      :up,
+      :up,
+      log: false
+    )
+
+    assert %{rows: [[1]]} =
+             TestRepo.query!("""
+             SELECT count(*) FROM pg_constraint
+             WHERE conrelid = 'public.phoenix_kit_doc_documents'::regclass
+               AND conname = 'phoenix_kit_doc_documents_project_uuid_fkey'
+               AND confrelid = 'public.phoenix_kit_projects'::regclass
+             """)
+  end
+
+  # A host that already lost the key keeps documents pointing at projects
+  # deleted since (nothing set them to NULL). Those references are cleared,
+  # as the key's ON DELETE SET NULL would have done, instead of failing the
+  # whole projects migration on the key's check.
+  test "a document pointing at a deleted project does not stop the key" do
+    TestRepo.query!("""
+    CREATE TABLE public.phoenix_kit_doc_documents (uuid uuid PRIMARY KEY, project_uuid uuid)
+    """)
+
+    dangling = Ecto.UUID.generate()
+
+    TestRepo.query!(
+      "INSERT INTO public.phoenix_kit_doc_documents (uuid, project_uuid) VALUES ($1, $2)",
+      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(dangling)]
+    )
+
+    Runner.run(TestRepo, TestRepo.config(), 1, SchemaMigration, :forward, :up, :up, log: false)
+
+    assert %{rows: [[nil]]} =
+             TestRepo.query!("SELECT project_uuid FROM public.phoenix_kit_doc_documents")
+
+    assert %{rows: [[1]]} =
+             TestRepo.query!("""
+             SELECT count(*) FROM pg_constraint
+             WHERE conname = 'phoenix_kit_doc_documents_project_uuid_fkey'
+             """)
+  end
 
   test "migration_module/0 points at the chain" do
     assert PhoenixKitProjects.migration_module() == Schema
