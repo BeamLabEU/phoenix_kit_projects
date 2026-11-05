@@ -13,7 +13,7 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
 
   alias PhoenixKitProjects.{Activity, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.ApiKey
-  alias PhoenixKitProjects.Web.Api.{Json, TasksController}
+  alias PhoenixKitProjects.Web.Api.{Assignee, Json, TasksController}
 
   # A key reaches at most this many levels under its own project
   # (`Projects.parent_chain/1` walks eight hops); one is kept in hand so
@@ -81,36 +81,46 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
         )
 
       true ->
-        attrs =
-          %{"name" => String.trim(name)}
-          |> maybe_put("description", params["description"])
-          |> maybe_put_completion(params["completion"])
+        case Assignee.attrs(conn, params) do
+          {:ok, assignees} ->
+            %{"name" => String.trim(name)}
+            |> maybe_put("description", params["description"])
+            |> maybe_put_completion(params["completion"])
+            # Who the sub-project is for (V30: `assignees`, or `assignee`).
+            |> Map.merge(assignees)
+            |> then(&insert_subproject(key, parent, &1))
 
-        case Projects.create_subproject(parent.uuid, attrs) do
-          {:ok, %{child_project: child, assignment: link}} ->
-            Activity.log("projects.subproject_created",
-              actor_uuid: ApiKey.accountable_uuid(key),
-              resource_type: "assignment",
-              resource_uuid: link.uuid,
-              metadata:
-                TasksController.api_metadata(key, %{
-                  "name" => child.name,
-                  "child_project_uuid" => child.uuid
-                })
-            )
-
-            {201,
-             %{
-               project: Json.project(Projects.get_project(child.uuid) || child),
-               task: Json.task(Projects.get_assignment(link.uuid) || link)
-             }}
-
-          {:error, %Ecto.Changeset{} = cs} ->
-            Json.changeset_error(cs)
-
-          {:error, _} ->
-            Json.error_body(404, "not_found", "No such project within this key's reach.")
+          {:error, refusal} ->
+            refusal
         end
+    end
+  end
+
+  defp insert_subproject(key, parent, attrs) do
+    case Projects.create_subproject(parent.uuid, attrs) do
+      {:ok, %{child_project: child, assignment: link}} ->
+        Activity.log("projects.subproject_created",
+          actor_uuid: ApiKey.accountable_uuid(key),
+          resource_type: "assignment",
+          resource_uuid: link.uuid,
+          metadata:
+            TasksController.api_metadata(key, %{
+              "name" => child.name,
+              "child_project_uuid" => child.uuid
+            })
+        )
+
+        {201,
+         %{
+           project: Json.project(Projects.get_project(child.uuid) || child),
+           task: Json.task(Projects.get_assignment(link.uuid) || link)
+         }}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        Json.changeset_error(cs)
+
+      {:error, _} ->
+        Json.error_body(404, "not_found", "No such project within this key's reach.")
     end
   end
 

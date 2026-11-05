@@ -133,6 +133,18 @@ defmodule PhoenixKitProjects.Schemas.Project do
 
     has_many(:assignments, Assignment, foreign_key: :project_uuid, on_delete: :delete_all)
 
+    # The project's assignees (V30): any number of people, teams and
+    # departments, all equal, as a task's. The three `assigned_*` columns
+    # above mirror them while there is exactly one. Read through
+    # `AssigneeSet.keys/1`.
+    has_many(:assignee_links, PhoenixKitProjects.Schemas.ProjectAssignee,
+      foreign_key: :project_uuid,
+      preload_order: [asc: :position, asc: :inserted_at]
+    )
+
+    # The set a changeset writes (`"assignees"`), as `[{kind, uuid}]`.
+    field(:assignee_keys, :any, virtual: true)
+
     timestamps(type: :utc_datetime)
   end
 
@@ -167,6 +179,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
   def changeset(project, attrs, opts \\ []) do
     project
     |> cast(attrs, @required ++ @optional)
+    |> PhoenixKitProjects.AssigneeSet.put_changeset(attrs, :project)
     |> validate_required(@required)
     # `counts_weekends` is cast-optional (forms may omit it) but must
     # resolve to a boolean — the schema default of `false` satisfies this
@@ -196,6 +209,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
       message: single_assignee_message()
     )
     |> maybe_require_date(opts)
+    |> PhoenixKitProjects.AssigneeSet.write_changeset(:project)
   end
 
   # A key is stored upper-cased; a blank one is left for the database to

@@ -122,6 +122,33 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert notice.resource_uuid == link.uuid
     end
 
+    test "a sub-project's row with several people tells every one of them", ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      measure = task!(ctx.project, "Measure the room", alice)
+
+      {:ok, %{assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{
+          "name" => "Kitchen",
+          "assignees" => [{"person", bob.person}, {"person", carl.person}]
+        })
+
+      {:ok, _} = Projects.add_dependency(link.uuid, measure.uuid)
+
+      assert [%{uuid: uuid, assignee_keys: keys}] =
+               Handoffs.would_ready(ctx.project.uuid, measure.uuid)
+               |> Enum.map(&Map.take(&1, [:uuid, :assignee_keys]))
+
+      assert uuid == link.uuid
+      assert Enum.sort(keys) == Enum.sort([{"person", bob.person}, {"person", carl.person}])
+
+      set_status!(measure, "done", alice.user)
+
+      assert [notice] = notices("projects.assignment_ready", bob.user)
+      assert notice.resource_uuid == link.uuid
+      assert [notice] = notices("projects.assignment_ready", carl.user)
+      assert notice.resource_uuid == link.uuid
+    end
+
     test "the task waiting on a finished one tells its assignee, with a line and a link", ctx do
       %{alice: alice, bob: bob} = ctx.people
       measure = task!(ctx.project, "Measure the room", alice)

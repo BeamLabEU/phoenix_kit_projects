@@ -329,22 +329,10 @@ defmodule PhoenixKitProjects.People do
   end
 
   @doc """
-  A record's assignees as `[{kind, uuid}]`: a task's set
-  (`AssigneeSet.keys/1`), a project's (or a library task's) one.
+  A record's assignees as `[{kind, uuid}]` — a task's, a project's or a
+  library task's set (`AssigneeSet.keys/1`, V29/V30).
   """
   @spec assignee_keys(map()) :: [{String.t(), binary()}]
-  def assignee_keys(%PhoenixKitProjects.Schemas.Project{} = p),
-    do: PhoenixKitProjects.AssigneeSet.legacy_keys(p)
-
-  # A library task names its DEFAULT assignee (`default_assigned_*`).
-  def assignee_keys(%PhoenixKitProjects.Schemas.Task{} = t),
-    do:
-      PhoenixKitProjects.AssigneeSet.legacy_keys(%{
-        assigned_person_uuid: t.default_assigned_person_uuid,
-        assigned_team_uuid: t.default_assigned_team_uuid,
-        assigned_department_uuid: t.default_assigned_department_uuid
-      })
-
   def assignee_keys(record) when is_map(record),
     do: PhoenixKitProjects.AssigneeSet.keys(record)
 

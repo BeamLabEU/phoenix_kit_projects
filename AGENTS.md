@@ -202,6 +202,11 @@ Repo-local aliases:
   (`@subproject_fields`; archiving, the template flag, the key and a start
   stamp are the project form's, under owner rights). `add_dependency/3`
   refuses a pair from two projects.
+  A posted assignee set is the forms' to vet, never the changeset's: the task
+  form and the sub-project editor replace it with the picker's own list, the
+  project and library-task forms cut it to people who still exist and are not
+  trashed (`AssigneePicker.vet_posted/2`) — a `kind:uuid` naming nobody
+  otherwise fails on a foreign key inside the save.
 - **Cross-module people lookups**: NEVER call `PhoenixKitStaff.*` directly
   (staff is optional) — go through `PhoenixKitProjects.People`, read-only
   shadow schemas over the CORE-owned staff tables, trashed-excluded by default,
@@ -385,8 +390,9 @@ lib/phoenix_kit_projects/
 ├── hours.ex + hours/*.ex    # The ledger READ back: filters, grouped summaries, the
 │                            # timesheet; Period, Format, Report (pure)
 ├── statuses.ex              # Workflow statuses (entities-backed, cement-at-start)
-├── schedule_layout.ex, running_tiers.ex, assignees.ex
-│                            # Durations→dates walk, tiering, effective-assignee resolution
+├── schedule_layout.ex, running_tiers.ex, assignees.ex, assignee_set.ex
+│                            # Durations→dates walk, tiering, effective-assignee resolution,
+│                            # the assignee SET of a task / project / library task
 ├── calendar_display.ex, gantt_display.ex   # The two display-settings customizers
 ├── refs.ex, project_move.ex # Short names (key / `KEY-42`); moving a project in the tree
 ├── activity.ex, pub_sub.ex, resource_links.ex, errors.ex, paths.ex
@@ -467,6 +473,8 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.ProjectKey` | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained, read-only schema) |
 | `Schemas.AssignmentFile` | `phoenix_kit_project_assignment_files` (V27 — which task holds which Storage file; `inline` for a description picture) |
 | `Schemas.AssignmentAssignee` | `phoenix_kit_project_assignment_assignees` (V29 — a task's assignees, one person/team/department each; written only through `Assignment.changeset/2`, under the task row's lock) |
+| `Schemas.ProjectAssignee` | `phoenix_kit_project_assignees` (V30 — a project's assignees, a sub-project's too; same shape as the task's, written only through `Project.changeset/2`, under the project row's lock) |
+| `Schemas.TaskDefaultAssignee` | `phoenix_kit_project_task_assignees` (V30 — a library task's default assignees; written only through `Task.changeset/2`, under the task row's lock) |
 | (no schema module) | `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
@@ -474,8 +482,13 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 UUIDv7 PKs except the registry's string `key`; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
 (`schema_prefix_conformance_test.exs` pins it).
 
-Schema-level invariants: `Assignment` enforces a single assignee and the
-task-XOR-child-project rule; `Dependency` rejects a self-reference;
+Schema-level invariants: `Assignment` enforces the task-XOR-child-project
+rule; the assignees of a task, a project and a library task are SETS (any
+number of people, teams and departments, all equal — `AssigneeSet`), each row
+holding exactly one subject (DB CHECK) and no subject twice (unique indexes);
+the holder's own `assigned_*` / `default_assigned_*` columns are only the
+one-assignee mirror (the assignee while there is exactly one, else empty), and
+a reader goes through `AssigneeSet.keys/1`, never the columns; `Dependency` rejects a self-reference;
 `TaskDependency` is the library-level default pair.
 `Projects.create_project_from_template/2` clones inside one
 `Ecto.Repo.transaction`, and `project_summaries/1` is the batch query that
@@ -697,13 +710,17 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V29** (V27: `phoenix_kit_project_assignment_files`,
+`phoenix_kit_projects`, currently **V30** (V27: `phoenix_kit_project_assignment_files`,
 a task's own files — `assignment_uuid` / `file_uuid` both `ON DELETE CASCADE`,
 `inline` for an image placed in the description; V28: `repeat_rule JSONB` on
 assignments; V29: `phoenix_kit_project_assignment_assignees`, several
 assignees per task — the task's `assigned_*` columns stay as a one-assignee
-mirror, and `down` refuses while a task has several). ⚠️ `ExpectedSchema` was
-extended by hand for V27–V29: core's
+mirror, and `down` refuses while a task has several; V30:
+`phoenix_kit_project_assignees` and `phoenix_kit_project_task_assignees`, the
+same for a project — a sub-project is one — and a library task's defaults,
+backfilled from the single columns for a holder with exactly one and none
+otherwise; `down` rebuilds the mirror and refuses while a holder has several).
+⚠️ `ExpectedSchema` was extended by hand for V27–V30: core's
 generator cannot build this chain without the staff/entities prerequisites —
 regenerate it with core when that is possible. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against

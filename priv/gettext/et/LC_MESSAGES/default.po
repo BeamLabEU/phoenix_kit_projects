@@ -10734,3 +10734,13 @@ msgstr "Sõltuvust ei õnnestunud muuta."
 
 msgid "Create invoice"
 msgstr "Loo arve"
+
+#: lib/phoenix_kit_projects/web/components/description_editor.ex
+#, elixir-autogen, elixir-format
+msgid "Add an image"
+msgstr "Lisa pilt"
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex
+#, elixir-autogen, elixir-format
+msgid "Remove this file from the project?"
+msgstr "Kas eemaldada see fail projektist?"

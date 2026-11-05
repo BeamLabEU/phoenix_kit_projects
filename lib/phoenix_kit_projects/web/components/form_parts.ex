@@ -141,11 +141,13 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
     ~H"""
     <%!-- The module's one tab look, the project page's (core `NavTabs`,
          boxed, an icon each — the boss, 2026-11-02: these read as another
-         kind of tab, with more air above and under them). --%>
+         kind of tab, with more air above and under them). Its background
+         runs the full width, as the project page's does (the boss,
+         2026-11-03: "complete the line"). --%>
     <div
       :if={match?([_, _ | _], @panes)}
       role="tablist"
-      class={NavTabs.tablist_class(:boxed, "shrink-0 self-start max-w-full overflow-x-auto")}
+      class={NavTabs.tablist_class(:boxed, "shrink-0 w-full overflow-x-auto")}
       id={@id}
       phx-hook="PkpTabScroll"
       data-pkp-tabs

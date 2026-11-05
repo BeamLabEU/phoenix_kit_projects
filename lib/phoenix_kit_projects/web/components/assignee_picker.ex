@@ -16,29 +16,29 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
 
       # mount (and whenever the record changes):
       socket |> AssigneePicker.init(project, source: "project_form")
-             |> AssigneePicker.refresh_chip({kind, uuid} | nil)
+             |> AssigneePicker.set_selected(AssigneePicker.changeset_keys(cs))
 
       # every picker event, in one clause:
       def handle_event(event, params, socket) when event in AssigneePicker.events(),
         do: AssigneePicker.handle_event(event, params, socket, __MODULE__)
 
       # the two callbacks it calls back:
-      def picker_allowed?(socket), do: …            # may this viewer assign, now?
-      def picker_choose(socket, kind, uuid), do: …  # put it in the form (nil = nobody)
+      def picker_allowed?(socket), do: …     # may this viewer assign, now?
+      def picker_set(socket, keys), do: …    # the whole new list into the form
 
       # in the form:
-      <.assignee_picker id="x-assignee" fields={…} chip={@assignee_chip} … />
+      <.assignee_multi_picker id="x-assignee" name="x[assignees][]" selected={@assignee_selected} … />
       # after the form (a form inside a form is not HTML):
       <.assignee_picker_outside search_form="x-assignee-form" staff_confirm={@staff_confirm} />
 
-  Assigns it keeps: `assignee_chip`, `recent_assignees`, `my_person_uuid`,
+  Assigns it keeps: `assignee_selected`, `recent_assignees`, `my_person_uuid`,
   `can_assign?`, `staff_confirm`, `assignee_notice`, `assignee_project_uuid`.
 
-  ## Several assignees (a task, V29)
+  ## Several assignees (a task V29; a project and a library task V30)
 
-  `init(socket, project, multi: true)` turns on the task's picker: any
-  number of people, teams and departments, ticked in lists and shown as
-  chips above them (the boss, 2026-10-31). It opens on Recent (the viewer's
+  Every picker takes any number of people, teams and departments, shown as
+  cards above the search; a pick adds, ✕ removes (the boss, 2026-10-31 and
+  2026-11-03). It opens on Recent (the viewer's
   own picks), then Teams, Departments and People, five each with "Browse
   more" — which opens that one list alone, with a way back, scrolling on
   for ever (`phx-viewport-bottom`, keyset pages from `Assignees.page/4`).
@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   alias Phoenix.LiveView
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
-  alias PhoenixKitProjects.{Activity, Assignees, L10n, People}
+  alias PhoenixKitProjects.{Activity, Assignees, AssigneeSet, L10n, People}
 
   @events ~w(assignee_search assignee_pick assignee_recent assign_to_me
              staff_create_confirm staff_create_cancel assignee_noop assignee_clear
@@ -74,10 +74,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   def events, do: @events
 
   @callback picker_allowed?(LiveView.Socket.t()) :: boolean()
-  @callback picker_choose(LiveView.Socket.t(), String.t() | nil, String.t() | nil) ::
-              LiveView.Socket.t()
   @callback picker_set(LiveView.Socket.t(), [{String.t(), String.t()}]) :: LiveView.Socket.t()
-  @optional_callbacks picker_set: 2
 
   @home_size 5
   @page_size 20
@@ -108,16 +105,62 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     |> refresh_recent()
     |> Phoenix.Component.assign_new(:staff_confirm, fn -> nil end)
     |> Phoenix.Component.assign_new(:assignee_notice, fn -> nil end)
-    |> Phoenix.Component.assign_new(:assignee_chip, fn -> %{key: nil, row: nil} end)
-    |> init_multi(Keyword.get(opts, :multi, false))
+    |> init_list()
   end
 
-  # Both modes open the same dropdown (the boss, 2026-11-02: one picker);
-  # only what a pick does differs.
-  defp init_multi(socket, multi?) do
+  @doc """
+  The set a form's changeset holds now: the one just chosen
+  (`:assignee_keys`), else the record's own (`AssigneeSet.keys/1`).
+  """
+  @spec changeset_keys(Ecto.Changeset.t() | term()) :: [{String.t(), String.t()}]
+  def changeset_keys(%Ecto.Changeset{} = cs) do
+    case Ecto.Changeset.get_change(cs, :assignee_keys) do
+      keys when is_list(keys) -> keys
+      _ -> PhoenixKitProjects.AssigneeSet.keys(cs.data)
+    end
+  end
+
+  def changeset_keys(_), do: []
+
+  @doc """
+  A form's posted `assignees`, cut down to the ones that can be saved: the
+  record's own current assignees, and anyone else who still exists and is
+  not trashed. A crafted `kind:uuid` (or a person hard-deleted since the
+  pick) would otherwise fail on a foreign key inside the save. A list that
+  is not a list of assignees is left for the changeset to report.
+  """
+  @spec vet_posted(map(), map()) :: map()
+  def vet_posted(%{"assignees" => posted} = attrs, record) do
+    case AssigneeSet.normalize(posted) do
+      {:ok, keys} ->
+        held = AssigneeSet.keys(record)
+
+        keep =
+          Enum.filter(keys, fn {kind, uuid} = key ->
+            key in held or Assignees.describe_pick(kind, uuid) != nil
+          end)
+
+        Map.put(attrs, "assignees", posted(keep))
+
+      :error ->
+        attrs
+    end
+  end
+
+  def vet_posted(attrs, _record), do: attrs
+
+  @doc """
+  A set as a form posts it: `"kind:uuid"` each, after an empty first entry
+  (so a cleared list still arrives).
+  """
+  @spec posted([{String.t(), String.t()}]) :: [String.t()]
+  def posted(keys), do: [""] ++ Enum.map(keys, fn {kind, uuid} -> "#{kind}:#{uuid}" end)
+
+  # Every picker adds (the boss, 2026-11-03: "it shouldn't be switching
+  # out the currently assigned one. It should be adding"); ✕ removes.
+  defp init_list(socket) do
     socket
     |> Phoenix.Component.assign(
-      assignee_multi?: multi?,
       assignee_open?: false,
       assignee_selected: socket.assigns[:assignee_selected] || [],
       assignee_rows: socket.assigns[:assignee_rows] || %{},
@@ -196,64 +239,11 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     Phoenix.Component.assign(socket, :recent_assignees, recent)
   end
 
-  @doc """
-  The chip of the chosen assignee (`{kind, uuid}` or nil): its row and
-  faces, looked up only when the choice changed.
-  """
-  @spec refresh_chip(LiveView.Socket.t(), {String.t(), String.t()} | nil) :: LiveView.Socket.t()
-  def refresh_chip(socket, key) do
-    case socket.assigns[:assignee_chip] do
-      %{key: ^key, row: row} when not is_nil(row) or is_nil(key) ->
-        socket
-
-      _ ->
-        row =
-          case key do
-            {kind, uuid} -> Assignees.describe(kind, uuid, L10n.current_content_lang())
-            nil -> nil
-          end
-
-        was = socket.assigns[:assignee_chip][:key]
-
-        # The open list's rows of the old and the new choice drawn again,
-        # so a tick follows the choice in one-pick pickers too (panel
-        # review, list 3: a stream row keeps the tick it was drawn with).
-        socket
-        |> Phoenix.Component.assign(:assignee_chip, %{key: key, row: row})
-        |> redraw(Enum.reject([was, key], &is_nil/1))
-    end
-  end
-
-  @doc """
-  `{kind, uuid}` of the assignee three uuid fields hold — the first set of
-  person, team, department — or nil. `get` reads one field (`:person` …).
-  """
-  @spec key_of((atom() -> term())) :: {String.t(), String.t()} | nil
-  def key_of(get) when is_function(get, 1) do
-    Enum.find_value([person: "person", team: "team", department: "department"], fn {f, kind} ->
-      case get.(f) do
-        uuid when is_binary(uuid) and uuid != "" -> {kind, uuid}
-        _ -> nil
-      end
-    end)
-  end
-
-  @doc """
-  The three assignee fields for one choice, under the names `names` gives
-  (`%{person: "assigned_person_uuid", …}`): exactly one set.
-  """
-  @spec field_attrs(map(), String.t() | nil, String.t() | nil) :: map()
-  def field_attrs(names, kind, uuid) do
-    Map.new([person: "person", team: "team", department: "department"], fn {f, k} ->
-      {Map.fetch!(names, f), if(k == kind, do: uuid)}
-    end)
-  end
-
   # ── Events ─────────────────────────────────────────────────────────
 
   @doc """
   One picker event. `mod` is the LiveView: its `picker_allowed?/1` is asked
-  before anything is chosen, and `picker_choose/3` puts the choice in its
+  before anything is chosen, and `picker_set/2` puts the new list in its
   form. A pick names a row the search offered and is looked up again, so a
   forged kind or uuid assigns nobody.
   """
@@ -324,18 +314,10 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   # The search box's own form: Enter there must submit nothing.
   def handle_event("assignee_noop", _params, socket, _mod), do: {:noreply, socket}
 
-  def handle_event("assignee_clear", _params, %{assigns: %{assignee_multi?: true}} = socket, mod) do
-    if mod.picker_allowed?(socket),
-      do:
-        {:noreply, socket |> Phoenix.Component.assign(:assignee_notice, nil) |> set_keys([], mod)},
-      else: {:noreply, socket}
-  end
-
   def handle_event("assignee_clear", _params, socket, mod) do
     if mod.picker_allowed?(socket),
       do:
-        {:noreply,
-         socket |> Phoenix.Component.assign(:assignee_notice, nil) |> mod.picker_choose(nil, nil)},
+        {:noreply, socket |> Phoenix.Component.assign(:assignee_notice, nil) |> set_keys([], mod)},
       else: {:noreply, socket}
   end
 
@@ -345,23 +327,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   # lists offered and is looked up again (`describe`), so a forged kind or
   # uuid ticks nobody; an account without a staff record asks first.
   def handle_event("assignee_toggle", %{"kind" => "user", "uuid" => uuid}, socket, mod) do
-    {:noreply, socket |> close_if_single() |> assign_user(uuid, :other, mod)}
-  end
-
-  # One assignee: a pick replaces it and the dropdown closes.
-  def handle_event(
-        "assignee_toggle",
-        %{"kind" => kind, "uuid" => uuid},
-        %{assigns: %{assignee_multi?: false}} = socket,
-        mod
-      ) do
-    case Assignees.describe_pick(kind, uuid) do
-      %{kind: kind, uuid: uuid} ->
-        {:noreply, socket |> choose(kind, uuid, mod) |> close_if_single()}
-
-      nil ->
-        {:noreply, socket}
-    end
+    {:noreply, assign_user(socket, uuid, :other, mod)}
   end
 
   def handle_event("assignee_toggle", %{"kind" => kind, "uuid" => uuid}, socket, mod) do
@@ -452,11 +418,6 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   defp page_size({n, _}) when n > 0, do: min(n, 50)
   defp page_size(_parsed), do: 20
 
-  defp close_if_single(%{assigns: %{assignee_multi?: false}} = socket),
-    do: Phoenix.Component.assign(socket, :assignee_open?, false)
-
-  defp close_if_single(socket), do: socket
-
   defp open_list(socket, :home) do
     socket
     |> Phoenix.Component.assign(
@@ -506,13 +467,11 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     end
   end
 
-  # One assignee: the choice replaces it. Several: it is added (ticked).
-  defp put_choice(%{assigns: %{assignee_multi?: true}} = socket, kind, uuid, mod) do
+  # A pick is added to who is assigned, never in place of them.
+  defp put_choice(socket, kind, uuid, mod) do
     keys = socket.assigns.assignee_selected
     if {kind, uuid} in keys, do: socket, else: set_keys(socket, keys ++ [{kind, uuid}], mod)
   end
-
-  defp put_choice(socket, kind, uuid, mod), do: mod.picker_choose(socket, kind, uuid)
 
   defp set_keys(socket, keys, mod) do
     socket |> set_selected(keys) |> mod.picker_set(keys)
@@ -603,62 +562,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   # ── The component ──────────────────────────────────────────────────
 
   @doc """
-  The picker, inside the form it fills. `fields` are the hidden inputs that
-  carry the choice (`[{name, value}]`, the record's three assignee fields);
-  `search_form` is the id of the empty form that owns the search box
-  (`assignee_picker_outside/1`), so Enter there never submits the form.
-  """
-  attr(:id, :string, required: true)
-  attr(:label, :string, default: nil)
-  attr(:fields, :list, default: [])
-  attr(:chip, :map, required: true)
-  attr(:can_assign?, :boolean, default: true)
-  attr(:my_person_uuid, :string, default: nil)
-  attr(:recent, :list, default: [])
-  attr(:notice, :any, default: nil)
-  attr(:search_form, :string, required: true)
-  attr(:me_id, :string, default: nil)
-
-  attr(:kind_name, :string,
-    default: "assign_type",
-    doc: "the hidden input naming the kind chosen"
-  )
-
-  attr(:view, :any, default: :home)
-  attr(:home, :map, default: %{})
-  attr(:more?, :boolean, default: false)
-
-  attr(:none?, :boolean,
-    default: false,
-    doc: "the open list holds nothing (`@assignee_seen == %{}`): its \"No matches\" line shows"
-  )
-
-  attr(:open?, :boolean, default: false)
-  attr(:streams, :any, required: true)
-  attr(:class, :any, default: nil)
-
-  def assignee_picker(assigns) do
-    key = assigns.chip.key
-
-    assigns =
-      assign(assigns,
-        me_id: assigns.me_id || "#{assigns.id}-me",
-        kind: kind_of(assigns.chip),
-        selected: if(key, do: [key], else: []),
-        rows: if(key, do: %{key => assigns.chip.row}, else: %{})
-      )
-
-    ~H"""
-    <div id={@id} class={["flex flex-col gap-2", @class]} data-kind={@kind}>
-      <input type="hidden" name={@kind_name} value={@kind} />
-      <input :for={{name, value} <- @fields} type="hidden" name={name} value={value} />
-      <.picker_body {assigns} multi?={false} remove_event="assignee_clear" />
-    </div>
-    """
-  end
-
-  @doc """
-  The several-assignee picker (`init(…, multi: true)`), inside the form it
+  The assignee picker, inside the form it
   fills: `name` is the list field the choice posts under
   (`"assignment[assignees][]"`, one `kind:uuid` each, after an empty one
   so a cleared list still posts). The search box belongs to `search_form`
@@ -696,13 +600,13 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     <div id={@id} class={["flex flex-col gap-2", @class]} data-count={length(@selected)}>
       <input type="hidden" name={@name} value="" />
       <input :for={{kind, uuid} <- @selected} type="hidden" name={@name} value={"#{kind}:#{uuid}"} />
-      <.picker_body {assigns} multi?={true} remove_event="assignee_remove" />
+      <.picker_body {assigns} remove_event="assignee_remove" />
     </div>
     """
   end
 
-  # What both modes draw (the boss, 2026-11-02 — one picker, as it looked
-  # before the several-assignee change): who it is for as cards; the search
+  # What it draws (the boss, 2026-11-02 — one picker, as it looked before
+  # the several-assignee change): who it is for as cards; the search
   # field, whose dropdown holds the grouped lists and the search results;
   # the Recent chips under it, one press each.
   defp picker_body(assigns) do
@@ -972,7 +876,4 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     />
     """
   end
-
-  defp kind_of(%{key: {kind, _uuid}}), do: kind
-  defp kind_of(_chip), do: ""
 end

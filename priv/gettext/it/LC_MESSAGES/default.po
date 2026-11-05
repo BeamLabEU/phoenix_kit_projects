@@ -10734,3 +10734,13 @@ msgstr "Impossibile modificare la dipendenza."
 
 msgid "Create invoice"
 msgstr "Crea fattura"
+
+#: lib/phoenix_kit_projects/web/components/description_editor.ex
+#, elixir-autogen, elixir-format
+msgid "Add an image"
+msgstr "Aggiungi un'immagine"
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex
+#, elixir-autogen, elixir-format
+msgid "Remove this file from the project?"
+msgstr "Rimuovere questo file dal progetto?"

@@ -37,7 +37,7 @@ defmodule PhoenixKitProjects.Handoffs do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{Activity, Actor, Notices, Outline, People, Projects}
+  alias PhoenixKitProjects.{Activity, Actor, AssigneeSet, Notices, Outline, People, Projects}
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project}
 
   @type change :: %{uuid: binary(), project_uuid: binary(), from: term(), to: term()}
@@ -426,6 +426,7 @@ defmodule PhoenixKitProjects.Handoffs do
           assigned_person_uuid: a.assigned_person_uuid,
           assigned_team_uuid: a.assigned_team_uuid,
           assigned_department_uuid: a.assigned_department_uuid,
+          child_project_uuid: a.child_project_uuid,
           child_assignee: %{
             assigned_person_uuid: cp.assigned_person_uuid,
             assigned_team_uuid: cp.assigned_team_uuid,
@@ -494,21 +495,38 @@ defmodule PhoenixKitProjects.Handoffs do
   # Each row's assignees (V29: several), read for the whole project at once
   # so telling them costs no read per row (`AssigneeSet.keys/1` takes them).
   # A sub-project's row has no assignee rows of its own: whose it is is the
-  # sub-project's (its one assignee), as the page's "next up" dialog names
-  # it — so the hand-off tells the same people the dialog listed.
+  # sub-project's (V30: its own set, one read for all of them), as the
+  # page's "next up" dialog names it — so the hand-off tells the same
+  # people the dialog listed.
   defp with_assignee_sets(rows) do
-    keys = rows |> Enum.map(& &1.uuid) |> PhoenixKitProjects.AssigneeSet.keys_by_task()
+    keys = rows |> Enum.map(& &1.uuid) |> AssigneeSet.keys_by_task()
+
+    children =
+      rows
+      |> Enum.map(& &1.child_project_uuid)
+      |> Enum.filter(&is_binary/1)
+      |> then(&AssigneeSet.keys_by(:project, &1))
 
     Enum.map(rows, fn row ->
       {child, row} = Map.pop(row, :child_assignee)
 
       own =
         case Map.get(keys, row.uuid, []) do
-          [] -> PhoenixKitProjects.AssigneeSet.legacy_keys(child || %{})
+          [] -> child_keys(row, child, children)
           own -> own
         end
 
       Map.put(row, :assignee_keys, own)
     end)
   end
+
+  # The sub-project's set; its one-assignee mirror when it has no rows.
+  defp child_keys(%{child_project_uuid: uuid}, child, children) when is_binary(uuid) do
+    case Map.get(children, uuid, []) do
+      [] -> AssigneeSet.legacy_keys(child || %{})
+      set -> set
+    end
+  end
+
+  defp child_keys(_row, _child, _children), do: []
 end

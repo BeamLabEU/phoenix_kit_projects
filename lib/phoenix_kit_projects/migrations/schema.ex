@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 29
+  @current_version 30
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -126,6 +126,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v27_task_files(p, prefix)
     v28_repeating_tasks(p)
     v29_assignment_assignees(p, prefix)
+    v30_holder_assignees(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -1048,17 +1049,22 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # V19–V21 each added columns to the assignments table (and V20 the link
   # table); newest first.
   defp down_task_columns(p, target) do
-    if target < 29, do: down_v29(p)
-    if target < 28, do: down_v28(p)
-    if target < 27, do: down_v27(p)
-    if target < 26, do: down_v26(p)
-    if target < 25, do: down_v25(p)
-    if target < 24, do: down_v24(p)
-    if target < 23, do: down_v23(p)
-    if target < 22, do: down_v22(p)
-    if target < 21, do: down_v21(p)
-    if target < 20, do: down_v20(p)
-    if target < 19, do: down_v19(p)
+    [
+      {30, &down_v30/1},
+      {29, &down_v29/1},
+      {28, &down_v28/1},
+      {27, &down_v27/1},
+      {26, &down_v26/1},
+      {25, &down_v25/1},
+      {24, &down_v24/1},
+      {23, &down_v23/1},
+      {22, &down_v22/1},
+      {21, &down_v21/1},
+      {20, &down_v20/1},
+      {19, &down_v19/1}
+    ]
+    |> Enum.each(fn {version, down} -> if target < version, do: down.(p) end)
+
     :ok
   end
 
@@ -1185,6 +1191,127 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     """)
   end
 
+  # V30 — several assignees everywhere (the boss, 2026-11-03, via Max:
+  # "let's make sure that we can assign multiple people everywhere"): a
+  # project's (a sub-project is a project) and a library task's default,
+  # the same way as a task's (V29). Each table holds exactly one staff
+  # person, team or department per row; the holder's old `assigned_*` /
+  # `default_assigned_*` columns stay one more version as the one-assignee
+  # mirror, and the backfill only fills a holder that has no rows yet.
+  defp v30_holder_assignees(p, prefix) do
+    for {table, holder_col, holder_table, legacy} <- [
+          {"phoenix_kit_project_assignees", "project_uuid", "phoenix_kit_projects", "assigned"},
+          {"phoenix_kit_project_task_assignees", "task_uuid", "phoenix_kit_project_tasks",
+           "default_assigned"}
+        ] do
+      execute("""
+      CREATE TABLE IF NOT EXISTS #{p}#{table} (
+        uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+        #{holder_col} UUID NOT NULL
+          REFERENCES #{p}#{holder_table}(uuid) ON DELETE CASCADE
+          DEFERRABLE INITIALLY DEFERRED,
+        person_uuid UUID REFERENCES #{p}phoenix_kit_staff_people(uuid) ON DELETE CASCADE,
+        team_uuid UUID REFERENCES #{p}phoenix_kit_staff_teams(uuid) ON DELETE CASCADE,
+        department_uuid UUID REFERENCES #{p}phoenix_kit_staff_departments(uuid) ON DELETE CASCADE,
+        position INTEGER NOT NULL DEFAULT 0,
+        inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT #{table}_one_subject
+          CHECK (num_nonnulls(person_uuid, team_uuid, department_uuid) = 1)
+      )
+      """)
+
+      for col <- ~w(person team department) do
+        execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS #{table}_#{col}_pair_index
+        ON #{p}#{table} (#{holder_col}, #{col}_uuid)
+        WHERE #{col}_uuid IS NOT NULL
+        """)
+
+        execute("""
+        CREATE INDEX IF NOT EXISTS #{table}_#{col}_index
+        ON #{p}#{table} (#{col}_uuid)
+        WHERE #{col}_uuid IS NOT NULL
+        """)
+      end
+
+      execute("""
+      CREATE INDEX IF NOT EXISTS #{table}_holder_index
+      ON #{p}#{table} (#{holder_col}, position)
+      """)
+
+      execute("""
+      INSERT INTO #{p}#{table}
+        (#{holder_col}, person_uuid, team_uuid, department_uuid, position)
+      SELECT h.uuid, h.#{legacy}_person_uuid, h.#{legacy}_team_uuid, h.#{legacy}_department_uuid, 0
+      FROM #{p}#{holder_table} h
+      WHERE num_nonnulls(h.#{legacy}_person_uuid, h.#{legacy}_team_uuid, h.#{legacy}_department_uuid) = 1
+        AND NOT EXISTS (SELECT 1 FROM #{p}#{table} x WHERE x.#{holder_col} = h.uuid)
+      """)
+    end
+  end
+
+  # Down refuses while a project or library task has several: the old
+  # shape holds one (the same rule as V29's).
+  defp down_v30(p) do
+    for {table, holder_col} <- [
+          {"phoenix_kit_project_assignees", "project_uuid"},
+          {"phoenix_kit_project_task_assignees", "task_uuid"}
+        ] do
+      execute("""
+      DO $$
+      BEGIN
+        IF to_regclass('#{p}#{table}') IS NOT NULL AND EXISTS (
+          SELECT 1 FROM #{p}#{table} GROUP BY #{holder_col} HAVING count(*) > 1
+        ) THEN
+          RAISE EXCEPTION 'phoenix_kit_projects V30 down: some records in #{table} have several assignees; reduce them to one first';
+        END IF;
+      END $$;
+      """)
+
+      rebuild_mirror(p, table, holder_col, holder_of(table), legacy_of(table))
+      execute("DROP TABLE IF EXISTS #{p}#{table}")
+    end
+  end
+
+  defp holder_of("phoenix_kit_project_assignees"), do: "phoenix_kit_projects"
+  defp holder_of("phoenix_kit_project_task_assignees"), do: "phoenix_kit_project_tasks"
+  defp legacy_of("phoenix_kit_project_task_assignees"), do: "default_assigned"
+  defp legacy_of(_table), do: "assigned"
+
+  # Before a down drops the rows, the old one-assignee columns are made to
+  # say what the rows say (codex review): a staff record deleted out of a
+  # two-member set cascades its row away and leaves the one survivor with
+  # an empty mirror, which the drop would otherwise lose. Runs after the
+  # "several" check, so a holder has at most one row here.
+  defp rebuild_mirror(p, table, holder_col, holder_table, legacy),
+    do: execute(rebuild_mirror_sql(p, table, holder_col, holder_table, legacy))
+
+  @doc false
+  # The statement `rebuild_mirror/5` runs (exposed for the tests, which run
+  # it on the real tables without dropping anything).
+  def rebuild_mirror_sql(p, table, holder_col, holder_table, legacy) do
+    """
+    DO $$
+    BEGIN
+      IF to_regclass('#{p}#{table}') IS NOT NULL THEN
+        UPDATE #{p}#{holder_table} h
+        SET #{legacy}_person_uuid = r.person_uuid,
+            #{legacy}_team_uuid = r.team_uuid,
+            #{legacy}_department_uuid = r.department_uuid
+        FROM #{p}#{table} r
+        WHERE r.#{holder_col} = h.uuid;
+
+        UPDATE #{p}#{holder_table} h
+        SET #{legacy}_person_uuid = NULL,
+            #{legacy}_team_uuid = NULL,
+            #{legacy}_department_uuid = NULL
+        WHERE num_nonnulls(h.#{legacy}_person_uuid, h.#{legacy}_team_uuid, h.#{legacy}_department_uuid) > 0
+          AND NOT EXISTS (SELECT 1 FROM #{p}#{table} r WHERE r.#{holder_col} = h.uuid);
+      END IF;
+    END $$;
+    """
+  end
+
   # Down refuses while any task has several assignees: the old shape holds
   # one, and dropping the rest silently would lose who the work is for.
   # A task with one keeps it in its own columns (the mirror above).
@@ -1200,6 +1327,14 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       END IF;
     END $$;
     """)
+
+    rebuild_mirror(
+      p,
+      "phoenix_kit_project_assignment_assignees",
+      "assignment_uuid",
+      "phoenix_kit_project_assignments",
+      "assigned"
+    )
 
     execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignment_assignees")
   end

@@ -59,8 +59,8 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
   "Person:" / "Team:" before it (the boss, 2026-10-30): the face or the
   icon already says which kind it is. Nothing when nobody is assigned.
 
-  `a` is an assignment (every one of its assignees, V29, names joined) or
-  a project (its one); `faces` is its entry from `Assignees.faces/2`.
+  `a` is an assignment or a project — every one of its assignees (V29,
+  V30), names joined; `faces` is its entry from `Assignees.faces/2`.
   """
   attr(:a, :map, required: true)
   attr(:faces, :map, default: nil)

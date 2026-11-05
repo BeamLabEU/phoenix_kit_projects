@@ -1,8 +1,15 @@
 defmodule PhoenixKitProjects.AssigneeSet do
   @moduledoc """
-  A task's assignees (chain V29): any number of staff people, teams and
-  departments, all equal — one shared status, and everyone (a team's and a
+  A task's assignees (chain V29) — and a project's and a library task's
+  default ones (V30): any number of staff people, teams and departments,
+  all equal — one shared status, and everyone (a team's and a
   department's members too) is told. There is no main assignee.
+
+  The three holders (`holder/1`): an `%Assignment{}` (rows in
+  `AssignmentAssignee`, mirror `assigned_*`), a `%Project{}`
+  (`ProjectAssignee`, mirror `assigned_*`) and a library `%Task{}`
+  (`TaskDefaultAssignee`, mirror `default_assigned_*`). A plain map is
+  read as a task's.
 
   A set is a list of keys, `{kind, uuid}` with `kind` one of `"person"`,
   `"team"`, `"department"`, in chip order. It is stored as
@@ -17,12 +24,22 @@ defmodule PhoenixKitProjects.AssigneeSet do
   when a caller forgot the preload. SQL filters use `subject_exists/2`.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   import Ecto.Query
 
-  alias PhoenixKitProjects.Schemas.{Assignment, AssignmentAssignee}
+  alias PhoenixKitProjects.Schemas.{
+    Assignment,
+    AssignmentAssignee,
+    Project,
+    ProjectAssignee,
+    Task,
+    TaskDefaultAssignee
+  }
 
   @type kind :: String.t()
   @type key :: {kind(), String.t()}
+  @typep record :: Assignment.t() | Project.t() | Task.t()
 
   @kinds ~w(person team department)
 
@@ -48,13 +65,22 @@ defmodule PhoenixKitProjects.AssigneeSet do
 
   def keys(%{} = a) do
     case legacy_keys(a) do
-      [] -> lookup(Map.get(a, :uuid))
+      [] -> lookup(holder(a), Map.get(a, :uuid))
       keys -> keys
     end
   end
 
   @doc "The keys of the one-assignee mirror (`assigned_*`): `[]` or one key."
   @spec legacy_keys(map()) :: [key()]
+  def legacy_keys(%Task{} = t) do
+    [
+      {"person", t.default_assigned_person_uuid},
+      {"team", t.default_assigned_team_uuid},
+      {"department", t.default_assigned_department_uuid}
+    ]
+    |> Enum.filter(fn {_k, uuid} -> is_binary(uuid) end)
+  end
+
   def legacy_keys(a) do
     [
       {"person", Map.get(a, :assigned_person_uuid)},
@@ -63,6 +89,35 @@ defmodule PhoenixKitProjects.AssigneeSet do
     ]
     |> Enum.filter(fn {_k, uuid} -> is_binary(uuid) end)
   end
+
+  # ── Holders ────────────────────────────────────────────────────────
+
+  @typedoc "Whose assignees: a task, a project, a library task's default."
+  @type holder :: :assignment | :project | :task
+
+  @doc "Which holder a record is (a plain map is a task's)."
+  @spec holder(map()) :: holder()
+  def holder(%Project{}), do: :project
+  def holder(%Task{}), do: :task
+  def holder(_), do: :assignment
+
+  @doc false
+  # The row schema and the column naming the holder.
+  def rows_of(:assignment), do: {AssignmentAssignee, :assignment_uuid}
+  def rows_of(:project), do: {ProjectAssignee, :project_uuid}
+  def rows_of(:task), do: {TaskDefaultAssignee, :task_uuid}
+
+  @doc "The holder's one-assignee mirror columns, person / team / department."
+  @spec mirror_fields(holder()) :: [atom()]
+  def mirror_fields(:task),
+    do: [
+      :default_assigned_person_uuid,
+      :default_assigned_team_uuid,
+      :default_assigned_department_uuid
+    ]
+
+  def mirror_fields(_),
+    do: [:assigned_person_uuid, :assigned_team_uuid, :assigned_department_uuid]
 
   @doc """
   The names of the task's assignees in chip order — a person's display
@@ -89,13 +144,13 @@ defmodule PhoenixKitProjects.AssigneeSet do
 
   defp link_name(link) do
     case link do
-      %AssignmentAssignee{person: %PhoenixKitProjects.People.Person{} = p} ->
+      %{person: %PhoenixKitProjects.People.Person{} = p} ->
         PhoenixKitProjects.People.display_name(p)
 
-      %AssignmentAssignee{team: %{name: n}} when is_binary(n) ->
+      %{team: %{name: n}} when is_binary(n) ->
         n
 
-      %AssignmentAssignee{department: %{name: n}} when is_binary(n) ->
+      %{department: %{name: n}} when is_binary(n) ->
         n
 
       link ->
@@ -112,23 +167,36 @@ defmodule PhoenixKitProjects.AssigneeSet do
   def of_kind(keys, kind), do: for({^kind, uuid} <- keys, do: uuid)
 
   @doc """
-  The tasks with their assignee rows loaded (one query for the lot), so
-  `keys/1` reads no more. Accepts one task, a list, or `nil`.
+  The holders (tasks, projects, library tasks) with their assignee rows
+  loaded (one query per kind of holder), so `keys/1` reads no more. Accepts
+  one record, a list, or `nil`.
   """
-  @spec preload(Assignment.t() | [Assignment.t()] | nil) ::
-          Assignment.t() | [Assignment.t()] | nil
+  @spec preload(record() | [record()] | nil) :: record() | [record()] | nil
   def preload(nil), do: nil
   def preload([]), do: []
 
-  def preload(%Assignment{} = a), do: hd(preload([a]))
+  def preload(%{__struct__: _} = record), do: hd(preload([record]))
 
   def preload(list) when is_list(list) do
-    uuids = for %Assignment{uuid: uuid} <- list, is_binary(uuid), do: uuid
-    by_task = rows_by_task(uuids)
+    rows =
+      list
+      |> Enum.filter(
+        &match?(
+          %{__struct__: m, uuid: u} when m in [Assignment, Project, Task] and is_binary(u),
+          &1
+        )
+      )
+      |> Enum.group_by(&holder/1, & &1.uuid)
+      |> Map.new(fn {h, uuids} -> {h, rows_by(h, uuids)} end)
 
     Enum.map(list, fn
-      %Assignment{uuid: uuid} = a when is_binary(uuid) ->
-        %{a | assignee_links: Map.get(by_task, uuid, []), assignee_keys: nil}
+      %{__struct__: m, uuid: uuid} = r
+      when m in [Assignment, Project, Task] and is_binary(uuid) ->
+        %{
+          r
+          | assignee_links: rows |> Map.get(holder(r), %{}) |> Map.get(uuid, []),
+            assignee_keys: nil
+        }
 
       other ->
         other
@@ -143,8 +211,8 @@ defmodule PhoenixKitProjects.AssigneeSet do
   @spec ensure_loaded([term()]) :: [term()]
   def ensure_loaded(list) when is_list(list) do
     missing =
-      for %Assignment{assignee_links: %Ecto.Association.NotLoaded{}, assignee_keys: nil} = a <-
-            list,
+      for %{__struct__: m, assignee_links: %Ecto.Association.NotLoaded{}, assignee_keys: nil} = a
+          when m in [Assignment, Project, Task] <- list,
           do: a
 
     case missing do
@@ -155,8 +223,11 @@ defmodule PhoenixKitProjects.AssigneeSet do
         loaded = missing |> preload() |> Map.new(&{&1.uuid, &1})
 
         Enum.map(list, fn
-          %Assignment{uuid: uuid} = a -> Map.get(loaded, uuid, a)
-          other -> other
+          %{__struct__: m, uuid: uuid} = a when m in [Assignment, Project, Task] ->
+            Map.get(loaded, uuid, a)
+
+          other ->
+            other
         end)
     end
   end
@@ -167,9 +238,11 @@ defmodule PhoenixKitProjects.AssigneeSet do
   `preload(assignee_links: AssigneeSet.link_query())`, so a list's preload
   does not fan out into a query per subject.
   """
-  @spec link_query() :: Ecto.Query.t()
-  def link_query do
-    from(r in AssignmentAssignee,
+  @spec link_query(holder()) :: Ecto.Query.t()
+  def link_query(holder \\ :assignment) do
+    {schema, _fk} = rows_of(holder)
+
+    from(r in schema,
       left_join: t in assoc(r, :team),
       left_join: d in assoc(r, :department),
       left_join: p in assoc(r, :person),
@@ -181,27 +254,34 @@ defmodule PhoenixKitProjects.AssigneeSet do
 
   @doc "The keys of many tasks at once: `%{task_uuid => [key]}` (absent = none)."
   @spec keys_by_task([String.t()]) :: %{String.t() => [key()]}
-  def keys_by_task(uuids) do
-    uuids
-    |> Enum.uniq()
-    |> rows_by_task()
+  def keys_by_task(uuids), do: keys_by(:assignment, uuids)
+
+  @doc "The keys of many holders of one kind at once: `%{uuid => [key]}` (absent = none)."
+  @spec keys_by(holder(), [String.t()]) :: %{String.t() => [key()]}
+  def keys_by(holder, uuids) do
+    holder
+    |> rows_by(Enum.uniq(uuids))
     |> Map.new(fn {uuid, rows} -> {uuid, Enum.map(rows, &link_key/1)} end)
   end
 
-  defp rows_by_task([]), do: %{}
+  defp rows_by(_holder, []), do: %{}
 
-  defp rows_by_task(uuids) do
-    from(r in AssignmentAssignee,
-      where: r.assignment_uuid in ^uuids,
+  defp rows_by(holder, uuids) do
+    {schema, fk} = rows_of(holder)
+
+    from(r in schema,
+      where: field(r, ^fk) in ^uuids,
       order_by: [asc: r.position, asc: r.inserted_at]
     )
     |> repo().all()
-    |> Enum.group_by(& &1.assignment_uuid)
+    |> Enum.group_by(&Map.fetch!(&1, fk))
   end
 
-  defp lookup(uuid) when is_binary(uuid) do
-    from(r in AssignmentAssignee,
-      where: r.assignment_uuid == ^uuid,
+  defp lookup(holder, uuid) when is_binary(uuid) do
+    {schema, fk} = rows_of(holder)
+
+    from(r in schema,
+      where: field(r, ^fk) == ^uuid,
       order_by: [asc: r.position, asc: r.inserted_at]
     )
     |> repo().all()
@@ -210,11 +290,11 @@ defmodule PhoenixKitProjects.AssigneeSet do
     _ -> []
   end
 
-  defp lookup(_), do: []
+  defp lookup(_holder, _), do: []
 
-  defp link_key(%AssignmentAssignee{person_uuid: u}) when is_binary(u), do: {"person", u}
-  defp link_key(%AssignmentAssignee{team_uuid: u}) when is_binary(u), do: {"team", u}
-  defp link_key(%AssignmentAssignee{department_uuid: u}) when is_binary(u), do: {"department", u}
+  defp link_key(%{person_uuid: u}) when is_binary(u), do: {"person", u}
+  defp link_key(%{team_uuid: u}) when is_binary(u), do: {"team", u}
+  defp link_key(%{department_uuid: u}) when is_binary(u), do: {"department", u}
 
   # ── Querying ───────────────────────────────────────────────────────
 
@@ -230,13 +310,18 @@ defmodule PhoenixKitProjects.AssigneeSet do
 
   @doc "The uuids of the tasks having `kind` `uuids` among their assignees, as a query."
   @spec task_uuids(kind(), String.t() | [String.t()]) :: Ecto.Query.t()
-  def task_uuids(kind, uuids) when kind in @kinds do
+  def task_uuids(kind, uuids) when kind in @kinds, do: holder_uuids(:assignment, kind, uuids)
+
+  # The uuids of the holders (tasks, projects, library tasks) having `kind`
+  # `uuids` among their assignees, as a query.
+  defp holder_uuids(holder, kind, uuids) do
     uuids = List.wrap(uuids)
     col = column(kind)
+    {schema, fk} = rows_of(holder)
 
-    from(r in AssignmentAssignee,
+    from(r in schema,
       where: field(r, ^col) in type(^uuids, {:array, UUIDv7}),
-      select: r.assignment_uuid
+      select: field(r, ^fk)
     )
   end
 
@@ -331,14 +416,15 @@ defmodule PhoenixKitProjects.AssigneeSet do
   The one-assignee mirror for a set: `%{assigned_person_uuid: _, …}` with
   the one assignee's column filled, or all `nil` for none or several.
   """
-  @spec mirror([key()]) :: %{atom() => String.t() | nil}
-  def mirror(keys) do
-    blank = %{assigned_person_uuid: nil, assigned_team_uuid: nil, assigned_department_uuid: nil}
+  @spec mirror([key()], holder()) :: %{atom() => String.t() | nil}
+  def mirror(keys, holder \\ :assignment) do
+    [person, team, department] = mirror_fields(holder)
+    blank = %{person => nil, team => nil, department => nil}
 
     case keys do
-      [{"person", u}] -> %{blank | assigned_person_uuid: u}
-      [{"team", u}] -> %{blank | assigned_team_uuid: u}
-      [{"department", u}] -> %{blank | assigned_department_uuid: u}
+      [{"person", u}] -> %{blank | person => u}
+      [{"team", u}] -> %{blank | team => u}
+      [{"department", u}] -> %{blank | department => u}
       _ -> blank
     end
   end
@@ -346,16 +432,16 @@ defmodule PhoenixKitProjects.AssigneeSet do
   @doc false
   # Called from `Assignment.changeset/2`'s `prepare_changes`, inside the
   # save's transaction: the task's rows become exactly `keys`.
-  @spec write_rows(module(), String.t(), [key()]) :: :ok
-  def write_rows(repo, assignment_uuid, keys) when is_binary(assignment_uuid) do
-    # The task's row first (a new task has none yet: nothing to wait on).
-    # Two saves replacing the set at once otherwise interleave their
-    # delete and insert: the second deletes none of the first's new rows
-    # and adds its own (a union of both), or trips the pair index.
-    from(a in Assignment, where: a.uuid == ^assignment_uuid, lock: "FOR NO KEY UPDATE", select: 1)
-    |> repo.all()
+  @spec write_rows(module(), holder(), String.t(), [key()]) :: :ok
+  def write_rows(repo, holder \\ :assignment, holder_uuid, keys) when is_binary(holder_uuid) do
+    {schema, fk} = rows_of(holder)
 
-    from(r in AssignmentAssignee, where: r.assignment_uuid == ^assignment_uuid)
+    # The holder's row first, locked: two saves of one record replace its
+    # set one after the other, never interleaved into a merge of both
+    # (codex review). A new record has no row yet — nothing to wait for.
+    lock_holder(repo, holder, holder_uuid)
+
+    from(r in schema, where: field(r, ^fk) == ^holder_uuid)
     |> repo.delete_all()
 
     rows =
@@ -364,7 +450,7 @@ defmodule PhoenixKitProjects.AssigneeSet do
       |> Enum.map(fn {{kind, uuid}, i} ->
         Map.put(
           %{
-            assignment_uuid: assignment_uuid,
+            fk => holder_uuid,
             person_uuid: nil,
             team_uuid: nil,
             department_uuid: nil,
@@ -375,9 +461,124 @@ defmodule PhoenixKitProjects.AssigneeSet do
         )
       end)
 
-    if rows != [], do: repo.insert_all(AssignmentAssignee, rows)
+    if rows != [], do: repo.insert_all(schema, rows)
     :ok
   end
+
+  @doc false
+  def lock_holder(repo, holder, holder_uuid) do
+    from(h in holder_schema(holder),
+      where: h.uuid == ^holder_uuid,
+      select: h.uuid,
+      lock: "FOR NO KEY UPDATE"
+    )
+    |> repo.all()
+
+    :ok
+  end
+
+  defp holder_schema(:assignment), do: Assignment
+  defp holder_schema(:project), do: Project
+  defp holder_schema(:task), do: Task
+
+  # ── Changesets ─────────────────────────────────────────────────────
+
+  @doc """
+  A holder's changeset takes its set (V29/V30): from `"assignees"` (any
+  shape `fetch_param/1` accepts) or — old forms and the API — from the
+  holder's three single fields, which then name the whole set. Either way
+  the three fields end up as the mirror (the one assignee, or all empty)
+  and `:assignee_keys` carries the set for `write_changeset/2`. `error_field`
+  is where a bad list is reported.
+  """
+  @spec put_changeset(Ecto.Changeset.t(), map(), holder()) :: Ecto.Changeset.t()
+  def put_changeset(%Ecto.Changeset{} = changeset, attrs, holder) when is_map(attrs) do
+    fields = mirror_fields(holder)
+
+    case fetch_param(attrs) do
+      {:ok, keys} ->
+        # The same list again (a form posts it with every change): nothing
+        # to write — unless the single fields beside it changed it.
+        if keys == keys(changeset.data) do
+          changeset |> legacy_changeset(holder) |> repair_mirror(keys, holder)
+        else
+          mirror = mirror(keys, holder)
+
+          fields
+          |> Enum.reduce(changeset, &Ecto.Changeset.put_change(&2, &1, mirror[&1]))
+          |> Ecto.Changeset.put_change(:assignee_keys, keys)
+        end
+
+      :error ->
+        Ecto.Changeset.add_error(changeset, hd(fields), gettext("is not a list of assignees"))
+
+      :none ->
+        legacy_changeset(changeset, holder)
+    end
+  end
+
+  def put_changeset(changeset, _attrs, _holder), do: changeset
+
+  # The same set posted again still puts the mirror right when it went
+  # stale (a staff record deleted out of a two-member set leaves the one
+  # survivor with an empty mirror — codex review).
+  defp repair_mirror(changeset, keys, holder) do
+    if Ecto.Changeset.get_change(changeset, :assignee_keys) do
+      changeset
+    else
+      mirror = mirror(keys, holder)
+
+      Enum.reduce(mirror_fields(holder), changeset, fn field, cs ->
+        if Map.get(cs.data, field) == mirror[field],
+          do: cs,
+          else: Ecto.Changeset.put_change(cs, field, mirror[field])
+      end)
+    end
+  end
+
+  defp legacy_changeset(changeset, holder) do
+    fields = mirror_fields(holder)
+
+    if Enum.any?(fields, &Map.has_key?(changeset.changes, &1)) do
+      [person, team, department] = Enum.map(fields, &Ecto.Changeset.get_field(changeset, &1))
+
+      keys =
+        Enum.filter(
+          [{"person", person}, {"team", team}, {"department", department}],
+          fn {_k, u} -> is_binary(u) end
+        )
+
+      Ecto.Changeset.put_change(changeset, :assignee_keys, keys)
+    else
+      changeset
+    end
+  end
+
+  @doc """
+  Writes a changeset's set (`:assignee_keys`) in the save's own
+  transaction; a new record gets its uuid here, so its rows can be written
+  just before it (their holder reference is deferred).
+  """
+  @spec write_changeset(Ecto.Changeset.t(), holder()) :: Ecto.Changeset.t()
+  def write_changeset(%Ecto.Changeset{valid?: true} = changeset, holder) do
+    case Ecto.Changeset.get_change(changeset, :assignee_keys) do
+      keys when is_list(keys) ->
+        changeset =
+          if is_nil(changeset.data.uuid) and is_nil(Ecto.Changeset.get_change(changeset, :uuid)),
+            do: Ecto.Changeset.put_change(changeset, :uuid, UUIDv7.generate()),
+            else: changeset
+
+        Ecto.Changeset.prepare_changes(changeset, fn cs ->
+          write_rows(cs.repo, holder, Ecto.Changeset.get_field(cs, :uuid), keys)
+          cs
+        end)
+
+      _ ->
+        changeset
+    end
+  end
+
+  def write_changeset(changeset, _holder), do: changeset
 
   @doc """
   The assignees added and removed between two sets: `{added, removed}`.

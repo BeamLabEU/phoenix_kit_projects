@@ -110,7 +110,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         counts: %{
           mine: length(mine),
           # open tasks assigned to the person this key acts for
-          assigned_to_me: Enum.count(open, &assigned_to?(&1, me)),
+          assigned_to_me: count_assigned(open, me),
           ready: length(ready),
           waiting: length(waiting),
           overdue: Enum.count(open, &Assignment.overdue?/1)
@@ -331,9 +331,15 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     }
   end
 
-  # The key's person among the task's assignees (V29: several).
-  defp assigned_to?(a, me) when is_binary(me),
-    do: {"person", me} in PhoenixKitProjects.AssigneeSet.keys(a)
-
+  # The key's person among the row's assignees (V29: several; a sub-project
+  # row's are its child project's — codex review).
+  defp assigned_to?(a, me) when is_binary(me), do: {"person", me} in Assignee.held_keys(a)
   defp assigned_to?(_a, _me), do: false
+
+  defp count_assigned(rows, me) when is_binary(me) do
+    held = Assignee.held_keys_by(rows)
+    Enum.count(rows, &({"person", me} in Map.get(held, &1.uuid, [])))
+  end
+
+  defp count_assigned(_rows, _me), do: 0
 end

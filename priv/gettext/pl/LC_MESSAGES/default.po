@@ -10791,3 +10791,13 @@ msgstr "Nie udało się zmienić zależności."
 
 msgid "Create invoice"
 msgstr "Utwórz fakturę"
+
+#: lib/phoenix_kit_projects/web/components/description_editor.ex
+#, elixir-autogen, elixir-format
+msgid "Add an image"
+msgstr "Dodaj obraz"
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex
+#, elixir-autogen, elixir-format
+msgid "Remove this file from the project?"
+msgstr "Usunąć ten plik z projektu?"

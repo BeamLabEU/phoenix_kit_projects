@@ -16,9 +16,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   import PhoenixKitWeb.Components.MultilangForm
   import PhoenixKitProjects.Web.Components.TimeInput, only: [datetime_input: 1]
+  import PhoenixKitProjects.Web.Components.TaskFiles, only: [task_files: 1]
 
   import PhoenixKitProjects.Web.Components.AssigneePicker,
-    only: [assignee_picker: 1, assignee_picker_outside: 1]
+    only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts,
     only: [form_header: 1, form_tabs: 1, form_pane: 1, words_block: 1]
@@ -27,7 +28,19 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
+
+  alias PhoenixKitProjects.{
+    Activity,
+    Archetypes,
+    AssigneeSet,
+    Authz,
+    Errors,
+    Features,
+    L10n,
+    Paths,
+    Projects
+  }
+
   alias PhoenixKitProjects.{Attachments, Extensions, Grants, Members, Statuses}
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
@@ -99,6 +112,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_cue_baseline()
       |> assign(dirty?: false)
       |> DescriptionImages.allow(&description_image_target/1, &WriteGate.allowed?/1)
+      |> assign_project_files()
       |> allow_upload(:project_cover,
         accept: ~w(image/*),
         max_entries: 1,
@@ -548,7 +562,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             gettext("Edit %{name}",
               name: Project.localized_name(project, L10n.current_content_lang())
             ),
-          project: project,
+          # Its assignee rows with it: every change of the form asks who the
+          # project has now (a record with none or several has no mirror).
+          project: AssigneeSet.preload(project),
           live_action: :edit,
           can_manage_modules:
             not project.is_template and
@@ -587,7 +603,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     socket
     |> assign(form: to_form(cs), key_field: key_field(socket, cs))
     |> then(fn s ->
-      if s.assigns[:assignee_project_uuid] != nil or Map.has_key?(s.assigns, :assignee_chip),
+      if Map.has_key?(s.assigns, :assignee_selected),
         do: refresh_assignee_chip(s),
         else: s
     end)
@@ -595,26 +611,21 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # ── The assignee picker (`Web.Components.AssigneePicker`) ──────────
 
-  @assignee_names %{
-    person: "assigned_person_uuid",
-    team: "assigned_team_uuid",
-    department: "assigned_department_uuid"
-  }
-
+  # A project has any number of assignees (V30), as a task: the picker
+  # adds, ✕ removes (the boss, 2026-11-03).
   defp assign_assignee_picker(socket) do
     project = socket.assigns[:project]
 
     socket
-    |> AssigneePicker.init(project, can_assign?: picker_allowed?(socket), source: "project_form")
+    |> AssigneePicker.init(project,
+      can_assign?: picker_allowed?(socket),
+      source: "project_form"
+    )
     |> refresh_assignee_chip()
   end
 
-  defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{} = f}} = socket),
-    do:
-      AssigneePicker.refresh_chip(
-        socket,
-        AssigneePicker.key_of(&f[String.to_existing_atom(Map.fetch!(@assignee_names, &1))].value)
-      )
+  defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{source: cs}}} = socket),
+    do: AssigneePicker.set_selected(socket, AssigneePicker.changeset_keys(cs))
 
   defp refresh_assignee_chip(socket), do: socket
 
@@ -635,11 +646,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   @doc false
-  # `AssigneePicker` callback: the choice into the form, as if posted.
-  def picker_choose(socket, kind, uuid) do
+  # `AssigneePicker` callback: the whole new list into the form, as if
+  # posted (saved with Save).
+  def picker_set(socket, keys) do
     attrs =
       (socket.assigns.form.params || %{})
-      |> Map.merge(AssigneePicker.field_attrs(@assignee_names, kind, uuid))
+      |> Map.put("assignees", AssigneePicker.posted(keys))
       |> merge_attrs(socket)
 
     cs =
@@ -648,7 +660,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       )
 
     socket
-    |> assign(assign_type: kind || "")
     |> assign_form(cs)
     |> WebHelpers.mark_dirty()
   end
@@ -719,22 +730,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end
   end
 
-  # Assignee picker state (V128). `assign_type` ("" / "team" / "department" /
-  # "person") drives which staff `<.select>` shows; the staff option lists are
-  # loaded once. Mirrors `AssignmentFormLive`'s assignee picker.
+  # Staff option lists for the members/participants pickers, loaded once.
   defp assign_assignee_state(socket) do
     assign(socket,
-      assign_type: assignee_type(socket.assigns.project),
       participant_people: load_participant_people(),
       team_options: load_teams(),
       department_options: load_departments()
     )
   end
-
-  defp assignee_type(%Project{assigned_person_uuid: u}) when not is_nil(u), do: "person"
-  defp assignee_type(%Project{assigned_team_uuid: u}) when not is_nil(u), do: "team"
-  defp assignee_type(%Project{assigned_department_uuid: u}) when not is_nil(u), do: "department"
-  defp assignee_type(_), do: ""
 
   # `rescue` so a `phoenix_kit_staff` DB hiccup degrades to an empty picker
   # rather than taking the form down (same pattern as the context's staff
@@ -776,26 +779,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       Logger.warning("[Projects] load_participant_people failed: #{Exception.message(e)}")
       []
   end
-
-  # Null out the assignee fields that don't match the chosen `assign_type`, so
-  # switching from Team to Person doesn't leave a stale team uuid set (which the
-  # single-assignee CHECK would then reject).
-  defp clear_other_assignees(attrs, "team"),
-    do: Map.merge(attrs, %{"assigned_department_uuid" => nil, "assigned_person_uuid" => nil})
-
-  defp clear_other_assignees(attrs, "department"),
-    do: Map.merge(attrs, %{"assigned_team_uuid" => nil, "assigned_person_uuid" => nil})
-
-  defp clear_other_assignees(attrs, "person"),
-    do: Map.merge(attrs, %{"assigned_team_uuid" => nil, "assigned_department_uuid" => nil})
-
-  defp clear_other_assignees(attrs, _),
-    do:
-      Map.merge(attrs, %{
-        "assigned_team_uuid" => nil,
-        "assigned_department_uuid" => nil,
-        "assigned_person_uuid" => nil
-      })
 
   # Grouped status-source entities for the selector (status catalogs first,
   # then any other entity). Empty when entities is unavailable — the
@@ -1035,8 +1018,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
-    assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
-    attrs = attrs |> merge_attrs(socket) |> clear_other_assignees(assign_type)
+    attrs = merge_attrs(attrs, socket)
 
     cs =
       Projects.change_project(socket.assigns.project, attrs,
@@ -1045,7 +1027,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     {:noreply,
      socket
-     |> assign(selected_template: selected_template, assign_type: assign_type)
+     |> assign(selected_template: selected_template)
      |> assign(
        status_translation_mode:
          Map.get(params, "status_translation_mode", socket.assigns.status_translation_mode)
@@ -1061,7 +1043,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   def handle_event("save", %{"project" => attrs} = params, socket) do
     if socket.assigns.ai_in_flight == [] do
       template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
-      assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
 
       # Save-time gate re-resolution (panel R3-4): a mid-edit toggle in
       # another session binds THIS submit, not the mount-time snapshot.
@@ -1079,7 +1060,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         attrs
         |> Map.delete("settings")
         |> merge_attrs(socket)
-        |> clear_other_assignees(assign_type)
+        |> AssigneePicker.vet_posted(socket.assigns.project)
         |> maybe_apply_status_mode(params, project, fx)
         |> apply_project_type(params, project, socket.assigns[:can_manage_modules] == true)
         |> apply_new_completion(params, socket.assigns.live_action)
@@ -1120,7 +1101,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # Ending ongoing work asks first (`Components.ConfirmAction`).
   def handle_event("request_confirm", params, socket),
-    do: {:noreply, ConfirmAction.request(socket, params, ~w(end_project cancel))}
+    do:
+      {:noreply,
+       ConfirmAction.request(socket, params, ~w(end_project cancel remove_project_file))}
 
   def handle_event("confirm_action_cancel", _params, socket),
     do: {:noreply, ConfirmAction.clear(socket)}
@@ -1143,6 +1126,39 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   def handle_event("end_project", _params, socket),
     do: {:noreply, end_or_resume(socket, :end)}
+
+  # The project's files (`assign_project_files/1`): the upload's own form,
+  # a cancelled upload, a file taken off (asked first, `ConfirmAction`).
+  def handle_event("project_files_validate", _params, socket), do: {:noreply, socket}
+
+  def handle_event("cancel_project_upload", %{"ref" => ref}, socket),
+    do: {:noreply, cancel_upload(socket, :project_files, ref)}
+
+  def handle_event("remove_project_file", %{"uuid" => file_uuid}, socket) do
+    if project_files_allowed?(socket) do
+      case Attachments.remove_file(
+             socket.assigns.project,
+             file_uuid,
+             Activity.actor_uuid(socket)
+           ) do
+        :ok ->
+          Activity.log("projects.file_removed",
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "project",
+            resource_uuid: socket.assigns.project.uuid,
+            metadata: %{"file_uuid" => file_uuid}
+          )
+
+          {:noreply, socket |> load_project_files() |> put_flash(:info, gettext("File removed."))}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, gettext("Could not remove the file."))}
+      end
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("You don't have permission to manage files here."))}
+    end
+  end
 
   def handle_event("resume_project", _params, socket),
     do: {:noreply, end_or_resume(socket, :resume)}
@@ -1677,7 +1693,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> then(fn a ->
       if fx.assignees,
         do: a,
-        else: Map.drop(a, ~w(assigned_team_uuid assigned_department_uuid assigned_person_uuid))
+        else:
+          Map.drop(
+            a,
+            ~w(assignees assigned_team_uuid assigned_department_uuid assigned_person_uuid)
+          )
     end)
     |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
   end
@@ -3184,18 +3204,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               uploads={@uploads}
             />
 
-            <%!-- Whose it is (V128): the task popup's picker. --%>
-            <.assignee_picker
+            <%!-- Whose it is (V30: any number of people, teams and
+                 departments, as a task's): the task popup's picker. --%>
+            <.assignee_multi_picker
               :if={@fx.assignees}
               id="project-assignee"
-              label={gettext("Assignee")}
+              label={gettext("Assignees")}
               search_form="project-assignee-form"
-              fields={[
-                {@form[:assigned_person_uuid].name, @form[:assigned_person_uuid].value},
-                {@form[:assigned_team_uuid].name, @form[:assigned_team_uuid].value},
-                {@form[:assigned_department_uuid].name, @form[:assigned_department_uuid].value}
-              ]}
-              chip={@assignee_chip}
+              name="project[assignees][]"
+              selected={@assignee_selected}
+              rows={@assignee_rows}
               can_assign?={@can_assign?}
               my_person_uuid={@my_person_uuid}
               recent={@recent_assignees}
@@ -3208,7 +3226,49 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               streams={@streams}
             />
 
-
+            <%!-- The project's files (item 47), as the task popup's More
+                 tab shows a task's: the input belongs to a form of its
+                 own, drawn after this one. --%>
+            <fieldset
+              :if={@show_files?}
+              id="project-files"
+              class="rounded-box border border-base-300 p-3 flex flex-col gap-2"
+              phx-drop-target={@can_files? && @uploads.project_files.ref}
+            >
+              <legend class="px-1 text-sm font-semibold">{gettext("Files")}</legend>
+              <.task_files
+                id="project-file-list"
+                files={@project_files}
+                urls={@project_file_urls}
+                remove_event={if @can_files?, do: "remove_project_file"}
+                remove_title={gettext("Remove this file from the project?")}
+                empty_text={if not @can_files?, do: gettext("No files yet.")}
+              />
+              <label
+                :if={@can_files?}
+                class="flex flex-col items-center justify-center gap-1 rounded-box border border-dashed border-base-300 px-3 py-4 text-sm text-base-content/60 cursor-pointer hover:bg-base-200/50"
+              >
+                <.icon name="hero-arrow-up-tray" class="w-5 h-5" />
+                <span>{gettext("Drop files here or choose them")}</span>
+                <.live_file_input upload={@uploads.project_files} form="project-files-form" class="sr-only" />
+              </label>
+              <div :for={entry <- (@can_files? && @uploads.project_files.entries) || []} class="flex items-center gap-2 text-xs">
+                <span class="truncate flex-1">{entry.client_name}</span>
+                <progress class="progress progress-primary w-24" value={entry.progress} max="100"></progress>
+                <button
+                  type="button"
+                  phx-click="cancel_project_upload"
+                  phx-value-ref={entry.ref}
+                  class="btn btn-ghost btn-xs btn-circle"
+                  aria-label={gettext("Cancel")}
+                >
+                  <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+                </button>
+                <span :for={err <- upload_errors(@uploads.project_files, entry)} class="text-error">
+                  {project_upload_error(err)}
+                </span>
+              </div>
+            </fieldset>
           </.form_pane>
 
           <.form_pane prefix="project" pane="schedule" active={@pane}>
@@ -3444,6 +3504,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
       </.form>
 
+      <%!-- Owns the project's file input drawn inside the form above. --%>
+      <form
+        :if={@show_files? and @can_files?}
+        id="project-files-form"
+        phx-change="project_files_validate"
+        phx-submit="project_files_validate"
+        class="hidden"
+      ></form>
+
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
 
       <%!-- Modules & Features, embedded — OUTSIDE the project form (and
@@ -3550,6 +3619,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # file chooser (`DescriptionImages.pick/1`).
   def handle_info(
         {:leaf_insert_request, %{editor_id: "project-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
+  def handle_info(
+        {:leaf_toolbar_action, %{editor_id: "project-description--" <> _, id: "pkp-image"}},
         socket
       ),
       do: {:noreply, DescriptionImages.pick(socket)}
@@ -3788,6 +3863,121 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       _ -> {:noreply, put_flash(socket, :error, gettext("Upload failed. Please try again."))}
     end
   end
+
+  # ── The project's files, in the popup (item 47) ─────────────────────
+  #
+  # The boss, 2026-11-03: "in the project edit pop-up, I'm not seeing an
+  # image or file attachment … We should have that." The task popup's More
+  # tab, for the project: the files of its Files tab (the project's folder,
+  # `Attachments`), thumbnails, a drop zone, ✕ asked first. Shown while the
+  # Files extension is on; changed by whoever the Files tab lets change
+  # them (`:upload_files`), asked again of the project as stored now on
+  # every change. A template has no files.
+  @project_file_max_mb 25
+
+  defp assign_project_files(
+         %{assigns: %{live_action: :edit, project: %Project{uuid: uuid} = project}} = socket
+       )
+       when is_binary(uuid) do
+    if project.is_template != true and Extensions.enabled?(project, "files") do
+      socket
+      |> assign(show_files?: true, can_files?: project_files_allowed?(socket))
+      |> allow_upload(:project_files,
+        accept: :any,
+        max_entries: 10,
+        max_file_size: @project_file_max_mb * 1_048_576,
+        auto_upload: true,
+        progress: &project_file_progress/3
+      )
+      |> load_project_files()
+    else
+      no_project_files(socket)
+    end
+  end
+
+  defp assign_project_files(socket), do: no_project_files(socket)
+
+  defp no_project_files(socket),
+    do:
+      assign(socket,
+        show_files?: false,
+        can_files?: false,
+        project_files: [],
+        project_file_urls: %{}
+      )
+
+  defp load_project_files(socket) do
+    files = Attachments.list_files(socket.assigns.project, Activity.actor_uuid(socket))
+
+    assign(socket,
+      project_files: Enum.map(files, &%{file: &1, inline: false}),
+      project_file_urls: Attachments.download_urls(files)
+    )
+  end
+
+  defp project_files_allowed?(%{assigns: %{project: %Project{uuid: uuid}}} = socket)
+       when is_binary(uuid) do
+    case Projects.get_project(uuid) do
+      %Project{} = project ->
+        Extensions.enabled?(project, "files") and
+          Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :upload_files)
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp project_files_allowed?(_socket), do: false
+
+  defp project_file_progress(:project_files, %{done?: true} = entry, socket) do
+    if project_files_allowed?(socket) do
+      result =
+        consume_uploaded_entry(socket, entry, fn %{path: path} ->
+          {:ok,
+           Attachments.store_project_file(
+             socket.assigns.project,
+             path,
+             [
+               filename: entry.client_name,
+               content_type: entry.client_type,
+               size_bytes: entry.client_size
+             ],
+             Activity.actor_uuid(socket)
+           )}
+        end)
+
+      case result do
+        {:ok, file} ->
+          Activity.log("projects.file_added",
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "project",
+            resource_uuid: socket.assigns.project.uuid,
+            metadata: %{"count" => 1, "file_uuid" => to_string(file.uuid)}
+          )
+
+          {:noreply, load_project_files(socket)}
+
+        _ ->
+          {:noreply, put_flash(socket, :error, gettext("Upload failed. Please try again."))}
+      end
+    else
+      {:noreply,
+       socket
+       |> cancel_upload(:project_files, entry.ref)
+       |> put_flash(:error, gettext("You don't have permission to manage files here."))}
+    end
+  end
+
+  defp project_file_progress(_upload, _entry, socket), do: {:noreply, socket}
+
+  defp project_upload_error(:too_large),
+    do: gettext("Too large (at most %{mb} MB).", mb: @project_file_max_mb)
+
+  defp project_upload_error(:not_accepted), do: gettext("This kind of file is not accepted.")
+  defp project_upload_error(:too_many_files), do: gettext("Too many files at once.")
+  defp project_upload_error(_), do: gettext("Upload failed. Please try again.")
 
   # The one key, written atomically (`Projects.set_cover/2`): the settings
   # this form read at mount are not written back over newer ones.

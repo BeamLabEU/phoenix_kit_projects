@@ -10734,3 +10734,13 @@ msgstr "Die Abhängigkeit konnte nicht geändert werden."
 
 msgid "Create invoice"
 msgstr "Rechnung erstellen"
+
+#: lib/phoenix_kit_projects/web/components/description_editor.ex
+#, elixir-autogen, elixir-format
+msgid "Add an image"
+msgstr "Bild hinzufügen"
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex
+#, elixir-autogen, elixir-format
+msgid "Remove this file from the project?"
+msgstr "Diese Datei aus dem Projekt entfernen?"

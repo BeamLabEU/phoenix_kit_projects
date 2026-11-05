@@ -55,29 +55,16 @@ defmodule PhoenixKitProjects.Web.Helpers do
           PhoenixKitProjects.Schemas.Assignment.t()
           | PhoenixKitProjects.Schemas.Project.t()
         ) :: String.t() | nil
-  def assignee_label(%PhoenixKitProjects.Schemas.Assignment{} = a) do
-    # Every assignee (V29), in chip order.
+  def assignee_label(%m{} = a)
+      when m in [PhoenixKitProjects.Schemas.Assignment, PhoenixKitProjects.Schemas.Project] do
+    # Every assignee (a task V29, a project V30), in chip order.
     case PhoenixKitProjects.AssigneeSet.names(a) do
       [] -> nil
       names -> Enum.join(names, ", ")
     end
   end
 
-  def assignee_label(a) do
-    cond do
-      a.assigned_person && a.assigned_person.user ->
-        PhoenixKitProjects.People.display_name(a.assigned_person)
-
-      a.assigned_team ->
-        a.assigned_team.name
-
-      a.assigned_department ->
-        a.assigned_department.name
-
-      true ->
-        nil
-    end
-  end
+  def assignee_label(_), do: nil
 
   @doc """
   Whether an assignment counts weekends — its own override, falling back to

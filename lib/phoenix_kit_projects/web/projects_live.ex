@@ -1529,6 +1529,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   defp assignee_kind_icon(:team), do: "hero-users"
   defp assignee_kind_icon(:department), do: "hero-building-office"
+  defp assignee_kind_icon(:several), do: "hero-user-group"
   defp assignee_kind_icon(_person), do: "hero-user"
 
   defp health_label("on_track"), do: gettext("On track")

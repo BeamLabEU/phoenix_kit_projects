@@ -32,6 +32,7 @@ defmodule PhoenixKitProjects.ListMetrics do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.User
+  alias PhoenixKitProjects.AssigneeSet
   alias PhoenixKitProjects.{Extensions, People, Projects}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, ProjectEvent, ProjectMember, WorkEntry}
 
@@ -172,14 +173,23 @@ defmodule PhoenixKitProjects.ListMetrics do
     end)
   end
 
-  # The project's OWN assignee (a team, a department or a person), named
-  # through the People doorway — one read per kind in use, never per row.
+  # The project's OWN assignees (V30: any number of people, teams and
+  # departments), named through the People doorway — one read for the
+  # sets and one per kind in use, never per row. Several read as one line,
+  # names joined; `kind` is the one assignee's kind, `:several` otherwise.
   defp read(:assignee, projects, _uuids, _opts) do
-    teams = People.names_by_uuid(:team, pluck(projects, :assigned_team_uuid))
-    departments = People.names_by_uuid(:department, pluck(projects, :assigned_department_uuid))
-    people = People.person_names(pluck(projects, :assigned_person_uuid))
+    keys = AssigneeSet.keys_by(:project, Enum.map(projects, & &1.uuid))
+    all = keys |> Map.values() |> List.flatten()
 
-    for p <- projects, assignee = assignee_of(p, teams, departments, people), into: %{} do
+    teams = People.names_by_uuid(:team, AssigneeSet.of_kind(all, "team") |> Enum.uniq())
+
+    departments =
+      People.names_by_uuid(:department, AssigneeSet.of_kind(all, "department") |> Enum.uniq())
+
+    people = People.person_names(AssigneeSet.of_kind(all, "person") |> Enum.uniq())
+    names = %{"team" => teams, "department" => departments, "person" => people}
+
+    for p <- projects, assignee = assignee_of(Map.get(keys, p.uuid, []), names), into: %{} do
       {p.uuid, assignee}
     end
   end
@@ -269,23 +279,20 @@ defmodule PhoenixKitProjects.ListMetrics do
         do: {child, parent}
   end
 
-  defp pluck(projects, field) do
-    projects |> Enum.map(&Map.get(&1, field)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+  defp assignee_of([], _names), do: nil
+
+  defp assignee_of(keys, names) do
+    labels =
+      keys
+      |> Enum.map(fn {kind, uuid} -> names |> Map.fetch!(kind) |> Map.get(uuid) end)
+      |> Enum.reject(&is_nil/1)
+
+    case {keys, labels} do
+      {_, []} -> nil
+      {[{kind, _}], [label]} -> named(label, String.to_existing_atom(kind))
+      {_, labels} -> named(Enum.join(labels, ", "), :several)
+    end
   end
-
-  defp assignee_of(%Project{assigned_team_uuid: uuid}, teams, _departments, _people)
-       when is_binary(uuid),
-       do: named(Map.get(teams, uuid), :team)
-
-  defp assignee_of(%Project{assigned_department_uuid: uuid}, _teams, departments, _people)
-       when is_binary(uuid),
-       do: named(Map.get(departments, uuid), :department)
-
-  defp assignee_of(%Project{assigned_person_uuid: uuid}, _teams, _departments, people)
-       when is_binary(uuid),
-       do: named(Map.get(people, uuid), :person)
-
-  defp assignee_of(_project, _teams, _departments, _people), do: nil
 
   defp named(nil, _kind), do: nil
   defp named(label, kind), do: %{label: label, kind: kind}
