@@ -536,9 +536,11 @@ defmodule PhoenixKitProjects.Authz do
 
   defp relationship_grant?(_user_uuid, _action, _record), do: false
 
-  # A task names its people directly (V29: any of several persons; a
-  # team's or department's members are not granted this way).
-  defp assignee_user_uuids(%PhoenixKitProjects.Schemas.Assignment{} = a) do
+  # A task (V29) or a project (V30) names its people directly — any of
+  # several persons; a team's or department's members are not granted
+  # this way.
+  defp assignee_user_uuids(%m{} = a)
+       when m in [PhoenixKitProjects.Schemas.Assignment, PhoenixKitProjects.Schemas.Project] do
     persons =
       a |> PhoenixKitProjects.AssigneeSet.keys() |> Enum.filter(&match?({"person", _}, &1))
 

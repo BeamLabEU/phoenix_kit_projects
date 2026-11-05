@@ -116,7 +116,8 @@ defmodule PhoenixKitProjects.Activity do
   mutation being logged.
   """
   @spec assignee_target_uuid(map() | nil) :: binary() | nil
-  def assignee_target_uuid(%PhoenixKitProjects.Schemas.Assignment{} = a) do
+  def assignee_target_uuid(%m{} = a)
+      when m in [PhoenixKitProjects.Schemas.Assignment, PhoenixKitProjects.Schemas.Project] do
     case PhoenixKitProjects.AssigneeSet.keys(a) do
       [{"person", person_uuid}] -> person_user_uuid(person_uuid)
       _ -> nil

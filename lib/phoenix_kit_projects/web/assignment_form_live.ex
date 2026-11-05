@@ -25,7 +25,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   import PhoenixKitProjects.Web.Components.DurationInput, only: [duration_input: 1]
 
   import PhoenixKitProjects.Web.Components.AssigneePicker,
-    only: [assignee_picker: 1, assignee_multi_picker: 1, assignee_picker_outside: 1]
+    only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts
   import PhoenixKitProjects.Web.Components.TaskFiles, only: [task_files: 1]
@@ -42,7 +42,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias PhoenixKitProjects.{
     Activity,
-    Assignees,
     Attachments,
     Authz,
     Features,
@@ -514,7 +513,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # "Involved parties" (the boss, 2026-10-29: picking the kind first and then
   # a second select swapped fields below without a word). What it holds is
   # the form's own three assignee fields — posted as hidden inputs, so a
-  # pick saves like any other field — and `@assignee_chip` shows it.
+  # pick saves like any other field — and the cards above the search show it.
 
   # The shared picker (`Web.Components.AssigneePicker`): the viewer's staff
   # person, the Recent chips (their own picks first) and the right to assign.
@@ -522,10 +521,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     socket
     |> AssigneePicker.init(socket.assigns[:project],
       can_assign?: can_assign?(socket),
-      source: "task_form",
-      # A task has any number of assignees (V29); a sub-project is a
-      # project, which has one.
-      multi: socket.assigns[:kind] != "subproject"
+      source: "task_form"
     )
     |> refresh_assignee_chip()
   end
@@ -569,57 +565,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp form_assignee_keys(_form), do: []
 
-  # `{kind, uuid}` of the assignee the form holds now, or nil.
-  defp form_assignee(form),
-    do: AssigneePicker.key_of(&form[Assignees.assignee_field(Atom.to_string(&1))].value)
-
   # The chip of the chosen assignee (label and faces), looked up only when
   # the choice changed. The sub-project form holds its own (`@sp_form`).
   defp refresh_assignee_chip(
-         %{assigns: %{kind: "subproject", sp_form: %Phoenix.HTML.Form{} = f}} = socket
+         %{assigns: %{kind: "subproject", sp_form: %Phoenix.HTML.Form{source: cs}}} = socket
        ),
-       do: AssigneePicker.refresh_chip(socket, form_assignee(f))
-
-  defp refresh_assignee_chip(
-         %{assigns: %{assignee_multi?: true, form: %Phoenix.HTML.Form{} = f}} = socket
-       ),
-       do: AssigneePicker.set_selected(socket, form_assignee_keys(f))
+       do: AssigneePicker.set_selected(socket, AssigneePicker.changeset_keys(cs))
 
   defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{} = f}} = socket),
-    do: AssigneePicker.refresh_chip(socket, form_assignee(f))
+    do: AssigneePicker.set_selected(socket, form_assignee_keys(f))
 
   defp refresh_assignee_chip(socket), do: socket
 
-  # The three assignee fields for one choice: exactly one set, the other
-  # two cleared (the changeset refuses two at once).
-  @assignee_names %{
-    person: "assigned_person_uuid",
-    team: "assigned_team_uuid",
-    department: "assigned_department_uuid"
-  }
-
   @doc false
-  # `AssigneePicker` callback: the choice into the form being shown — the
-  # task's (saved as it is changed) or the sub-project's.
-  def picker_choose(%{assigns: %{kind: "subproject"}} = socket, kind, uuid) do
-    attrs = AssigneePicker.field_attrs(@assignee_names, kind, uuid)
-    sp_attrs = Map.merge(socket.assigns.sp_form.params || %{}, attrs)
+  # `AssigneePicker` callback: the sub-project's whole new list (V30: a
+  # project has any number too) into its form.
+  def picker_set(%{assigns: %{kind: "subproject"}} = socket, keys) do
+    sp_attrs =
+      Map.put(socket.assigns.sp_form.params || %{}, "assignees", AssigneePicker.posted(keys))
 
     socket
     |> assign(
       sp_form: to_form(Projects.change_project(sp_source(socket), sp_attrs), as: :subproject)
     )
-    |> assign(:assign_type, kind || "")
     |> WebHelpers.mark_dirty()
-    |> refresh_assignee_chip()
-  end
-
-  def picker_choose(socket, kind, uuid) do
-    socket
-    |> put_form_attrs(AssigneePicker.field_attrs(@assignee_names, kind, uuid), %{
-      "assign_type" => kind || ""
-    })
-    |> assign(:assign_type, kind || "")
   end
 
   @doc false
@@ -3180,32 +3149,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> Map.new()
   end
 
-  # A library task keeps one default assignee: the task's when it has
-  # exactly one (V29: several stay with this task only).
+  # A new library task starts with the task's assignees as its defaults
+  # (V30: the whole set).
   defp maybe_add_default_assignee(task_attrs, %{"assignees" => list} = attrs) do
     case PhoenixKitProjects.AssigneeSet.normalize(list) do
-      {:ok, [{kind, uuid}]} ->
-        Map.put(task_attrs, "default_assigned_#{kind}_uuid", uuid)
-
-      _ ->
-        maybe_add_default_assignee(task_attrs, Map.delete(attrs, "assignees"))
+      {:ok, [_ | _] = keys} -> Map.put(task_attrs, "assignees", keys)
+      _ -> maybe_add_default_assignee(task_attrs, Map.delete(attrs, "assignees"))
     end
   end
 
   defp maybe_add_default_assignee(task_attrs, attrs) do
-    cond do
-      attrs["assigned_team_uuid"] && attrs["assigned_team_uuid"] != "" ->
-        Map.put(task_attrs, "default_assigned_team_uuid", attrs["assigned_team_uuid"])
+    keys =
+      [
+        {"team", attrs["assigned_team_uuid"]},
+        {"department", attrs["assigned_department_uuid"]},
+        {"person", attrs["assigned_person_uuid"]}
+      ]
+      |> Enum.filter(fn {_k, u} -> is_binary(u) and u != "" end)
 
-      attrs["assigned_department_uuid"] && attrs["assigned_department_uuid"] != "" ->
-        Map.put(task_attrs, "default_assigned_department_uuid", attrs["assigned_department_uuid"])
-
-      attrs["assigned_person_uuid"] && attrs["assigned_person_uuid"] != "" ->
-        Map.put(task_attrs, "default_assigned_person_uuid", attrs["assigned_person_uuid"])
-
-      true ->
-        task_attrs
-    end
+    if keys == [], do: task_attrs, else: Map.put(task_attrs, "assignees", keys)
   end
 
   defp save_new(socket, attrs) do
@@ -4312,6 +4274,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # A posted list (`assignees`) is the whole set: nothing to clear beside it.
+  defp clear_other_assignees(%{"assignees" => _} = attrs, _), do: attrs
+
   defp clear_other_assignees(attrs, "team") do
     Map.merge(attrs, %{"assigned_department_uuid" => nil, "assigned_person_uuid" => nil})
   end
@@ -4436,9 +4401,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       "description" => RefText.collapse(task.description),
       "estimated_duration" => task.estimated_duration && to_string(task.estimated_duration),
       "estimated_duration_unit" => task.estimated_duration_unit,
-      "assigned_team_uuid" => task.default_assigned_team_uuid,
-      "assigned_department_uuid" => task.default_assigned_department_uuid,
-      "assigned_person_uuid" => task.default_assigned_person_uuid,
+      # The library task's default set (V30).
+      "assignees" => PhoenixKitProjects.AssigneeSet.keys(task),
       "status" => "waiting"
     }
   end
@@ -4460,9 +4424,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           "description" => RefText.collapse(task.description),
           "estimated_duration" => task.estimated_duration && to_string(task.estimated_duration),
           "estimated_duration_unit" => task.estimated_duration_unit,
-          "assigned_team_uuid" => task.default_assigned_team_uuid,
-          "assigned_department_uuid" => task.default_assigned_department_uuid,
-          "assigned_person_uuid" => task.default_assigned_person_uuid,
+          # The library task's default set (V30).
+          "assignees" => PhoenixKitProjects.AssigneeSet.keys(task),
           "status" => attrs["status"] || "waiting"
         }
 
@@ -4678,19 +4641,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               />
             </.words_block>
 
-            <%!-- The same picker as a task's (V128: the assignee lives on
-                 the child project). --%>
-            <.assignee_picker
+            <%!-- The same picker as a task's (V30: the sub-project's own
+                 assignees, any number, live on the child project). --%>
+            <.assignee_multi_picker
               :if={@fx.assignees}
               id="subproject-assignee"
-              label={gettext("Assignee")}
+              label={gettext("Assignees")}
               search_form={"subproject-assignee-form-#{@dom}"}
-              fields={[
-                {@sp_form[:assigned_person_uuid].name, @sp_form[:assigned_person_uuid].value},
-                {@sp_form[:assigned_team_uuid].name, @sp_form[:assigned_team_uuid].value},
-                {@sp_form[:assigned_department_uuid].name, @sp_form[:assigned_department_uuid].value}
-              ]}
-              chip={@assignee_chip}
+              name="subproject[assignees][]"
+              selected={@assignee_selected}
+              rows={@assignee_rows}
               can_assign?={@can_assign?}
               my_person_uuid={@my_person_uuid}
               recent={@recent_assignees}

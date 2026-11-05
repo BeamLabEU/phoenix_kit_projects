@@ -80,6 +80,9 @@ defmodule PhoenixKitProjects.Projects do
     default_assigned_person: [:user]
   ]
 
+  # A library task's default assignees (V30), named, in one statement.
+  defp task_preloads, do: @task_preloads ++ [assignee_links: AssigneeSet.link_query(:task)]
+
   # "This project has no start and no finish" — the `lifecycle` feature
   # flag turned explicitly off (a checklist). Expressed in SQL because the
   # dashboard buckets are queries: a lifecycle-less project is never
@@ -136,7 +139,7 @@ defmodule PhoenixKitProjects.Projects do
     |> maybe_search_task(Keyword.get(opts, :search))
     |> task_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
-    |> preload(^@task_preloads)
+    |> preload(^task_preloads())
     |> repo().all()
   end
 
@@ -229,13 +232,13 @@ defmodule PhoenixKitProjects.Projects do
   @doc "Fetches a task by uuid, or `nil` if not found."
   @spec get_task(uuid()) :: Task.t() | nil
   def get_task(uuid) do
-    Task |> preload(^@task_preloads) |> repo().get(uuid)
+    Task |> preload(^task_preloads()) |> repo().get(uuid)
   end
 
   @doc "Fetches a task by uuid. Raises if not found."
   @spec get_task!(uuid()) :: Task.t()
   def get_task!(uuid) do
-    Task |> preload(^@task_preloads) |> repo().get!(uuid)
+    Task |> preload(^task_preloads()) |> repo().get!(uuid)
   end
 
   @doc "Returns a changeset for the given task."
@@ -2712,9 +2715,8 @@ defmodule PhoenixKitProjects.Projects do
           "translations" => src.translations,
           "settings" => src.settings,
           "status_entity_uuid" => src.status_entity_uuid,
-          "assigned_team_uuid" => src.assigned_team_uuid,
-          "assigned_department_uuid" => src.assigned_department_uuid,
-          "assigned_person_uuid" => src.assigned_person_uuid,
+          # The whole set (V30), not the one-assignee mirror.
+          "assignees" => AssigneeSet.keys(src),
           "counts_weekends" => to_string(src.counts_weekends),
           "start_mode" => src.start_mode,
           "is_template" => "false"
@@ -3192,9 +3194,6 @@ defmodule PhoenixKitProjects.Projects do
     # (`Assignment.ref/1`), and a list can mix a parent's rows with its
     # sub-projects'. One read for the whole list.
     :project,
-    # Deep-preload the embedded child's assignee (V128) so a sub-project row can
-    # show who the sub-project is assigned to.
-    {:child_project, [:assigned_team, :assigned_department, assigned_person: [:user]]},
     :assigned_team,
     :assigned_department,
     :completed_by,
@@ -3202,8 +3201,20 @@ defmodule PhoenixKitProjects.Projects do
   ]
 
   # Every assignee (V29), with what names it, in one statement per list.
-  defp assignment_preloads,
-    do: @assignment_preloads ++ [assignee_links: AssigneeSet.link_query()]
+  defp assignment_preloads do
+    @assignment_preloads ++
+      [
+        assignee_links: AssigneeSet.link_query(),
+        # Deep-preload the embedded child's assignees (V128; V30: its set) so
+        # a sub-project row can show who the sub-project is assigned to.
+        child_project: [
+          :assigned_team,
+          :assigned_department,
+          assigned_person: [:user],
+          assignee_links: AssigneeSet.link_query(:project)
+        ]
+      ]
+  end
 
   @assignee_preloads [:assigned_team, :assigned_department, assigned_person: [:user]]
 
@@ -3211,8 +3222,14 @@ defmodule PhoenixKitProjects.Projects do
   @spec get_project_with_assignee(uuid()) :: Project.t() | nil
   def get_project_with_assignee(id) do
     case get_project(id) do
-      nil -> nil
-      project -> repo().preload(project, @assignee_preloads)
+      nil ->
+        nil
+
+      project ->
+        repo().preload(
+          project,
+          @assignee_preloads ++ [assignee_links: AssigneeSet.link_query(:project)]
+        )
     end
   end
 
@@ -4366,17 +4383,26 @@ defmodule PhoenixKitProjects.Projects do
         {:error, :task_not_found}
 
       task ->
+        attrs = drop_blanks(attrs)
+
         defaults = %{
           "task_uuid" => task.uuid,
           "description" => task.description,
           "estimated_duration" => task.estimated_duration,
-          "estimated_duration_unit" => task.estimated_duration_unit,
-          "assigned_team_uuid" => task.default_assigned_team_uuid,
-          "assigned_department_uuid" => task.default_assigned_department_uuid,
-          "assigned_person_uuid" => task.default_assigned_person_uuid
+          "estimated_duration_unit" => task.estimated_duration_unit
         }
 
-        merged = Map.merge(defaults, drop_blanks(attrs))
+        # The library task's default set (V30) is the new task's — unless
+        # the caller names who it is for.
+        defaults =
+          if Enum.any?(
+               ~w(assignees assigned_team_uuid assigned_department_uuid assigned_person_uuid),
+               &Map.has_key?(attrs, &1)
+             ),
+             do: defaults,
+             else: Map.put(defaults, "assignees", AssigneeSet.keys(task))
+
+        merged = Map.merge(defaults, attrs)
         create_assignment(merged, opts)
     end
   end

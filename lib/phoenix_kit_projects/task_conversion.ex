@@ -10,7 +10,7 @@ defmodule PhoenixKitProjects.TaskConversion do
   replaced.
 
     * `to_subproject/2` — a child project is made from the task (its
-      name, description and assignee; the deadline stays on the row), the
+      name, description and assignees; the deadline stays on the row), the
       task's subtasks become the child's tasks (with what is under them),
       and the row becomes the sub-project's row.
     * `to_task/2` — the child's tasks come back as subtasks of the row
@@ -126,12 +126,9 @@ defmodule PhoenixKitProjects.TaskConversion do
       "is_template" => to_string(parent.is_template),
       "start_mode" => "immediate",
       "settings" => settings,
-      # A project has one assignee: the task's when it has exactly one (its
-      # mirror columns, V29). With several the project gets none — the row
-      # keeps them all, as it keeps its other things.
-      "assigned_person_uuid" => row.assigned_person_uuid,
-      "assigned_team_uuid" => row.assigned_team_uuid,
-      "assigned_department_uuid" => row.assigned_department_uuid
+      # The task's whole set (V30: a project has any number too); the row
+      # keeps its own as well, as it keeps its other things.
+      "assignees" => AssigneeSet.keys(row)
     }
 
     # Announced once the move has committed (`broadcast_project_updated/1`).
@@ -201,10 +198,10 @@ defmodule PhoenixKitProjects.TaskConversion do
           )
 
           # The row keeps its own assignees; with none it takes the
-          # project's one (V29: written as its set, mirror included).
+          # project's (V30: its whole set, mirror included).
           keys =
             case AssigneeSet.keys(link) do
-              [] -> AssigneeSet.legacy_keys(child)
+              [] -> AssigneeSet.keys(child)
               own -> own
             end
 

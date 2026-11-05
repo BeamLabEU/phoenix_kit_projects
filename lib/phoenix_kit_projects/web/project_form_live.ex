@@ -18,7 +18,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   import PhoenixKitProjects.Web.Components.TimeInput, only: [datetime_input: 1]
 
   import PhoenixKitProjects.Web.Components.AssigneePicker,
-    only: [assignee_picker: 1, assignee_picker_outside: 1]
+    only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts,
     only: [form_header: 1, form_tabs: 1, form_pane: 1, words_block: 1]
@@ -587,7 +587,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     socket
     |> assign(form: to_form(cs), key_field: key_field(socket, cs))
     |> then(fn s ->
-      if s.assigns[:assignee_project_uuid] != nil or Map.has_key?(s.assigns, :assignee_chip),
+      if Map.has_key?(s.assigns, :assignee_selected),
         do: refresh_assignee_chip(s),
         else: s
     end)
@@ -595,26 +595,21 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # ── The assignee picker (`Web.Components.AssigneePicker`) ──────────
 
-  @assignee_names %{
-    person: "assigned_person_uuid",
-    team: "assigned_team_uuid",
-    department: "assigned_department_uuid"
-  }
-
+  # A project has any number of assignees (V30), as a task: the picker
+  # adds, ✕ removes (the boss, 2026-11-03).
   defp assign_assignee_picker(socket) do
     project = socket.assigns[:project]
 
     socket
-    |> AssigneePicker.init(project, can_assign?: picker_allowed?(socket), source: "project_form")
+    |> AssigneePicker.init(project,
+      can_assign?: picker_allowed?(socket),
+      source: "project_form"
+    )
     |> refresh_assignee_chip()
   end
 
-  defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{} = f}} = socket),
-    do:
-      AssigneePicker.refresh_chip(
-        socket,
-        AssigneePicker.key_of(&f[String.to_existing_atom(Map.fetch!(@assignee_names, &1))].value)
-      )
+  defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{source: cs}}} = socket),
+    do: AssigneePicker.set_selected(socket, AssigneePicker.changeset_keys(cs))
 
   defp refresh_assignee_chip(socket), do: socket
 
@@ -635,11 +630,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   @doc false
-  # `AssigneePicker` callback: the choice into the form, as if posted.
-  def picker_choose(socket, kind, uuid) do
+  # `AssigneePicker` callback: the whole new list into the form, as if
+  # posted (saved with Save).
+  def picker_set(socket, keys) do
     attrs =
       (socket.assigns.form.params || %{})
-      |> Map.merge(AssigneePicker.field_attrs(@assignee_names, kind, uuid))
+      |> Map.put("assignees", AssigneePicker.posted(keys))
       |> merge_attrs(socket)
 
     cs =
@@ -648,7 +644,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       )
 
     socket
-    |> assign(assign_type: kind || "")
     |> assign_form(cs)
     |> WebHelpers.mark_dirty()
   end
@@ -719,22 +714,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end
   end
 
-  # Assignee picker state (V128). `assign_type` ("" / "team" / "department" /
-  # "person") drives which staff `<.select>` shows; the staff option lists are
-  # loaded once. Mirrors `AssignmentFormLive`'s assignee picker.
+  # Staff option lists for the members/participants pickers, loaded once.
   defp assign_assignee_state(socket) do
     assign(socket,
-      assign_type: assignee_type(socket.assigns.project),
       participant_people: load_participant_people(),
       team_options: load_teams(),
       department_options: load_departments()
     )
   end
-
-  defp assignee_type(%Project{assigned_person_uuid: u}) when not is_nil(u), do: "person"
-  defp assignee_type(%Project{assigned_team_uuid: u}) when not is_nil(u), do: "team"
-  defp assignee_type(%Project{assigned_department_uuid: u}) when not is_nil(u), do: "department"
-  defp assignee_type(_), do: ""
 
   # `rescue` so a `phoenix_kit_staff` DB hiccup degrades to an empty picker
   # rather than taking the form down (same pattern as the context's staff
@@ -776,26 +763,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       Logger.warning("[Projects] load_participant_people failed: #{Exception.message(e)}")
       []
   end
-
-  # Null out the assignee fields that don't match the chosen `assign_type`, so
-  # switching from Team to Person doesn't leave a stale team uuid set (which the
-  # single-assignee CHECK would then reject).
-  defp clear_other_assignees(attrs, "team"),
-    do: Map.merge(attrs, %{"assigned_department_uuid" => nil, "assigned_person_uuid" => nil})
-
-  defp clear_other_assignees(attrs, "department"),
-    do: Map.merge(attrs, %{"assigned_team_uuid" => nil, "assigned_person_uuid" => nil})
-
-  defp clear_other_assignees(attrs, "person"),
-    do: Map.merge(attrs, %{"assigned_team_uuid" => nil, "assigned_department_uuid" => nil})
-
-  defp clear_other_assignees(attrs, _),
-    do:
-      Map.merge(attrs, %{
-        "assigned_team_uuid" => nil,
-        "assigned_department_uuid" => nil,
-        "assigned_person_uuid" => nil
-      })
 
   # Grouped status-source entities for the selector (status catalogs first,
   # then any other entity). Empty when entities is unavailable — the
@@ -1035,8 +1002,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
-    assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
-    attrs = attrs |> merge_attrs(socket) |> clear_other_assignees(assign_type)
+    attrs = merge_attrs(attrs, socket)
 
     cs =
       Projects.change_project(socket.assigns.project, attrs,
@@ -1045,7 +1011,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     {:noreply,
      socket
-     |> assign(selected_template: selected_template, assign_type: assign_type)
+     |> assign(selected_template: selected_template)
      |> assign(
        status_translation_mode:
          Map.get(params, "status_translation_mode", socket.assigns.status_translation_mode)
@@ -1061,7 +1027,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   def handle_event("save", %{"project" => attrs} = params, socket) do
     if socket.assigns.ai_in_flight == [] do
       template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
-      assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
 
       # Save-time gate re-resolution (panel R3-4): a mid-edit toggle in
       # another session binds THIS submit, not the mount-time snapshot.
@@ -1079,7 +1044,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         attrs
         |> Map.delete("settings")
         |> merge_attrs(socket)
-        |> clear_other_assignees(assign_type)
         |> maybe_apply_status_mode(params, project, fx)
         |> apply_project_type(params, project, socket.assigns[:can_manage_modules] == true)
         |> apply_new_completion(params, socket.assigns.live_action)
@@ -1677,7 +1641,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> then(fn a ->
       if fx.assignees,
         do: a,
-        else: Map.drop(a, ~w(assigned_team_uuid assigned_department_uuid assigned_person_uuid))
+        else:
+          Map.drop(
+            a,
+            ~w(assignees assigned_team_uuid assigned_department_uuid assigned_person_uuid)
+          )
     end)
     |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
   end
@@ -3184,18 +3152,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               uploads={@uploads}
             />
 
-            <%!-- Whose it is (V128): the task popup's picker. --%>
-            <.assignee_picker
+            <%!-- Whose it is (V30: any number of people, teams and
+                 departments, as a task's): the task popup's picker. --%>
+            <.assignee_multi_picker
               :if={@fx.assignees}
               id="project-assignee"
-              label={gettext("Assignee")}
+              label={gettext("Assignees")}
               search_form="project-assignee-form"
-              fields={[
-                {@form[:assigned_person_uuid].name, @form[:assigned_person_uuid].value},
-                {@form[:assigned_team_uuid].name, @form[:assigned_team_uuid].value},
-                {@form[:assigned_department_uuid].name, @form[:assigned_department_uuid].value}
-              ]}
-              chip={@assignee_chip}
+              name="project[assignees][]"
+              selected={@assignee_selected}
+              rows={@assignee_rows}
               can_assign?={@can_assign?}
               my_person_uuid={@my_person_uuid}
               recent={@recent_assignees}

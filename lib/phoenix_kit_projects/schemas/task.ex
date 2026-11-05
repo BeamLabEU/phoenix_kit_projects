@@ -105,6 +105,18 @@ defmodule PhoenixKitProjects.Schemas.Task do
       references: :uuid
     )
 
+    # Who a task from the library starts with (V30): any number of people,
+    # teams and departments. The three `default_assigned_*` columns above
+    # mirror them while there is exactly one. Read through
+    # `AssigneeSet.keys/1`.
+    has_many(:assignee_links, PhoenixKitProjects.Schemas.TaskDefaultAssignee,
+      foreign_key: :task_uuid,
+      preload_order: [asc: :position, asc: :inserted_at]
+    )
+
+    # The set a changeset writes (`"assignees"`), as `[{kind, uuid}]`.
+    field(:assignee_keys, :any, virtual: true)
+
     timestamps(type: :utc_datetime)
   end
 
@@ -117,6 +129,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
   def changeset(task, attrs) do
     task
     |> cast(attrs, @required ++ @optional)
+    |> PhoenixKitProjects.AssigneeSet.put_changeset(attrs, :task)
     |> validate_required(@required)
     |> validate_length(:title, min: 1, max: 500)
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
@@ -130,6 +143,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
       name: :phoenix_kit_project_tasks_single_default_assignee,
       message: gettext("only one default assignee (team, department, or person) allowed")
     )
+    |> PhoenixKitProjects.AssigneeSet.write_changeset(:task)
   end
 
   # Shape guard for the `translations` JSONB. See `Project` for the

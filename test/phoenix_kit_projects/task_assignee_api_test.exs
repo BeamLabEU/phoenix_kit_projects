@@ -154,6 +154,43 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       assert json_response(resp, 422)
     end
 
+    test "a sub-project takes several assignees and names them all (V30)", %{
+      conn: conn,
+      me: me,
+      colleague: colleague
+    } do
+      resp =
+        conn
+        |> put_req_header("idempotency-key", Ecto.UUID.generate())
+        |> post(
+          "#{@base}/subprojects",
+          Jason.encode!(%{name: "Kitchen", assignees: ["me", colleague.person.uuid]})
+        )
+
+      body = json_response(resp, 201)
+      assert body["project"]["assignee"] == nil
+
+      assert Enum.map(body["project"]["assignees"], & &1["uuid"]) == [
+               me.person.uuid,
+               colleague.person.uuid
+             ]
+
+      assert Enum.map(body["task"]["assignees"], & &1["uuid"]) == [
+               me.person.uuid,
+               colleague.person.uuid
+             ]
+
+      refused =
+        conn
+        |> put_req_header("idempotency-key", Ecto.UUID.generate())
+        |> post(
+          "#{@base}/subprojects",
+          Jason.encode!(%{name: "Hall", assignee: "me", assignees: ["me"]})
+        )
+
+      assert json_response(refused, 422)
+    end
+
     test "a team or a department, one at a time", %{conn: conn, me: me} do
       {:ok, team} = Teams.create(%{"name" => "Team-#{uniq()}", "department_uuid" => me.dept.uuid})
 

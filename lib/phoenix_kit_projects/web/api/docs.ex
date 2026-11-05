@@ -112,7 +112,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/project",
         summary:
-          "The key's project: name, dates, the current workflow status and the statuses available to it.",
+          "The key's project: name, dates, who it is for (`assignees`, and `assignee` when it is one), the current workflow status and the statuses available to it.",
         auth: true,
         scope: "project:read",
         action: "view",
@@ -193,6 +193,22 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "what it is for, short"
+          },
+          %{
+            name: "assignee",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "who the sub-project is for, when it is ONE: `me`, a person's uuid, `{\"team\": uuid}` or `{\"department\": uuid}`. Send `assignees` for several - not both. Needs the assignees feature and the assign_tasks action"
+          },
+          %{
+            name: "assignees",
+            in: :body,
+            type: "array",
+            required: false,
+            doc:
+              "everyone the sub-project is for, all equal: a list of what `assignee` takes, at most 50. Not together with `assignee`"
           },
           %{
             name: "project",

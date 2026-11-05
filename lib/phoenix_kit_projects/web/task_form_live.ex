@@ -13,7 +13,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   import PhoenixKitProjects.Web.Components.DurationInput, only: [duration_input: 1]
 
   import PhoenixKitProjects.Web.Components.AssigneePicker,
-    only: [assignee_picker: 1, assignee_picker_outside: 1]
+    only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts, only: [form_header: 1, words_block: 1]
 
@@ -93,7 +93,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         page_title: "",
         task: %Task{},
         live_action: live_action,
-        assign_type: "",
         task_deps: [],
         available_deps: []
       )
@@ -149,7 +148,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       page_title: gettext("New task"),
       task: task,
       live_action: :new,
-      assign_type: "",
       task_deps: [],
       available_deps: []
     )
@@ -169,7 +167,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           page_title: "",
           task: %Task{},
           live_action: :edit,
-          assign_type: "",
           task_deps: [],
           available_deps: []
         )
@@ -178,14 +175,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         |> WebHelpers.close_or_navigate(Paths.tasks())
 
       task ->
-        assign_type =
-          cond do
-            task.default_assigned_person_uuid -> "person"
-            task.default_assigned_team_uuid -> "team"
-            task.default_assigned_department_uuid -> "department"
-            true -> ""
-          end
-
         socket
         # Trail: Admin Panel / Projects / Tasks / <title> / Edit — the task
         # is a text crumb (the library is its only page), the leaf is the
@@ -199,7 +188,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
             ),
           task: task,
           live_action: :edit,
-          assign_type: assign_type,
           task_deps: Projects.list_task_dependencies(task.uuid),
           available_deps: Projects.available_task_dependencies(task.uuid)
         )
@@ -215,7 +203,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       page_title: "",
       task: %Task{},
       live_action: :edit,
-      assign_type: "",
       task_deps: [],
       available_deps: []
     )
@@ -228,17 +215,17 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     socket
     |> assign(form: to_form(cs))
     |> then(
-      &if(Map.has_key?(&1.assigns, :assignee_chip), do: refresh_assignee_chip(&1), else: &1)
+      &if(Map.has_key?(&1.assigns, :assignee_selected),
+        do: refresh_assignee_chip(&1),
+        else: &1
+      )
     )
   end
 
-  # ── The default assignee: the task popup's picker ──────────────────
-
-  @assignee_names %{
-    person: "default_assigned_person_uuid",
-    team: "default_assigned_team_uuid",
-    department: "default_assigned_department_uuid"
-  }
+  # ── The default assignees: the task popup's picker ─────────────────
+  #
+  # Who a task from the library starts with (V30: any number of people,
+  # teams and departments); the picker adds, ✕ removes.
 
   defp assign_assignee_picker(socket) do
     socket
@@ -246,12 +233,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     |> refresh_assignee_chip()
   end
 
-  defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{} = f}} = socket),
-    do:
-      AssigneePicker.refresh_chip(
-        socket,
-        AssigneePicker.key_of(&f[String.to_existing_atom(Map.fetch!(@assignee_names, &1))].value)
-      )
+  defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{source: cs}}} = socket),
+    do: AssigneePicker.set_selected(socket, AssigneePicker.changeset_keys(cs))
 
   defp refresh_assignee_chip(socket), do: socket
 
@@ -260,15 +243,15 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   def picker_allowed?(socket), do: can_manage?(socket) and may_write?(socket)
 
   @doc false
-  # `AssigneePicker` callback: the choice into the form, as if posted.
-  def picker_choose(socket, kind, uuid) do
+  # `AssigneePicker` callback: the whole new list into the form, as if
+  # posted (saved with Save).
+  def picker_set(socket, keys) do
     attrs =
       (socket.assigns.form.params || %{})
-      |> Map.merge(AssigneePicker.field_attrs(@assignee_names, kind, uuid))
+      |> Map.put("assignees", AssigneePicker.posted(keys))
       |> merge_attrs(socket)
 
     socket
-    |> assign(assign_type: kind || "")
     |> assign_form(Projects.change_task(socket.assigns.task, attrs))
     |> WebHelpers.mark_dirty()
   end
@@ -296,13 +279,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   # Same `:action`-not-stamped pattern as `ProjectFormLive.validate` —
   # surfacing errors only after a failed submit so live editing never
   # red-borders untouched fields.
-  def handle_event("validate", %{"task" => attrs} = params, socket) do
-    assign_type = Map.get(params, "default_assign_type", socket.assigns.assign_type)
+  def handle_event("validate", %{"task" => attrs}, socket) do
     attrs = merge_attrs(attrs, socket)
     cs = Projects.change_task(socket.assigns.task, attrs)
 
-    {:noreply,
-     socket |> assign(assign_type: assign_type) |> assign_form(cs) |> WebHelpers.mark_dirty()}
+    {:noreply, socket |> assign_form(cs) |> WebHelpers.mark_dirty()}
   end
 
   # Close with unsaved changes asks first in the module's own dialog
@@ -336,14 +317,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       else: {:noreply, put_flash(socket, :error, no_permission())}
   end
 
-  defp library_write("save", %{"task" => attrs} = params, socket) do
+  defp library_write("save", %{"task" => attrs}, socket) do
     if socket.assigns.ai_in_flight == [] do
-      assign_type = Map.get(params, "default_assign_type", "")
-
-      attrs =
-        attrs
-        |> clear_other_default_assignees(assign_type)
-        |> then(&merge_attrs(&1, socket))
+      attrs = merge_attrs(attrs, socket)
 
       save(socket, socket.assigns.live_action, attrs)
     else
@@ -487,31 +463,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       task_deps: Projects.list_task_dependencies(socket.assigns.task.uuid),
       available_deps: Projects.available_task_dependencies(socket.assigns.task.uuid)
     )
-  end
-
-  defp clear_other_default_assignees(attrs, "team") do
-    attrs
-    |> Map.put("default_assigned_department_uuid", nil)
-    |> Map.put("default_assigned_person_uuid", nil)
-  end
-
-  defp clear_other_default_assignees(attrs, "department") do
-    attrs
-    |> Map.put("default_assigned_team_uuid", nil)
-    |> Map.put("default_assigned_person_uuid", nil)
-  end
-
-  defp clear_other_default_assignees(attrs, "person") do
-    attrs
-    |> Map.put("default_assigned_team_uuid", nil)
-    |> Map.put("default_assigned_department_uuid", nil)
-  end
-
-  defp clear_other_default_assignees(attrs, _) do
-    attrs
-    |> Map.put("default_assigned_team_uuid", nil)
-    |> Map.put("default_assigned_department_uuid", nil)
-    |> Map.put("default_assigned_person_uuid", nil)
   end
 
   defp save(socket, :new, attrs) do
@@ -703,19 +654,15 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               class="checkbox-primary checkbox-sm"
             />
 
-            <%!-- Whom the task goes to when it is added to a project: the
-                 task popup's picker. --%>
-            <.assignee_picker
+            <%!-- Whom the task goes to when it is added to a project (V30:
+                 any number): the task popup's picker. --%>
+            <.assignee_multi_picker
               id="task-default-assignee"
               label={gettext("Default assignment")}
               search_form="task-default-assignee-form"
-              kind_name="default_assign_type"
-              fields={[
-                {@form[:default_assigned_person_uuid].name, @form[:default_assigned_person_uuid].value},
-                {@form[:default_assigned_team_uuid].name, @form[:default_assigned_team_uuid].value},
-                {@form[:default_assigned_department_uuid].name, @form[:default_assigned_department_uuid].value}
-              ]}
-              chip={@assignee_chip}
+              name="task[assignees][]"
+              selected={@assignee_selected}
+              rows={@assignee_rows}
               can_assign?={@can_assign?}
               my_person_uuid={@my_person_uuid}
               recent={@recent_assignees}

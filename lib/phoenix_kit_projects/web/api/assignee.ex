@@ -15,7 +15,7 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   """
 
   alias PhoenixKitProjects.{AssigneeSet, Authz, People}
-  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment}
+  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.Json
 
   @columns %{
@@ -36,7 +36,7 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
       when is_binary(uuid),
       do: to_json(child)
 
-  def to_json(%Assignment{} = a) do
+  def to_json(%m{} = a) when m in [Assignment, Project] do
     case list_json(a) do
       [one] -> one
       _ -> nil
@@ -58,9 +58,10 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   @spec list_json(Assignment.t() | map()) :: [map()]
   def list_json(%{child_project_uuid: uuid, child_project: %{uuid: uuid} = child})
       when is_binary(uuid),
-      do: List.wrap(to_json(child))
+      do: list_json(child)
 
-  def list_json(%Assignment{assignee_links: links}) when is_list(links) do
+  # A task's (V29) or a project's (V30) whole set.
+  def list_json(%m{assignee_links: links}) when m in [Assignment, Project] and is_list(links) do
     Enum.map(links, fn
       %{person_uuid: u} = l when is_binary(u) ->
         %{kind: "person", uuid: u, name: person_name(loaded(l.person))}
@@ -73,7 +74,7 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
     end)
   end
 
-  def list_json(%Assignment{} = a) do
+  def list_json(%m{} = a) when m in [Assignment, Project] do
     a |> AssigneeSet.preload() |> list_json()
   end
 
