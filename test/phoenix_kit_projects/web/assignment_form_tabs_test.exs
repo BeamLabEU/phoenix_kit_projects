@@ -713,4 +713,37 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert AssigneeSet.keys(child_project) == []
     end
   end
+
+  describe "the sub-project short editor saves the picker's set" do
+    # The editor's saved fields are a whitelist; the picker's list was not on
+    # it, so a new sub-project lost its people. (Editing one opens the
+    # project's own form, covered with the picker tests.)
+    test "a new sub-project gets everyone ticked", ctx do
+      ann = person!("Ann")
+      bob = person!("Bob")
+
+      {:ok, view, _} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new?kind=subproject")
+
+      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ann.uuid})
+      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => bob.uuid})
+
+      render_submit(view, "save_subproject", %{
+        "subproject" => %{
+          "name" => "Both #{System.unique_integer([:positive])}",
+          "assignees" => [""]
+        }
+      })
+
+      child =
+        ctx.project.uuid
+        |> Projects.list_assignments()
+        |> Enum.find(&Assignment.subproject?/1)
+
+      assert child, "the sub-project was not created"
+
+      assert AssigneeSet.keys(Projects.get_project(child.child_project_uuid)) ==
+               [{"person", ann.uuid}, {"person", bob.uuid}]
+    end
+  end
 end
