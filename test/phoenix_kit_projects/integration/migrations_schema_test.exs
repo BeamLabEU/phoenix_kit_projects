@@ -78,6 +78,22 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
              """)
   end
 
+  # A host's replay reaches this chain with neither package's tables built
+  # (core 3.x no longer creates them). `test_helper.exs` builds them itself, so
+  # booting the suite proves nothing about it: take two away and ask the chain.
+  test "the chain builds staff's and entities' tables when they are missing" do
+    TestRepo.query!("DROP TABLE public.phoenix_kit_staff_teams CASCADE")
+    TestRepo.query!("DROP TABLE public.phoenix_kit_entity_data CASCADE")
+
+    Runner.run(TestRepo, TestRepo.config(), 1, SchemaMigration, :forward, :up, :up, log: false)
+
+    assert %{rows: [["phoenix_kit_staff_teams", "phoenix_kit_entity_data"]]} =
+             TestRepo.query!("""
+             SELECT to_regclass('public.phoenix_kit_staff_teams')::text,
+                    to_regclass('public.phoenix_kit_entity_data')::text
+             """)
+  end
+
   # `up/1` can add this key, and it points at the table a full `down/1` drops.
   test "a full down takes document_creator's key off, and keeps the documents" do
     TestRepo.query!("""
