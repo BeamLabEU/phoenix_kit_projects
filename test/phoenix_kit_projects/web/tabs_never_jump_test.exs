@@ -30,6 +30,10 @@ defmodule PhoenixKitProjects.Web.TabsNeverJumpTest do
     assert html =~ "data-pkp-tabs"
     assert html =~ ~s(data-active="b")
     assert html =~ ~s(aria-controls="x-pane-b")
+
+    # its background runs the full width, as the project page's (item 45)
+    assert html =~ "w-full"
+    refute html =~ "self-start"
   end
 
   test "a drawer frame is the column, a centred one is one that keeps its height" do
