@@ -153,10 +153,13 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # skipped the key and still stamped itself current, so nothing would ever add
   # it. Add it here, in that chain's exact name and definition, when the
   # documents table is there and the key is not. Whichever of the two installs
-  # second creates it.
+  # second creates it. Links to projects deleted while the key was missing are
+  # cleared first (with a NOTICE), which is what the key would have done.
   defp document_creator_project_fk(p, prefix) do
     execute("""
     DO $$
+    DECLARE
+      cleared integer;
     BEGIN
       -- Nested, not ANDed: the `::regclass` cast below must never be
       -- evaluated when the documents table is missing.
@@ -172,6 +175,23 @@ defmodule PhoenixKitProjects.Migrations.Schema do
           WHERE conrelid = '#{p}phoenix_kit_doc_documents'::regclass
             AND conname = 'phoenix_kit_doc_documents_project_uuid_fkey'
         ) THEN
+          -- Without the key nothing cleared a document's link when its
+          -- project was deleted. Clear those first, as the key's
+          -- ON DELETE SET NULL would have, or the key's check fails the
+          -- whole migration.
+          UPDATE #{p}phoenix_kit_doc_documents d
+          SET project_uuid = NULL
+          WHERE d.project_uuid IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM #{p}phoenix_kit_projects pr WHERE pr.uuid = d.project_uuid
+            );
+
+          GET DIAGNOSTICS cleared = ROW_COUNT;
+
+          IF cleared > 0 THEN
+            RAISE NOTICE 'phoenix_kit_projects: cleared the project link of % document(s) whose project no longer exists', cleared;
+          END IF;
+
           ALTER TABLE #{p}phoenix_kit_doc_documents
             ADD CONSTRAINT phoenix_kit_doc_documents_project_uuid_fkey
             FOREIGN KEY (project_uuid) REFERENCES #{p}phoenix_kit_projects(uuid)

@@ -47,6 +47,34 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
              """)
   end
 
+  # A host that already lost the key keeps documents pointing at projects
+  # deleted since (nothing set them to NULL). Those references are cleared,
+  # as the key's ON DELETE SET NULL would have done, instead of failing the
+  # whole projects migration on the key's check.
+  test "a document pointing at a deleted project does not stop the key" do
+    TestRepo.query!("""
+    CREATE TABLE public.phoenix_kit_doc_documents (uuid uuid PRIMARY KEY, project_uuid uuid)
+    """)
+
+    dangling = Ecto.UUID.generate()
+
+    TestRepo.query!(
+      "INSERT INTO public.phoenix_kit_doc_documents (uuid, project_uuid) VALUES ($1, $2)",
+      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(dangling)]
+    )
+
+    Runner.run(TestRepo, TestRepo.config(), 1, SchemaMigration, :forward, :up, :up, log: false)
+
+    assert %{rows: [[nil]]} =
+             TestRepo.query!("SELECT project_uuid FROM public.phoenix_kit_doc_documents")
+
+    assert %{rows: [[1]]} =
+             TestRepo.query!("""
+             SELECT count(*) FROM pg_constraint
+             WHERE conname = 'phoenix_kit_doc_documents_project_uuid_fkey'
+             """)
+  end
+
   test "migration_module/0 points at the chain" do
     assert PhoenixKitProjects.migration_module() == Schema
   end
