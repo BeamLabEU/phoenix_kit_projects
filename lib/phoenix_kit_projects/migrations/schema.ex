@@ -346,6 +346,13 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     if target < 2, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_modules")
 
     if target < 1 do
+      # `up/1` can add this key, and it would stop the drop of the projects
+      # table. The documents and their column are document_creator's: they stay.
+      execute("""
+      ALTER TABLE IF EXISTS #{p}phoenix_kit_doc_documents
+        DROP CONSTRAINT IF EXISTS phoenix_kit_doc_documents_project_uuid_fkey
+      """)
+
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_statuses")
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_dependencies")
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_dependencies")

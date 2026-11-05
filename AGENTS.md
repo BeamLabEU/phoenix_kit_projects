@@ -757,7 +757,9 @@ does not depend on this package and skips the key while `phoenix_kit_projects`
 is missing, so whichever of the two installs second creates it. Links to
 projects deleted while the key was missing are set to NULL first (with a
 NOTICE), as the key's `ON DELETE SET NULL` would have done; otherwise its
-check would fail the whole migration. `down/1` exists for protocol
+check would fail the whole migration. A full `down/1` takes that key off again
+first, or it would stop the drop of `phoenix_kit_projects`; document_creator's
+table and column stay. `down/1` exists for protocol
 completeness only: on installs whose tables core created, a module-level down
 is NOT supported (core's marker still claims the tables); it drops data and is
 meant for scratch schemas.

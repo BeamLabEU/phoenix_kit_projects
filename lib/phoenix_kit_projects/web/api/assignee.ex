@@ -313,5 +313,4 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
         {Map.get(other, :uuid), []}
     end)
   end
-
 end

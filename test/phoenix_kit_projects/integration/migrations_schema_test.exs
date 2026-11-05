@@ -78,6 +78,31 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
              """)
   end
 
+  # `up/1` can add this key, and it points at the table a full `down/1` drops.
+  test "a full down takes document_creator's key off, and keeps the documents" do
+    TestRepo.query!("""
+    CREATE TABLE public.phoenix_kit_doc_documents (uuid uuid PRIMARY KEY, project_uuid uuid)
+    """)
+
+    Runner.run(TestRepo, TestRepo.config(), 1, SchemaMigration, :forward, :up, :up, log: false)
+
+    Runner.run(TestRepo, TestRepo.config(), 1, SchemaMigration, :forward, :down, :down,
+      log: false
+    )
+
+    assert %{rows: [[nil, "phoenix_kit_doc_documents"]]} =
+             TestRepo.query!("""
+             SELECT to_regclass('public.phoenix_kit_projects')::text,
+                    to_regclass('public.phoenix_kit_doc_documents')::text
+             """)
+
+    assert %{rows: [[0]]} =
+             TestRepo.query!("""
+             SELECT count(*) FROM pg_constraint
+             WHERE conname = 'phoenix_kit_doc_documents_project_uuid_fkey'
+             """)
+  end
+
   test "migration_module/0 points at the chain" do
     assert PhoenixKitProjects.migration_module() == Schema
   end
