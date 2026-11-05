@@ -17,6 +17,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
   alias PhoenixKitProjects.{
     ApiKeys,
+    AssigneeSet,
     Authz,
     Extensions,
     Features,
@@ -602,6 +603,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   @doc "The JSON shape of the key's project."
   @spec project(Project.t()) :: map()
   def project(%Project{} = p) do
+    # `assignee` and `assignees` below both read the set: load it once.
+    p = AssigneeSet.preload_named(p)
+
     statuses =
       p
       |> Statuses.statuses_for()

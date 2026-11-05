@@ -74,7 +74,14 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
       labels = Labels.labels_for_assignments(Enum.map(shown, & &1.uuid))
       me = Assignee.person_uuid(key)
-      briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || [], me, outline))
+      # Who holds each row, for the count and the rows: one read for the lot.
+      held = Assignee.held_keys_by(open)
+
+      briefs =
+        Enum.map(
+          shown,
+          &brief_task(&1, labels[&1.uuid] || [], assigned_to?(held, &1, me), outline)
+        )
 
       notes =
         if TaskNotes.available?() and Json.may?("notes:read"),
@@ -110,7 +117,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         counts: %{
           mine: length(mine),
           # open tasks assigned to the person this key acts for
-          assigned_to_me: count_assigned(open, me),
+          assigned_to_me: Enum.count(open, &assigned_to?(held, &1, me)),
           ready: length(ready),
           waiting: length(waiting),
           overdue: Enum.count(open, &Assignment.overdue?/1)
@@ -268,7 +275,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   defp limit(_), do: @max_tasks
 
-  defp brief_task(%Assignment{} = a, labels, me, outline) do
+  defp brief_task(%Assignment{} = a, labels, assigned_to_me, outline) do
     place = OutlineApi.place(outline, a)
 
     latest =
@@ -298,7 +305,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       interactions: if(Json.may_read_interactions?(), do: Projects.interactions_of(a), else: []),
       assignee: Assignee.to_json(a),
       assignees: Assignee.list_json(a),
-      assigned_to_me: assigned_to?(a, me),
+      assigned_to_me: assigned_to_me,
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       direction: latest.redirect && brief_note(latest.redirect),
@@ -333,13 +340,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   # The key's person among the row's assignees (V29: several; a sub-project
   # row's are its child project's — codex review).
-  defp assigned_to?(a, me) when is_binary(me), do: {"person", me} in Assignee.held_keys(a)
-  defp assigned_to?(_a, _me), do: false
+  defp assigned_to?(held, %{uuid: uuid}, me) when is_binary(me),
+    do: {"person", me} in Map.get(held, uuid, [])
 
-  defp count_assigned(rows, me) when is_binary(me) do
-    held = Assignee.held_keys_by(rows)
-    Enum.count(rows, &({"person", me} in Map.get(held, &1.uuid, [])))
-  end
-
-  defp count_assigned(_rows, _me), do: 0
+  defp assigned_to?(_held, _row, _me), do: false
 end

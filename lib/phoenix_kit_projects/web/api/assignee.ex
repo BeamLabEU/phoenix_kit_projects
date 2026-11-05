@@ -75,7 +75,7 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   end
 
   def list_json(%m{} = a) when m in [Assignment, Project] do
-    a |> AssigneeSet.preload() |> list_json()
+    a |> AssigneeSet.preload_named() |> list_json()
   end
 
   def list_json(other), do: List.wrap(to_json(other))
@@ -314,10 +314,4 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
     end)
   end
 
-  @doc "`held_keys_by/1` for one row."
-  @spec held_keys(Assignment.t()) :: [AssigneeSet.key()]
-  def held_keys(%Assignment{uuid: id} = a),
-    do: a |> List.wrap() |> held_keys_by() |> Map.get(id, [])
-
-  def held_keys(_), do: []
 end

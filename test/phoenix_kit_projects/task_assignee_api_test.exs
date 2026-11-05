@@ -193,6 +193,40 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
 
     # codex review: a sub-project row's people are its child project's, for
     # the filter and the briefing too.
+    # `GET /project` reads a project with no assignee rows loaded: the read it
+    # does for itself must bring the names, or every assignee says `name: null`.
+    test "GET /project names the project's assignees (V30)", %{
+      conn: conn,
+      project: project,
+      me: me,
+      colleague: colleague
+    } do
+      {:ok, team} = Teams.create(%{"name" => "Team-#{uniq()}", "department_uuid" => me.dept.uuid})
+
+      {:ok, _} =
+        Projects.update_project(project, %{
+          "assignees" => [
+            {"person", me.person.uuid},
+            {"person", colleague.person.uuid},
+            {"team", team.uuid}
+          ]
+        })
+
+      body = conn |> get("#{@base}/project") |> json_response(200)
+      assert body["project"]["assignee"] == nil
+
+      assert Enum.map(body["project"]["assignees"], & &1["name"]) ==
+               ["Max Me", "Cora Colleague", team.name]
+
+      {:ok, _} =
+        project.uuid
+        |> Projects.get_project()
+        |> Projects.update_project(%{"assignees" => [{"person", me.person.uuid}]})
+
+      body = conn |> get("#{@base}/project") |> json_response(200)
+      assert body["project"]["assignee"]["name"] == "Max Me"
+    end
+
     test "the filter and the briefing find a sub-project by its child's people", %{
       conn: conn,
       me: me,

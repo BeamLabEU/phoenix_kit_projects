@@ -205,6 +205,19 @@ defmodule PhoenixKitProjects.AssigneeSet do
   end
 
   @doc """
+  One holder with its assignee rows AND what names them (`link_query/1`),
+  for a reader that shows the names: `preload/1`'s rows carry only uuids.
+  """
+  @spec preload_named(holder_record()) :: holder_record()
+  def preload_named(%{__struct__: m, uuid: uuid} = record)
+      when m in [Assignment, Project, Task] and is_binary(uuid) do
+    links = [assignee_links: link_query(holder(record))]
+    %{repo().preload(record, links, force: true) | assignee_keys: nil}
+  end
+
+  def preload_named(other), do: other
+
+  @doc """
   `preload/1` for the tasks of a list that do not carry their set yet;
   anything else in the list is left as it is. For a reader handed tasks
   from anywhere.
