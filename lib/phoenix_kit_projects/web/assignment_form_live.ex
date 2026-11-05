@@ -93,7 +93,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # to the project's own form and its owner-level rights, never to the
   # parent's `:edit_tasks` this form is written with.
   @subproject_fields ~w(name description translations assigned_person_uuid assigned_team_uuid
-                        assigned_department_uuid status_entity_uuid)
+                        assigned_department_uuid assignees status_entity_uuid)
 
   @impl true
   def mount(params, session, socket) do
@@ -2456,6 +2456,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       attrs =
         attrs
         |> Map.take(@subproject_fields)
+        |> own_assignees(socket)
         |> clear_other_assignees(assign_type)
         |> sp_translations(socket)
         |> strip_gated_attrs(fx)
