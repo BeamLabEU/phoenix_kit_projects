@@ -384,6 +384,15 @@ defmodule PhoenixKitProjects.Attachments do
     _ -> nil
   end
 
+  @doc """
+  A file uploaded to the project's Files (the project popup, item 47):
+  stored and placed in the project's folder, where the Files tab lists it.
+  """
+  @spec store_project_file(Project.t(), Path.t(), keyword(), binary() | nil) ::
+          {:ok, File.t()} | {:error, term()}
+  def store_project_file(%Project{} = project, path, opts, actor_uuid),
+    do: store_description_image(project, path, opts, actor_uuid)
+
   # ── A task's own files (V27) ────────────────────────────────────────
   #
   # The boss, 2026-10-30: "tasks should be able to hold their own images as

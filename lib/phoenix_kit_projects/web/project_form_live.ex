@@ -16,6 +16,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   import PhoenixKitWeb.Components.MultilangForm
   import PhoenixKitProjects.Web.Components.TimeInput, only: [datetime_input: 1]
+  import PhoenixKitProjects.Web.Components.TaskFiles, only: [task_files: 1]
 
   import PhoenixKitProjects.Web.Components.AssigneePicker,
     only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
@@ -99,6 +100,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_cue_baseline()
       |> assign(dirty?: false)
       |> DescriptionImages.allow(&description_image_target/1, &WriteGate.allowed?/1)
+      |> assign_project_files()
       |> allow_upload(:project_cover,
         accept: ~w(image/*),
         max_entries: 1,
@@ -1084,7 +1086,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # Ending ongoing work asks first (`Components.ConfirmAction`).
   def handle_event("request_confirm", params, socket),
-    do: {:noreply, ConfirmAction.request(socket, params, ~w(end_project cancel))}
+    do:
+      {:noreply,
+       ConfirmAction.request(socket, params, ~w(end_project cancel remove_project_file))}
 
   def handle_event("confirm_action_cancel", _params, socket),
     do: {:noreply, ConfirmAction.clear(socket)}
@@ -1107,6 +1111,39 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   def handle_event("end_project", _params, socket),
     do: {:noreply, end_or_resume(socket, :end)}
+
+  # The project's files (`assign_project_files/1`): the upload's own form,
+  # a cancelled upload, a file taken off (asked first, `ConfirmAction`).
+  def handle_event("project_files_validate", _params, socket), do: {:noreply, socket}
+
+  def handle_event("cancel_project_upload", %{"ref" => ref}, socket),
+    do: {:noreply, cancel_upload(socket, :project_files, ref)}
+
+  def handle_event("remove_project_file", %{"uuid" => file_uuid}, socket) do
+    if project_files_allowed?(socket) do
+      case Attachments.remove_file(
+             socket.assigns.project,
+             file_uuid,
+             Activity.actor_uuid(socket)
+           ) do
+        :ok ->
+          Activity.log("projects.file_removed",
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "project",
+            resource_uuid: socket.assigns.project.uuid,
+            metadata: %{"file_uuid" => file_uuid}
+          )
+
+          {:noreply, socket |> load_project_files() |> put_flash(:info, gettext("File removed."))}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, gettext("Could not remove the file."))}
+      end
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("You don't have permission to manage files here."))}
+    end
+  end
 
   def handle_event("resume_project", _params, socket),
     do: {:noreply, end_or_resume(socket, :resume)}
@@ -3174,7 +3211,49 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               streams={@streams}
             />
 
-
+            <%!-- The project's files (item 47), as the task popup's More
+                 tab shows a task's: the input belongs to a form of its
+                 own, drawn after this one. --%>
+            <fieldset
+              :if={@show_files?}
+              id="project-files"
+              class="rounded-box border border-base-300 p-3 flex flex-col gap-2"
+              phx-drop-target={@can_files? && @uploads.project_files.ref}
+            >
+              <legend class="px-1 text-sm font-semibold">{gettext("Files")}</legend>
+              <.task_files
+                id="project-file-list"
+                files={@project_files}
+                urls={@project_file_urls}
+                remove_event={if @can_files?, do: "remove_project_file"}
+                remove_title={gettext("Remove this file from the project?")}
+                empty_text={if not @can_files?, do: gettext("No files yet.")}
+              />
+              <label
+                :if={@can_files?}
+                class="flex flex-col items-center justify-center gap-1 rounded-box border border-dashed border-base-300 px-3 py-4 text-sm text-base-content/60 cursor-pointer hover:bg-base-200/50"
+              >
+                <.icon name="hero-arrow-up-tray" class="w-5 h-5" />
+                <span>{gettext("Drop files here or choose them")}</span>
+                <.live_file_input upload={@uploads.project_files} form="project-files-form" class="sr-only" />
+              </label>
+              <div :for={entry <- (@can_files? && @uploads.project_files.entries) || []} class="flex items-center gap-2 text-xs">
+                <span class="truncate flex-1">{entry.client_name}</span>
+                <progress class="progress progress-primary w-24" value={entry.progress} max="100"></progress>
+                <button
+                  type="button"
+                  phx-click="cancel_project_upload"
+                  phx-value-ref={entry.ref}
+                  class="btn btn-ghost btn-xs btn-circle"
+                  aria-label={gettext("Cancel")}
+                >
+                  <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+                </button>
+                <span :for={err <- upload_errors(@uploads.project_files, entry)} class="text-error">
+                  {project_upload_error(err)}
+                </span>
+              </div>
+            </fieldset>
           </.form_pane>
 
           <.form_pane prefix="project" pane="schedule" active={@pane}>
@@ -3410,6 +3489,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
       </.form>
 
+      <%!-- Owns the project's file input drawn inside the form above. --%>
+      <form
+        :if={@show_files? and @can_files?}
+        id="project-files-form"
+        phx-change="project_files_validate"
+        phx-submit="project_files_validate"
+        class="hidden"
+      ></form>
+
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
 
       <%!-- Modules & Features, embedded — OUTSIDE the project form (and
@@ -3516,6 +3604,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # file chooser (`DescriptionImages.pick/1`).
   def handle_info(
         {:leaf_insert_request, %{editor_id: "project-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
+  def handle_info(
+        {:leaf_toolbar_action, %{editor_id: "project-description--" <> _, id: "pkp-image"}},
         socket
       ),
       do: {:noreply, DescriptionImages.pick(socket)}
@@ -3754,6 +3848,121 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       _ -> {:noreply, put_flash(socket, :error, gettext("Upload failed. Please try again."))}
     end
   end
+
+  # ── The project's files, in the popup (item 47) ─────────────────────
+  #
+  # The boss, 2026-11-03: "in the project edit pop-up, I'm not seeing an
+  # image or file attachment … We should have that." The task popup's More
+  # tab, for the project: the files of its Files tab (the project's folder,
+  # `Attachments`), thumbnails, a drop zone, ✕ asked first. Shown while the
+  # Files extension is on; changed by whoever the Files tab lets change
+  # them (`:upload_files`), asked again of the project as stored now on
+  # every change. A template has no files.
+  @project_file_max_mb 25
+
+  defp assign_project_files(
+         %{assigns: %{live_action: :edit, project: %Project{uuid: uuid} = project}} = socket
+       )
+       when is_binary(uuid) do
+    if project.is_template != true and Extensions.enabled?(project, "files") do
+      socket
+      |> assign(show_files?: true, can_files?: project_files_allowed?(socket))
+      |> allow_upload(:project_files,
+        accept: :any,
+        max_entries: 10,
+        max_file_size: @project_file_max_mb * 1_048_576,
+        auto_upload: true,
+        progress: &project_file_progress/3
+      )
+      |> load_project_files()
+    else
+      no_project_files(socket)
+    end
+  end
+
+  defp assign_project_files(socket), do: no_project_files(socket)
+
+  defp no_project_files(socket),
+    do:
+      assign(socket,
+        show_files?: false,
+        can_files?: false,
+        project_files: [],
+        project_file_urls: %{}
+      )
+
+  defp load_project_files(socket) do
+    files = Attachments.list_files(socket.assigns.project, Activity.actor_uuid(socket))
+
+    assign(socket,
+      project_files: Enum.map(files, &%{file: &1, inline: false}),
+      project_file_urls: Attachments.download_urls(files)
+    )
+  end
+
+  defp project_files_allowed?(%{assigns: %{project: %Project{uuid: uuid}}} = socket)
+       when is_binary(uuid) do
+    case Projects.get_project(uuid) do
+      %Project{} = project ->
+        Extensions.enabled?(project, "files") and
+          Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :upload_files)
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp project_files_allowed?(_socket), do: false
+
+  defp project_file_progress(:project_files, %{done?: true} = entry, socket) do
+    if project_files_allowed?(socket) do
+      result =
+        consume_uploaded_entry(socket, entry, fn %{path: path} ->
+          {:ok,
+           Attachments.store_project_file(
+             socket.assigns.project,
+             path,
+             [
+               filename: entry.client_name,
+               content_type: entry.client_type,
+               size_bytes: entry.client_size
+             ],
+             Activity.actor_uuid(socket)
+           )}
+        end)
+
+      case result do
+        {:ok, file} ->
+          Activity.log("projects.file_added",
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "project",
+            resource_uuid: socket.assigns.project.uuid,
+            metadata: %{"count" => 1, "file_uuid" => to_string(file.uuid)}
+          )
+
+          {:noreply, load_project_files(socket)}
+
+        _ ->
+          {:noreply, put_flash(socket, :error, gettext("Upload failed. Please try again."))}
+      end
+    else
+      {:noreply,
+       socket
+       |> cancel_upload(:project_files, entry.ref)
+       |> put_flash(:error, gettext("You don't have permission to manage files here."))}
+    end
+  end
+
+  defp project_file_progress(_upload, _entry, socket), do: {:noreply, socket}
+
+  defp project_upload_error(:too_large),
+    do: gettext("Too large (at most %{mb} MB).", mb: @project_file_max_mb)
+
+  defp project_upload_error(:not_accepted), do: gettext("This kind of file is not accepted.")
+  defp project_upload_error(:too_many_files), do: gettext("Too many files at once.")
+  defp project_upload_error(_), do: gettext("Upload failed. Please try again.")
 
   # The one key, written atomically (`Projects.set_cover/2`): the settings
   # this form read at mount are not written back over newer ones.

@@ -323,6 +323,12 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       ),
       do: {:noreply, DescriptionImages.pick(socket)}
 
+  def handle_info(
+        {:leaf_toolbar_action, %{editor_id: "template-description--" <> _, id: "pkp-image"}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
   # An image pasted into the description: kept in the template's folder
   # and placed at the cursor (the boss, 2026-10-31).
   def handle_info(

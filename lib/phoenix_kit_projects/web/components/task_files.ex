@@ -27,9 +27,20 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
   attr(:remove_event, :string, default: nil)
   attr(:empty_text, :string, default: nil)
 
+  attr(:remove_title, :string,
+    default: nil,
+    doc: "the remove question (default: the task's)"
+  )
+
   def task_files(assigns) do
     {images, others} = Enum.split_with(assigns.files, &image?(&1.file))
-    assigns = assign(assigns, images: images, others: others)
+
+    assigns =
+      assign(assigns,
+        images: images,
+        others: others,
+        remove_title: assigns.remove_title || gettext("Remove this file from the task?")
+      )
 
     ~H"""
     <div id={@id} class="flex flex-col gap-2">
@@ -62,7 +73,7 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
             type="button"
             {ConfirmAction.ask(@remove_event,
               uuid: f.uuid,
-              title: gettext("Remove this file from the task?"),
+              title: @remove_title,
               confirm: gettext("Remove")
             )}
             class="btn btn-xs btn-circle absolute -top-2 -right-2 opacity-80 hover:opacity-100"
@@ -90,7 +101,7 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
             type="button"
             {ConfirmAction.ask(@remove_event,
               uuid: f.uuid,
-              title: gettext("Remove this file from the task?"),
+              title: @remove_title,
               confirm: gettext("Remove")
             )}
             class="btn btn-ghost btn-xs btn-circle"

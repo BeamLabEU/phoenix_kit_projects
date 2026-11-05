@@ -10791,3 +10791,13 @@ msgstr "Не удалось изменить зависимость."
 
 msgid "Create invoice"
 msgstr "Создать счёт"
+
+#: lib/phoenix_kit_projects/web/components/description_editor.ex
+#, elixir-autogen, elixir-format
+msgid "Add an image"
+msgstr "Добавить изображение"
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex
+#, elixir-autogen, elixir-format
+msgid "Remove this file from the project?"
+msgstr "Убрать этот файл из проекта?"

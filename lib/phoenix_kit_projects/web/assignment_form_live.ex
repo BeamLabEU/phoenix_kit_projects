@@ -3550,9 +3550,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       ),
       do: {:noreply, DescriptionImages.pick(socket)}
 
+  def handle_info(
+        {:leaf_toolbar_action, %{editor_id: "assignment-description--" <> _, id: "pkp-image"}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
   # The same for a sub-project's description (its own folder).
   def handle_info(
         {:leaf_insert_request, %{editor_id: "subproject-description--" <> _, type: :image}},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.pick(socket)}
+
+  def handle_info(
+        {:leaf_toolbar_action, %{editor_id: "subproject-description--" <> _, id: "pkp-image"}},
         socket
       ),
       do: {:noreply, DescriptionImages.pick(socket)}

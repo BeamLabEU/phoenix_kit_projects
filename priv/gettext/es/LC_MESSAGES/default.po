@@ -10734,3 +10734,13 @@ msgstr "No se pudo cambiar la dependencia."
 
 msgid "Create invoice"
 msgstr "Crear factura"
+
+#: lib/phoenix_kit_projects/web/components/description_editor.ex
+#, elixir-autogen, elixir-format
+msgid "Add an image"
+msgstr "Añadir una imagen"
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex
+#, elixir-autogen, elixir-format
+msgid "Remove this file from the project?"
+msgstr "¿Quitar este archivo del proyecto?"

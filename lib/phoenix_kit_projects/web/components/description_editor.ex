@@ -34,7 +34,8 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
         do: {:noreply, DescriptionEditor.suggest(socket, msg)}
 
   `uploads: true` turns on pasted and inserted images (`{:leaf_paste_image,
-  …}` / `{:leaf_insert_request, …}`): the host stores them and answers with
+  …}`, and the picture button's `{:leaf_toolbar_action, %{id:
+  image_action()}}`): the host stores them and answers with
   `insert_image/3`, so the text holds the stored file's address, never the
   picture itself.
   """
@@ -239,7 +240,8 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
         content={@content}
         mode={:visual}
         preset={:simple}
-        toolbar={if @image_button, do: [:image], else: []}
+        toolbar={[]}
+        toolbar_extra={if @image_button, do: [image_button()], else: []}
         placeholder={@placeholder || ""}
         height={@height}
         min_height="120px"
@@ -253,6 +255,30 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
       />
     </div>
     """
+  end
+
+  @image_action "pkp-image"
+
+  @doc """
+  The id of the picture button's `{:leaf_toolbar_action, %{id: id}}`: the
+  host answers it with `DescriptionImages.pick/1`.
+  """
+  @spec image_action() :: String.t()
+  def image_action, do: @image_action
+
+  # The picture button, pinned to the toolbar's row (`collapse: false`):
+  # Leaf's own image button lives in the ⋯ menu of the compact toolbar, where
+  # nobody found it (the boss, 2026-11-03: "I'm not seeing an image … We
+  # should have that"). The icon is Leaf's own image glyph, a constant.
+  defp image_button do
+    %{
+      id: @image_action,
+      title: gettext("Add an image"),
+      glyph: "image",
+      collapse: false,
+      icon:
+        ~s(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M1 5.25A2.25 2.25 0 0 1 3.25 3h13.5A2.25 2.25 0 0 1 19 5.25v9.5A2.25 2.25 0 0 1 16.75 17H3.25A2.25 2.25 0 0 1 1 14.75v-9.5Zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 0 0 .75-.75v-2.69l-2.22-2.219a.75.75 0 0 0-1.06 0l-1.91 1.909.47.47a.75.75 0 1 1-1.06 1.06L6.53 8.091a.75.75 0 0 0-1.06 0l-2.97 2.97ZM12 7a1 1 0 1 1 2 0 1 1 0 0 1-2 0Z"/></svg>)
+    }
   end
 
   @doc """
