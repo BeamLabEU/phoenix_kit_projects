@@ -12,8 +12,40 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
 
   use PhoenixKitProjects.DataCase, async: false
 
+  alias Ecto.Migration.Runner
   alias PhoenixKitProjects.Migrations.Schema
   alias PhoenixKitProjects.Test.Repo, as: TestRepo
+  alias PhoenixKitProjects.Test.SchemaMigration
+
+  # document_creator links a document to a project but does not depend on
+  # this package: its chain skips the key while `phoenix_kit_projects` is
+  # missing and still stamps itself current. Where it ran first (a fresh
+  # install replaying a host's history), this chain adds the key. Without the
+  # documents table (this suite's boot) it must do nothing and not fail.
+  test "the chain adds document_creator's project key when that table is there" do
+    TestRepo.query!("""
+    CREATE TABLE public.phoenix_kit_doc_documents (uuid uuid PRIMARY KEY, project_uuid uuid)
+    """)
+
+    Runner.run(
+      TestRepo,
+      TestRepo.config(),
+      1,
+      SchemaMigration,
+      :forward,
+      :up,
+      :up,
+      log: false
+    )
+
+    assert %{rows: [[1]]} =
+             TestRepo.query!("""
+             SELECT count(*) FROM pg_constraint
+             WHERE conrelid = 'public.phoenix_kit_doc_documents'::regclass
+               AND conname = 'phoenix_kit_doc_documents_project_uuid_fkey'
+               AND confrelid = 'public.phoenix_kit_projects'::regclass
+             """)
+  end
 
   test "migration_module/0 points at the chain" do
     assert PhoenixKitProjects.migration_module() == Schema

@@ -97,6 +97,18 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     prefix = validated_prefix(opts)
     p = prefix_str(prefix)
 
+    # This chain's foreign keys target staff's and entities' tables. Core no
+    # longer creates those (3.x), and a host's migration files can run this
+    # chain before the files that run theirs: a history written under core 2.x
+    # does, so a fresh database failed on `phoenix_kit_staff_teams`. Build
+    # their chains first. Each leaves a database already at or past its
+    # current version as it is, so their own host files later find nothing to
+    # do. The module is passed as a value, so nothing here refers to staff at
+    # compile time: this package must still compile without it
+    # (`WITHOUT_STAFF=1`).
+    run_dependency_chain(PhoenixKitStaff.Migrations, prefix)
+    run_dependency_chain(PhoenixKitEntities.Migrations, prefix)
+
     v1_baseline(p, prefix)
     v2_extension_enablement(p, prefix)
     v3_members(p, prefix)
@@ -126,8 +138,49 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v27_task_files(p, prefix)
     v28_repeating_tasks(p)
     v29_assignment_assignees(p, prefix)
+    document_creator_project_fk(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
+  end
+
+  defp run_dependency_chain(chain, prefix) do
+    if Code.ensure_loaded?(chain), do: chain.up(prefix: prefix)
+  end
+
+  # `phoenix_kit_document_creator` links a document to a project, but does not
+  # depend on this package, so its chain adds the foreign key only when
+  # `phoenix_kit_projects` already exists. Where its chain ran first, it
+  # skipped the key and still stamped itself current, so nothing would ever add
+  # it. Add it here, in that chain's exact name and definition, when the
+  # documents table is there and the key is not. Whichever of the two installs
+  # second creates it.
+  defp document_creator_project_fk(p, prefix) do
+    execute("""
+    DO $$
+    BEGIN
+      -- Nested, not ANDed: the `::regclass` cast below must never be
+      -- evaluated when the documents table is missing.
+      IF to_regclass('#{p}phoenix_kit_doc_documents') IS NOT NULL
+         AND EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = '#{prefix}'
+             AND table_name = 'phoenix_kit_doc_documents'
+             AND column_name = 'project_uuid'
+         ) THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = '#{p}phoenix_kit_doc_documents'::regclass
+            AND conname = 'phoenix_kit_doc_documents_project_uuid_fkey'
+        ) THEN
+          ALTER TABLE #{p}phoenix_kit_doc_documents
+            ADD CONSTRAINT phoenix_kit_doc_documents_project_uuid_fkey
+            FOREIGN KEY (project_uuid) REFERENCES #{p}phoenix_kit_projects(uuid)
+            ON DELETE SET NULL;
+        END IF;
+      END IF;
+    END
+    $$
+    """)
   end
 
   @doc """
