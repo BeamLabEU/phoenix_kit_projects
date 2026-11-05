@@ -152,8 +152,9 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
         |> render_submit(%{"default_assign_type" => "person"})
     end
 
-    test "save with default_assign_type='' triggers the catch-all clear branch",
-         %{conn: conn} do
+    # The single-assignee "clear the others" branch went with V30 (the
+    # library task keeps a set); a save that names nobody still saves.
+    test "save with no default assignee clears the set and leaves", %{conn: conn} do
       task = fixture_task()
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
@@ -165,10 +166,12 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
             title: task.title,
             estimated_duration: "1",
             estimated_duration_unit: "hours"
-          },
-          default_assign_type: ""
+          }
         )
         |> render_submit()
+
+      assert PhoenixKitProjects.AssigneeSet.keys(PhoenixKitProjects.Projects.get_task(task.uuid)) ==
+               []
     end
   end
 end

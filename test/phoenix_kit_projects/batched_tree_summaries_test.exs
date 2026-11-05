@@ -99,10 +99,11 @@ defmodule PhoenixKitProjects.BatchedTreeSummariesTest do
       # Three levels deep → three grouped reads (each with its preload
       # statements), however many roots: one root, three or six cost the
       # same. (The statements counted include Ecto's per-association
-      # preloads, which is why a level is more than one.)
+      # preloads, which is why a level is more than one; V30 added a
+      # sub-project's assignee set to them.)
       assert q_one == q_three
       assert q_three == q_six
-      assert q_six <= 3 * 5
+      assert q_six <= 3 * 6
 
       # The per-project walk is what the widgets used to pay: the same
       # statements per NODE — three nodes per root, so it grows with the

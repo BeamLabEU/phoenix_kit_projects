@@ -621,8 +621,8 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       completion: Project.completion(p),
       # Who the project is for (V30): the whole list, and `assignee` for an
       # old client — the one, or null for none and for several.
-      assignee: PhoenixKitProjects.Web.Api.Assignee.to_json(p),
-      assignees: PhoenixKitProjects.Web.Api.Assignee.list_json(p),
+      assignee: Assignee.to_json(p),
+      assignees: Assignee.list_json(p),
       caught_up: Projects.caught_up?(p),
       caught_up_since: Projects.caught_up_since(p),
       agent_policy: Project.agent_policy(p),

@@ -1049,18 +1049,22 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # V19–V21 each added columns to the assignments table (and V20 the link
   # table); newest first.
   defp down_task_columns(p, target) do
-    if target < 30, do: down_v30(p)
-    if target < 29, do: down_v29(p)
-    if target < 28, do: down_v28(p)
-    if target < 27, do: down_v27(p)
-    if target < 26, do: down_v26(p)
-    if target < 25, do: down_v25(p)
-    if target < 24, do: down_v24(p)
-    if target < 23, do: down_v23(p)
-    if target < 22, do: down_v22(p)
-    if target < 21, do: down_v21(p)
-    if target < 20, do: down_v20(p)
-    if target < 19, do: down_v19(p)
+    [
+      {30, &down_v30/1},
+      {29, &down_v29/1},
+      {28, &down_v28/1},
+      {27, &down_v27/1},
+      {26, &down_v26/1},
+      {25, &down_v25/1},
+      {24, &down_v24/1},
+      {23, &down_v23/1},
+      {22, &down_v22/1},
+      {21, &down_v21/1},
+      {20, &down_v20/1},
+      {19, &down_v19/1}
+    ]
+    |> Enum.each(fn {version, down} -> if target < version, do: down.(p) end)
+
     :ok
   end
 
