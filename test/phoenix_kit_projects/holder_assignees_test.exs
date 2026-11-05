@@ -194,7 +194,9 @@ defmodule PhoenixKitProjects.HolderAssigneesTest do
       :telemetry.attach(
         handler,
         event,
-        fn _e, _m, %{query: q}, _ -> if q =~ ~r/FOR (NO KEY )?UPDATE/, do: send(parent, {:locked, q}) end,
+        fn _e, _m, %{query: q}, _ ->
+          if q =~ ~r/FOR (NO KEY )?UPDATE/, do: send(parent, {:locked, q})
+        end,
         nil
       )
 

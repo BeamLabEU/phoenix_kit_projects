@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   alias Phoenix.LiveView
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
-  alias PhoenixKitProjects.{Activity, AssigneeSet, Assignees, L10n, People}
+  alias PhoenixKitProjects.{Activity, Assignees, AssigneeSet, L10n, People}
 
   @events ~w(assignee_search assignee_pick assignee_recent assign_to_me
              staff_create_confirm staff_create_cancel assignee_noop assignee_clear
@@ -134,10 +134,12 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     case AssigneeSet.normalize(posted) do
       {:ok, keys} ->
         held = AssigneeSet.keys(record)
+
         keep =
           Enum.filter(keys, fn {kind, uuid} = key ->
             key in held or Assignees.describe_pick(kind, uuid) != nil
           end)
+
         Map.put(attrs, "assignees", posted(keep))
 
       :error ->

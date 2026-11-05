@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
 
   use PhoenixKitProjects.DataCase, async: false
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Migrations.Schema
   import Ecto.Query
 
@@ -66,14 +67,16 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
     defmodule UpV30 do
       @moduledoc false
       use Ecto.Migration
-      def up, do: PhoenixKitProjects.Migrations.Schema.up(prefix: "public")
+      alias PhoenixKitProjects.Migrations.Schema
+      def up, do: Schema.up(prefix: "public")
       def down, do: :ok
     end
 
     defmodule DownV30 do
       @moduledoc false
       use Ecto.Migration
-      def up, do: PhoenixKitProjects.Migrations.Schema.down(prefix: "public", version: 29)
+      alias PhoenixKitProjects.Migrations.Schema
+      def up, do: Schema.down(prefix: "public", version: 29)
       def down, do: :ok
     end
 
@@ -89,7 +92,7 @@ defmodule PhoenixKitProjects.Integration.MigrationsSchemaTest do
 
     defp person!(name) do
       {:ok, user} =
-        PhoenixKit.Users.Auth.register_user(%{
+        Auth.register_user(%{
           "email" => "mig-#{System.unique_integer([:positive])}@example.com",
           "password" => "ValidPassword123!"
         })
