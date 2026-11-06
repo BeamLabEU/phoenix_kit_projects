@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.33.1 - 2026-11-06
+
+No migration.
+
+### Fixed
+
+- **A save from the primary language tab lost what was typed on the other tabs.** Those tabs' values now survive it, on the project, task, template, assignment and sub-project forms.
+- **Translations under a dialect code never reached the read pages.** A translation stored as `es-ES` or `fr-FR` now shows: reads use the request's dialect instead of the Gettext locale, which is downgraded to a base code. `L10n.language_entry/2` is the one lookup (exact, then base, then a same-base dialect, the last never for a primary-language viewer), and it also serves status labels and team and department names.
+- **A blanked translated field removes its override,** including the last one of a language. That holds for a one-off task's description on the assignment form too.
+- **Clearing a primary field is no longer undone** by a save from a language tab.
+- An embedded page keeps its language when handed a dialect: `Web.Helpers.maybe_put_locale/1` gives the Gettext backends the catalogue's code (`es`) and keeps the full code for content reads. An empty `"locale"` is a no-op.
+- The docs build with no warnings.
+
 ## 0.33.0 - 2026-11-06
 
 PRs #59–#62 plus their post-merge reviews
