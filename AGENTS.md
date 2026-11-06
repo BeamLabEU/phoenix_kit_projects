@@ -272,6 +272,22 @@ Repo-local aliases:
     extract/merge, diff the new msgids against the pre-merge `.po` and fill
     them in every locale; review each `fuzzy` the merge produced — its guesses
     have been wrong every time ("Off — no task list" → "no late marker").
+- **Translated content: the primary language stays in its column, the rest in
+  `translations`** (`%{lang => %{field => value}}`), on Project, Task, Assignment
+  and ProjectStatus, and on staff's Team and Department through `People`.
+  - Reads pass `L10n.current_content_lang/0`: the request's dialect, never the
+    Gettext locale, which is downgraded to a base code. `L10n.language_entry/2`
+    is the one key lookup (exact, then base, then a same-base dialect, the last
+    never for a primary-language viewer), because codes differ per language:
+    core registers `et` but `es-ES`.
+  - Forms fold their tabs through `Web.Helpers.merge_translations_attrs/3`,
+    always from the in-flight record (`in_flight_record/3`), which is the only
+    place what was typed on another tab lives until the save: a blank value
+    removes its override, and a save from the primary tab, which renders no
+    translation inputs, keeps the rest. Cast against the mounted record, an
+    untouched map is no change, so such a save leaves a newer translation alone.
+  - A one-off task's description lives on the task, so the assignment form
+    writes it there (`write_task_words/2`) and a blanked language goes with it.
 - **No per-item reads on a hot path.** A page mount, a PubSub re-render, a
   dashboard widget's refresh tick — anything that runs per viewer and again on
   every change — must not map a list through a function that queries per
@@ -1570,7 +1586,7 @@ The three tables a host app depends on. Full prose in
 | `"view"` | `TasksLive` | `"list"` \| `"groups"`; defaults `"list"` |
 | `"headless"` | `ProjectGanttLive`, `ProjectCalendarLive` | Drops the back-link when nested as a tab |
 | `"wrapper_class"` | all | Overrides the outermost `<div>` class (default is the standalone-admin class) |
-| `"locale"` | all | Restores both Gettext backends inside the embedded mount; absent is a no-op |
+| `"locale"` | all | The page's language, a dialect (`L10n.current_content_lang/0`) or a base code: `maybe_put_locale/1` gives both Gettext backends the catalogue's code and keeps the full one for content reads. Absent is a no-op |
 | `"current_user_uuid"` | all | The viewer's UUID **as a string, never a `%User{}`**. Absent/unknown/inactive degrades to anonymous, never crashes |
 | `"redirect_to"` | form LVs | Path `push_navigate`d on save / mount-error instead of the admin default |
 | `"tab_url_sync"` | `ProjectShowLive` | Real boolean; **defaults `false`** in embeds — an embed must not rewrite the host's address bar |

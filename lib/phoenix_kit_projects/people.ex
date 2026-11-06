@@ -36,6 +36,7 @@ defmodule PhoenixKitProjects.People do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.People.Department
   alias PhoenixKitProjects.People.Person
   alias PhoenixKitProjects.People.Team
@@ -485,11 +486,11 @@ defmodule PhoenixKitProjects.People do
     end
   end
 
-  @doc "A team/department's localized name: `translations[lang][\"name\"]` else the primary."
+  @doc "A team/department's localized name: its override for `lang`, else the primary."
   @spec localized_name(Team.t() | Department.t() | nil, String.t() | nil) :: String.t() | nil
   def localized_name(%{name: primary, translations: translations}, lang) do
-    case is_map(translations) && is_binary(lang) && get_in(translations, [lang, "name"]) do
-      val when is_binary(val) and val != "" -> val
+    case L10n.language_entry(translations, lang) do
+      %{"name" => val} when is_binary(val) and val != "" -> val
       _ -> primary
     end
   end

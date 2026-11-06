@@ -47,7 +47,8 @@ defmodule PhoenixKitProjects.Extensions.Extension do
       this is its only write authorization.
     * `"current_user_uuid"` — the viewer's uuid as a string, or `nil`.
       Identity only, never authorization.
-    * `"locale"` — the Gettext locale to set on mount.
+    * `"locale"` — the page's language, a dialect or a base code; hand it to
+      `Web.Helpers.maybe_put_locale/1` on mount.
     * `"wrapper_class"` — class for the tab's outermost element; the hub
       passes `""` because the project page already pads the pane.
     * `"mode"` / `"pubsub_topic"` / `"frame_ref"` — the hub's emit contract,

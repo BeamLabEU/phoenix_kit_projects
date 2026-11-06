@@ -31,6 +31,8 @@ defmodule PhoenixKitProjects.Web.Helpers do
   See `dev_docs/embedding_emit.md` for the full contract.
   """
 
+  alias PhoenixKit.Modules.Languages
+  alias PhoenixKit.Utils.RecipientLocale
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
 
   require Logger
@@ -200,7 +202,12 @@ defmodule PhoenixKitProjects.Web.Helpers do
   @doc """
   Folds secondary-language form params into the in-flight record's
   `translations` JSONB and preserves primary-language column values
-  that the current secondary-tab DOM didn't render.
+  that the current secondary-tab DOM didn't render. A blank value removes
+  its override, and a save from the primary tab, which renders no
+  translation inputs, keeps what was typed on the others.
+
+  `record` is the in-flight one (`in_flight_record/3`), not the row as it
+  was mounted: it is where those values live until the save.
 
   `primary_fields` is the list of DB column names (as strings) that are
   translatable — e.g. `["name", "description"]` for Project,
@@ -214,58 +221,53 @@ defmodule PhoenixKitProjects.Web.Helpers do
     |> preserve_primary_fields(record, primary_fields)
   end
 
+  # The in-flight map holds what was typed on every tab, so it is what gets
+  # saved even when this submit posts none of it: the primary tab renders no
+  # translation inputs. Unchanged, it casts to no change.
   defp merge_translations_map(attrs, record) do
+    existing = Map.get(record, :translations) || %{}
+
     case Map.get(attrs, "translations") do
       submitted when is_map(submitted) and submitted != %{} ->
-        cleaned = clean_submitted_translations(submitted)
-        existing = Map.get(record, :translations) || %{}
-        merged = deep_merge_translations(existing, cleaned)
-        Map.put(attrs, "translations", merged)
+        Map.put(attrs, "translations", apply_submitted_translations(existing, submitted))
 
       _ ->
-        Map.delete(attrs, "translations")
+        Map.put(attrs, "translations", existing)
     end
   end
 
-  # Strips Phoenix LV's `_unused_*` sentinel keys (added by the form
-  # helper to drive `used_input?/1`) and drops empty-string overrides
-  # so that clearing a secondary-tab field falls back cleanly to the
-  # primary value at render time, rather than persisting a `""` that
-  # the localized-read helpers would have to special-case.
-  defp clean_submitted_translations(submitted) when is_map(submitted) do
-    submitted
-    |> Enum.map(fn {lang, fields} -> {lang, clean_lang_fields(fields)} end)
-    |> Enum.reject(fn {_lang, fields} -> fields == %{} end)
-    |> Map.new()
-  end
+  # A submitted value replaces its override and a blank one removes it, so
+  # clearing a secondary-tab field falls back to the primary value at render
+  # time rather than persisting a `""` the localized-read helpers would have
+  # to special-case. A language left with nothing goes too.
+  defp apply_submitted_translations(existing, submitted) do
+    Enum.reduce(submitted, existing, fn {lang, fields}, acc ->
+      lang_map =
+        fields
+        |> submitted_fields()
+        |> Enum.reduce(Map.get(acc, lang) || %{}, fn
+          {field, blank}, lang_map when blank in ["", nil] -> Map.delete(lang_map, field)
+          {field, value}, lang_map -> Map.put(lang_map, field, value)
+        end)
 
-  defp clean_lang_fields(fields) when is_map(fields) do
-    fields
-    |> Enum.reject(fn
-      {"_unused_" <> _, _} -> true
-      {_k, ""} -> true
-      {_k, nil} -> true
-      _ -> false
-    end)
-    |> Map.new()
-  end
-
-  defp clean_lang_fields(_), do: %{}
-
-  defp deep_merge_translations(existing, submitted) do
-    Map.merge(existing, submitted, fn _lang, old_lang_map, new_lang_map ->
-      Map.merge(old_lang_map || %{}, new_lang_map || %{})
+      if lang_map == %{}, do: Map.delete(acc, lang), else: Map.put(acc, lang, lang_map)
     end)
   end
 
+  # Strips Phoenix LV's `_unused_*` sentinel keys (added by the form helper to
+  # drive `used_input?/1`).
+  defp submitted_fields(fields) when is_map(fields) do
+    Map.reject(fields, fn {key, _value} -> String.starts_with?(key, "_unused_") end)
+  end
+
+  defp submitted_fields(_), do: %{}
+
+  # `nil` is carried too: a primary field cleared on its tab is in-flight as
+  # nil, and leaving it out would keep the stored value on a save from another
+  # tab.
   defp preserve_primary_fields(attrs, record, primary_fields) do
     Enum.reduce(primary_fields, attrs, fn field, acc ->
-      if Map.has_key?(acc, field) do
-        acc
-      else
-        existing = Map.get(record, String.to_existing_atom(field))
-        if is_nil(existing), do: acc, else: Map.put(acc, field, existing)
-      end
+      Map.put_new(acc, field, Map.get(record, String.to_existing_atom(field)))
     end)
   end
 
@@ -388,6 +390,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   reapplies it before any `gettext/1` or `L10n.current_content_lang/0`
   call runs.
 
+  `"locale"` may be a dialect (`"es-ES"`) or a base code: the catalogues get
+  what core's own hook would give them (`es`), and the content language keeps
+  the full code, which is how a form stores it.
+
   Backward-compatible: when `"locale"` is absent, this is a no-op.
 
   Only where nothing set a locale yet. A router mount has its language
@@ -401,10 +407,12 @@ defmodule PhoenixKitProjects.Web.Helpers do
   """
   @spec maybe_put_locale(map()) :: :ok | nil
   def maybe_put_locale(session) do
-    with locale when is_binary(locale) <- Map.get(session, "locale"),
+    with locale when is_binary(locale) and locale != "" <- Map.get(session, "locale"),
          nil <- Process.get(PhoenixKitWeb.Gettext) do
-      Gettext.put_locale(PhoenixKitWeb.Gettext, locale)
-      Gettext.put_locale(locale)
+      gettext_locale = RecipientLocale.gettext_locale(locale)
+      Gettext.put_locale(PhoenixKitWeb.Gettext, gettext_locale)
+      Gettext.put_locale(gettext_locale)
+      Languages.put_request_locale(locale)
     else
       _ -> nil
     end

@@ -3543,7 +3543,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               # A nested LiveView is a process of its own and starts on the
               # app's default language: it was Estonian on an English page
               # (the boss, 2026-11-02). It takes this page's.
-              "locale" => Gettext.get_locale(PhoenixKitProjects.Gettext),
+              "locale" => L10n.current_content_lang(),
               "embedded_in_form" => true,
               "current_user_uuid" => @current_user_uuid,
               "wrapper_class" => "flex flex-col gap-6"

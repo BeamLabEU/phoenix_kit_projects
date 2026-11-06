@@ -14,8 +14,9 @@ defmodule PhoenixKitProjects.L10n do
   use Gettext, backend: PhoenixKitWeb.Gettext
   require Gettext.Macros
 
+  alias PhoenixKit.Modules.Languages.DialectMapper
   alias PhoenixKit.Settings
-  alias PhoenixKit.Utils.TimeZone
+  alias PhoenixKit.Utils.{Multilang, TimeZone}
 
   @zone_key :phoenix_kit_projects_viewer_zone
   @clock_key :phoenix_kit_projects_twelve_hour
@@ -270,22 +271,66 @@ defmodule PhoenixKitProjects.L10n do
   end
 
   @doc """
-  The current content-display language code.
+  The current content-display language code: the full dialect the request
+  resolved to (`Multilang.current_locale/0`), else the process's Gettext
+  locale. Used by the localized-read helpers on schemas to pick the right
+  entry from the `translations` JSONB; the helpers themselves fall back to
+  the primary-language column when the locale has no override or is `nil`,
+  so this never needs to validate the result against `enabled_languages/0`.
 
-  Reads `Gettext.get_locale/1` against the parent app's gettext backend
-  — that's the locale Phoenix's pipeline set on the URL prefix
-  (`/bs/...` → `"bs"`). Used by the localized-read helpers on schemas
-  to pick the right entry from the `translations` JSONB; the helpers
-  themselves fall back to the primary-language column when the locale
-  has no override or is `nil`, so this never needs to validate the
-  result against `enabled_languages/0`.
+  Not the Gettext locale alone: that is downgraded to a catalogue's base code
+  (`es` for `es-ES`), while a form stores under the language tab's code.
+
+  It is also what a page hands a nested LiveView as `session["locale"]`;
+  `Web.Helpers.maybe_put_locale/1` takes a dialect apart again.
   """
   @spec current_content_lang() :: String.t() | nil
   def current_content_lang do
-    # Reads the process dictionary (never the DB) — with a compiled backend
-    # it cannot fail, so no rescue: a blanket one here would only mask
-    # genuine bugs introduced by future refactors.
-    Gettext.get_locale(PhoenixKitWeb.Gettext)
+    # Reads the process dictionary (never the DB), so it cannot fail and has
+    # no rescue: a blanket one here would only mask genuine bugs introduced
+    # by future refactors.
+    Multilang.current_locale()
+  end
+
+  @doc """
+  The entry of `entries` for `lang`: the exact code, else the base code, else
+  the first same-base dialect. Language codes differ per host and per language
+  (core registers `et` but `es-ES`), and a nested LiveView can be handed a base
+  code, so an exact lookup alone misses.
+
+  A viewer on the primary language gets no sibling: their text is the primary
+  column, which another dialect's override must not replace.
+  """
+  @spec language_entry(map() | nil, String.t() | nil) :: term()
+  def language_entry(entries, lang) when is_map(entries) and is_binary(lang) do
+    base = DialectMapper.extract_base(lang)
+
+    case entries do
+      %{^lang => entry} -> entry
+      %{^base => entry} -> entry
+      _ -> sibling_entry(entries, lang, base)
+    end
+  end
+
+  def language_entry(_entries, _lang), do: nil
+
+  defp sibling_entry(entries, lang, base) do
+    key =
+      entries
+      |> Map.keys()
+      |> Enum.filter(&(is_binary(&1) and DialectMapper.extract_base(&1) == base))
+      |> Enum.min(fn -> nil end)
+
+    if key && lang != primary_language(), do: Map.get(entries, key)
+  end
+
+  # A read must still render the primary text with the settings unreachable.
+  defp primary_language do
+    Multilang.primary_language()
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
   end
 
   @doc """

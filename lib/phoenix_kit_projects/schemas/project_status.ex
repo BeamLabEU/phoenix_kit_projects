@@ -25,6 +25,7 @@ defmodule PhoenixKitProjects.Schemas.ProjectStatus do
 
   alias PhoenixKit.Utils.Slug
 
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Schemas.Project
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
@@ -124,8 +125,8 @@ defmodule PhoenixKitProjects.Schemas.ProjectStatus do
   @spec localized_label(t(), String.t() | nil) :: String.t() | nil
   def localized_label(%__MODULE__{translations: t, label: label}, lang)
       when is_map(t) and is_binary(lang) do
-    case t do
-      %{^lang => %{"label" => override}} when is_binary(override) and override != "" -> override
+    case L10n.language_entry(t, lang) do
+      %{"label" => override} when is_binary(override) and override != "" -> override
       _ -> label
     end
   end

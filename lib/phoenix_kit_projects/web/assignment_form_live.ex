@@ -3450,11 +3450,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       shown = socket.assigns.assignment
       words = Map.take(attrs, ["description", "translations"])
 
+      typed = description_translations(words["translations"])
+      opened = description_translations(shown.translations)
+
       changed? =
         (Map.has_key?(words, "description") and
-           (words["description"] || "") != (shown.description || "")) or
-          description_translations(words["translations"]) !=
-            description_translations(shown.translations)
+           (words["description"] || "") != (shown.description || "")) or typed != opened
+
+      words = Map.put(words, "cleared", Map.keys(opened) -- Map.keys(typed))
 
       {Map.drop(attrs, ["description", "translations"]), if(changed?, do: words)}
     else
@@ -3471,13 +3474,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # A language the box opened with and no longer holds was blanked: its
+  # description goes. One added since the box opened stays.
   defp write_task_words(%Task{} = task, words) do
     translations =
-      Map.merge(
-        task.translations,
+      task.translations
+      |> Map.new(fn {lang, fields} ->
+        {lang, if(lang in words["cleared"], do: Map.delete(fields, "description"), else: fields)}
+      end)
+      |> Map.merge(
         description_translations(words["translations"]),
         fn _lang, old, new -> Map.merge(old, new) end
       )
+      |> Map.reject(fn {_lang, fields} -> fields == %{} end)
 
     content = words |> Map.take(["description"]) |> Map.put("translations", translations)
 

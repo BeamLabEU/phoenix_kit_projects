@@ -130,10 +130,12 @@ Forms had two extra concerns beyond the Tier 1/2 pattern:
   handlers AND on apply_action error paths (project / assignment not
   found).
 - `maybe_put_locale/1` — reads `session["locale"]` and restores the
-  Gettext locale in the embedded LV process. Because `live_render/3`
-  spawns a new process, the parent's process-dictionary locale is lost;
-  without this helper all translations fall back to English. Called at
-  the top of every embeddable LV's `mount/3`.
+  language in the embedded LV process: the Gettext locale (a dialect
+  downgraded to its catalogue, as core's hook does) and the request
+  locale content reads use. Because `live_render/3` spawns a new process,
+  the parent's process-dictionary locale is lost; without this helper all
+  translations fall back to English. Called at the top of every
+  embeddable LV's `mount/3`.
 
 **`project_form_live.ex`** — `max-w-xl`, **MEDIUM**
 - Fix: `mount/3` resolves wrapper_class / live_action / embed_redirect_to

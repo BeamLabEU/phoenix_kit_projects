@@ -217,7 +217,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
 
   defp lookup_translation(translations, lang, field)
        when is_map(translations) and is_binary(lang) do
-    case Map.get(translations, lang) do
+    case L10n.language_entry(translations, lang) do
       %{} = lang_map -> Map.get(lang_map, field)
       _ -> nil
     end

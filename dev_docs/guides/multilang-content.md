@@ -54,10 +54,13 @@ Assignment.localized_description(assignment, lang)
 ```
 
 The current-content language for read paths comes from
-`PhoenixKitProjects.L10n.current_content_lang/0`, which reads
-`Gettext.get_locale(PhoenixKitWeb.Gettext)` — the locale the parent
-app set from the URL prefix (`/bs/...` → `"bs"`). Activity-log
-metadata always captures the **primary** column value
+`PhoenixKitProjects.L10n.current_content_lang/0`: the full dialect the
+request resolved to (`Multilang.current_locale/0`), else the process's
+Gettext locale. Not the Gettext locale alone, which is downgraded to a
+catalogue's base code (`es` for `es-ES`) while a form stores under the
+tab's code. `L10n.language_entry/2` is the one key lookup: exact, then
+base, then a same-base dialect, the last never for a primary-language
+viewer. Activity-log metadata always captures the **primary** column value
 (`metadata.name = project.name`), not the localized one — audit
 trails are locale-agnostic by design.
 
@@ -81,10 +84,15 @@ LVs that need multilang inputs:
    building the changeset. This:
      * strips Phoenix LV's `_unused_*` sentinel keys from the
        submitted `translations` map;
-     * drops empty/`nil` overrides so cleared secondary fields
-       fall back cleanly to the primary value;
-     * deep-merges on top of the record's existing JSONB so other
-       languages aren't clobbered;
+     * removes the override of a blank value, and a language left
+       with nothing, so cleared secondary fields fall back cleanly to
+       the primary value;
+     * applies what was submitted on top of the in-flight record's
+       JSONB so other languages aren't clobbered;
+     * carries that map on a save from the primary tab, which renders
+       no translation inputs, so what was typed on the other tabs
+       survives (cast against the mounted record, an untouched map is
+       no change, so a newer translation written elsewhere stays);
      * preserves primary-language column values when a secondary-tab
        submission lacks them (the primary `<input>`s aren't in the
        DOM on secondary tabs, so a naive cast would treat them as

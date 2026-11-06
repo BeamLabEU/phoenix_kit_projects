@@ -110,8 +110,8 @@ attrs) + `translations` JSONB (label i18n, workspace shape).
 `ProjectStatus.color/1` reads `data["color"]`.
 
 **Titles are localized.** Reads resolve the label to the current content locale
-(`L10n.current_content_lang/0`, the process Gettext locale the host sets from the
-URL prefix) — no LV signature changes. Catalog reads pass `lang:` to
+(`L10n.current_content_lang/0`, the dialect the request resolved to, else the
+process Gettext locale) — no LV signature changes. Catalog reads pass `lang:` to
 `EntityData.list_by_entity/2` so the entities module resolves each record's title;
 `cement_project_statuses/2` captures the **primary** title as `label` plus every
 enabled non-primary language's title into the row's `translations` JSONB (via
