@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.33.0 - 2026-11-06
+
+PRs #59–#62 plus their post-merge reviews
+(`dev_docs/pull_requests/2026/59-tasks-deadlines-time-page/` through
+`62-fresh-core3-chain/`).
+
+Run `mix phoenix_kit.update` after upgrading: the module's chain moves V25 → V30,
+and the new floors bring core V226–V227 and `phoenix_kit_ai`'s V6. A host below
+core V225 must install core 2.65.0 first (core's own rule). See "Changed" for
+what behaves differently on an existing install.
+
+### Changed
+
+- **Requires `phoenix_kit` >= 3.3.0** (pin `>= 3.3.0 and < 4.0.0`, was `>= 2.65.0`): the release this package is built and tested against, and the first on Hex since 3.0.0. Embedded identity and the notification fan-outs now call core directly, with no fallback for an older one.
+- **Requires `phoenix_kit_staff` >= 0.11.1** (pin `>= 0.11.1 and < 1.0.0`): its `up/1` never lowers its marker, which a host's older staff migration file could otherwise do after this chain has run. **`phoenix_kit_ai` is now `~> 0.28`** (was `~> 0.27`).
+- **Schema chain V25 → V30.** V26 a task's deadline, real start and planned times, and a project's link; V27 a task's own files; V28 repeating tasks; V29 several assignees on a task; V30 several assignees on a project, a sub-project and a library task. The `assigned_*` / `default_assigned_*` columns stay as a one-assignee mirror, and `down` refuses while a holder has several.
+- **A task is overdue only by its `deadline`,** no longer by its end date, on the page and in the API's `overdue` and `counts.overdue`. V26 does not backfill deadlines, so a task that read as overdue stops doing so until it is given one.
+- **New tasks start as `waiting`,** a fourth status beside `todo` (shown as "can be started"), `in_progress` and `done`. API clients see it too.
+- **Time on the project as a whole and billable time are switches, off by default** (`project_time`, `billable`). While `project_time` is off, Log time needs a task and `POST /time` without one answers 422 `task_required`. Turn either on for the site on Settings → Project Features, or per project.
+- **API: tasks and projects answer `assignees`,** and `assignee` only while there is exactly one. Writes take either.
+- **A sub-project that finishes by itself releases nothing on its own.** The page that handled the last Done opens "next up" for the rows it unlocks. The API or a job collects nothing, so nothing is released.
+- **The open task in an embed host's address is opt-in:** pass the `"url_param"` session key to name the parameter. Without it the address is left alone. The module's own project page still passes it.
+- **The project page, task form, popups, board and lists are reworked:** compact headers, Save and Close, one assignee picker, shared time and duration inputs, one question per confirm dialog.
+
+### Added
+
+- **Time page** (`projects/time`): per person, for a day or a week, each task's planned span against what really happened, with the late part and the logged time.
+- **Deadlines, real times and a project link:** `deadline`, `started_at`, wall-clock `start_time` / `end_time` on a task, and `external_url` / `external_label` on a project. Calendars show deadlines and planned times.
+- **A task view popup** apart from the edit form, and a **board that takes drops**, re-checked on the server.
+- **Next up:** completing a task asks which tasks it unlocks, who to tell and which to keep idle. "Ready to start" asks the same.
+- **Several assignees** on tasks, projects, sub-projects and library tasks: people, teams and departments, all equal. The picker searches, remembers recent picks, finds a team's and a department's people, and can assign any user by creating their staff record.
+- **Repeating tasks:** a finished one stays done and one new task comes for the next date, from every path that finishes it.
+- **Turning a task into a sub-project and back,** in place. Back to a task needs `:edit_tasks` in both projects.
+- **A task's own files and the Leaf description editor.** Pictures can go into project, sub-project, template and library task descriptions too, and a project can have a cover picture.
+- **The library picker:** search first, then Recent, Often used and A–Z, with several tasks added at once. Suggestions appear while typing a task's title.
+- **The `"embedded"` feature preset,** for a host that keeps a project on a record of its own, with `"ongoing"` and an immediate start in one `create_project/2` call.
+- **Site defaults for project features** on Settings → Project Features, an **All comments** tab, a **Day view** on the Calendar tab, and **what changed, from what to what** in the history.
+- Activity actions: `projects.assignment_made_ready` / `_made_idle`, `projects.assignment_ready`, `projects.assignment_made_subproject` / `_made_task`, `projects.task_file_added` / `_removed`, `projects.feature_default_set`, `projects.staff_person_created`, `projects.project_access_updated`.
+
+### Fixed
+
+- **A fresh install on core 3.x failed in this chain.** Its foreign keys point at staff's and entities' tables, which core no longer creates, so `up/1` now runs their chains first. It also adds document_creator's key to projects when that module installed first, clearing links to projects deleted in the meantime.
+- **A member could change a sub-project's tasks with only the parent's rights.** An expanded sub-project's row is now checked against its own project.
+- **A stale page could overwrite a task's newer status.** Status steps now compare against the row as stored.
+- **Calendars, contributed tabs and language tabs printed English on other pages,** and the Calendar tab's Week and Day opened on the wrong day and at midnight.
+- **The time logs showed an account by its email** when its staff person had a name.
+
 ## 0.32.0 - 2026-10-27
 
 ### Changed
