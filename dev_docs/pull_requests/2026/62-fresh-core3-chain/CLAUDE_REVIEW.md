@@ -46,6 +46,8 @@ tables and the `ALTER` touches neither.
 
 ## Open
 
-**`BeamLabEU/phoenix_kit_staff#24` was still open at this merge.** The PR asks for it to be released first. It does
-not matter yet, since the pinned staff 0.11.0 is at V1, but it must ship before staff ships a V2: a host's older
-staff file running after this chain would otherwise lower staff's marker.
+**`BeamLabEU/phoenix_kit_staff#24` was merged but not released at this merge.** This review first said it was still
+open, which was wrong: that came from a check at 13:44 UTC, it merged at 13:46, and #62 merged at 14:24. The PR asks
+for it to be released first. It did not matter yet, since the pinned staff 0.11.0 is at V1, but a host's older staff
+file running after this chain could lower staff's marker once staff ships a V2. Staff 0.11.1 carries the guard, and
+`mix.exs` now requires it.

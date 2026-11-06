@@ -5,7 +5,8 @@
 - **Fixed, with a test that fails when the fix is reverted:** MEDIUM, the full `down/1`; IMPROVEMENT, the test
   for the staff and entities chains.
 - **Left, recorded:** the two NITPICKs.
-- **Open:** `phoenix_kit_staff#24` must ship before staff ships a V2.
+- **Closed the same day:** `phoenix_kit_staff#24` is in staff 0.11.1, and `mix.exs` now requires it
+  (`>= 0.11.1 and < 1.0.0`), so the next projects release cannot go out ahead of the guard.
 
 ## Gate (this tree, with #61's fixes)
 
