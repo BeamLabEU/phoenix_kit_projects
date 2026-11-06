@@ -134,7 +134,7 @@ defmodule PhoenixKitProjects.MixProject do
       # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
       # The call is unguarded, so `~> 0.1` admitted releases where building an
       # assignee list raises `UndefinedFunctionError`.
-      # Hard dep: this package's own chain (`Migrations.Schema`) creates nine foreign
+      # Hard dep: this package's own chain (`Migrations.Schema`) creates 18 foreign
       # keys into staff's tables, and core no longer creates them, so a host that
       # has projects needs staff's chain run first. `Modules.order_by_dependencies/1`
       # reads this edge to order the module migrations.

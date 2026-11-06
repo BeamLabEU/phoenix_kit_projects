@@ -5,9 +5,10 @@ defmodule PhoenixKitProjects.Schemas.TaskDefaultAssignee do
   and its place among the chips (`position`). Any number of them, all
   equal — the same as a task's (`AssignmentAssignee`, V29).
 
-  Written only through `Task.changeset/2` (the `"assignees"` param, or the old
-  single-assignee fields), which keeps the holder's own columns as the
-  one-assignee mirror. Read through `PhoenixKitProjects.AssigneeSet`.
+  Written only through `PhoenixKitProjects.Schemas.Task.changeset/2` (the
+  `"assignees"` param, or the old single-assignee fields), which keeps the
+  holder's own columns as the one-assignee mirror. Read through
+  `PhoenixKitProjects.AssigneeSet`.
   """
 
   use Ecto.Schema

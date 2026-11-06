@@ -167,7 +167,7 @@ defmodule PhoenixKitProjects do
 
   @doc """
   The manifest of this module's tables, for `mix phoenix_kit.repair` and
-  `mix phoenix_kit.doctor`; see `PhoenixKitProjects.ExpectedSchema`.
+  `mix phoenix_kit.doctor`.
   """
   @impl PhoenixKit.Module
   def expected_schema, do: PhoenixKitProjects.ExpectedSchema

@@ -52,6 +52,6 @@ defmodule PhoenixKitProjects.Extensions.ApiProvider do
   @callback create(ctx(), attrs :: map()) :: {:ok, map()} | {:ok, map(), pos_integer()} | error()
   @callback update(ctx(), id :: String.t(), attrs :: map()) :: {:ok, map()} | error()
 
-  @doc "Endpoint rows for the docs (see `PhoenixKitProjects.Web.Api.Docs.endpoint/0`)."
+  @doc "Endpoint rows for the docs (see `PhoenixKitProjects.Web.Api.Docs.endpoints/0`)."
   @callback docs() :: [map()]
 end
