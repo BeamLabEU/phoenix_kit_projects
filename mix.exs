@@ -111,58 +111,24 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      # 1.7.231 is the core floor: that is the release shipping
-      # `PhoenixKitWeb.Live.UrlState`, which `ProjectsLive`, `TasksLive` and
-      # `TemplatesLive` all `use` — including the `mode: :history` option they
-      # depend on to stay embeddable, which landed in the same release. It
-      # supersedes the earlier floors, which it still satisfies —
-      # V125/V127/V128 for the workflow-status schema and the project-assignee
-      # columns, 1.7.184 for the `disabled` / `wrapper_class` / `title` /
-      # `:description` attrs on `PhoenixKitWeb.Components.Core.Checkbox`, and
-      # 1.7.189 for `PhoenixKit.SchemaPrefix`, which every table-backed schema
-      # in this module applies.
+      # 3.3.0 is the floor: the release this package is built and tested against,
+      # and the first on Hex since 3.0.0 (3.0.1 to 3.2.6 were never published).
+      # `Web.Helpers.assign_embed_user/2` and the notification fan-outs call core
+      # directly, with no fallback for an older one.
       #
-      # Bounded with a TWO-segment `~>` on purpose: `>= 2.0.0 and < 4.0.0`.
-      # Core majors are not assumed compatible, but core MINORS must be — a
-      # requirement that excludes one breaks `mix deps.get` outright for every
-      # host running this module beside a newer core, and the breakage lands
-      # only on consumers. `core_pin_conformance_test.exs` guards this; it is
-      # the reason a real floor is documented here rather than encoded.
-      #
-      # The floor is 2.43.0: the list and form LiveViews use `form_actions`'
-      # `submit_disabled`, `bulk_actions_toolbar`'s `:primary` slot and
-      # `form_section`'s `:actions` slot, first published in 2.43.0 (an older
-      # core only warns at compile time and the page silently drops the
-      # control; `core_ui_api_conformance_test.exs` guards it). 2.49.0 is the
-      # floor now: the project Activity page is drawn by core's
-      # `activity_list/1`, first shipped there. Before that it was 2.43.0, and
-      # before that 2.38.0: project files live on core's
-      # `Storage.ResourceFolders`, the reorganizer on its `ResourceSource`,
-      # the actor and activity log come from `PhoenixKitWeb.Actor` and
-      # `Activity.log/3`, file helpers from `Utils.Format`, and the edit forms
-      # use `mount_multilang(open_on:)` — all first shipped there, none
-      # feature-detected, so a lower core fails to compile. Earlier floors it
-      # supersedes: 2.14.2 (core V183 annotation anchors, `<.modal>`'s
-      # `placement` / `close_guard`, `<.nav_tabs>`' `:trailing` slot),
-      # 1.7.231 for `PhoenixKitWeb.Live.UrlState`, 1.7.189 for
-      # `PhoenixKit.SchemaPrefix`, and V125/V127/V128 for the workflow-status
-      # and project-assignee columns. Patch-precise floor in the compound
-      # form, so the ceiling stays open through every later 2.x minor (see
-      # test/core_pin_conformance_test.exs).
-      #
-      # 2.64.0 for `Storage.direct_urls/1` (the Files page's links in a
-      # fixed number of reads); 2.63.0 before, for `search_picker`'s `chosen`
-      # state on the Hours page; 2.54.0 before that, for `<.table_default
-      # fit>` with the header cells' `priority` / `lead`; 2.49.0 before that.
-      # Floor 2.65.0: the first core with the `file_references/0` and `expected_schema/0`
-      # callbacks this module implements (`@impl`). The ceiling is open through core 3.x.
-      pk_dep(:phoenix_kit, ">= 2.65.0 and < 4.0.0"),
+      # The compound form is on purpose. Core MINORS must stay admitted: a
+      # requirement that excludes one, as a three-segment `~>` does, breaks
+      # `mix deps.get` for every host running this module beside that core, and
+      # the breakage lands only on consumers. Core majors are not assumed
+      # compatible. `core_pin_conformance_test.exs` guards this, and
+      # `core_ui_api_conformance_test.exs` the core attrs and slots the pages use.
+      pk_dep(:phoenix_kit, ">= 3.3.0 and < 4.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move
       # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
       # 0.3.0 predates it and won't compile against this module.
-      pk_dep(:phoenix_kit_ai, "~> 0.27"),
+      pk_dep(:phoenix_kit_ai, "~> 0.28"),
       # 0.3 is the floor: `Assignees` calls
       # `PhoenixKitStaff.Schemas.Person.display_name/1`, which staff first
       # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
@@ -175,7 +141,12 @@ defmodule PhoenixKitProjects.MixProject do
       #
       # The 0.3 floor above still applies: making a dependency hard does not make
       # an older release safe.
-      pk_dep(:phoenix_kit_staff, "~> 0.11"),
+      #
+      # 0.11.1 is the floor: `Migrations.Schema` runs staff's chain before its own,
+      # so on a fresh install a host's older staff migration file runs after it,
+      # and before 0.11.1 that file could lower the marker. Compound form, because
+      # `~> 0.11.1` would also lower the ceiling to `< 0.12.0`.
+      pk_dep(:phoenix_kit_staff, ">= 0.11.1 and < 1.0.0"),
       # 0.2.6 is the floor: `ProjectShowLive` does `use
       # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
       # admitted 0.2.0–0.2.5, where that `use` site fails to compile.

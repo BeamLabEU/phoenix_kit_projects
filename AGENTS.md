@@ -11,19 +11,18 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 2.64.0 and < 3.0.0` (Hex — the release
-  that carries `Storage.direct_urls/1`, on top of `search_picker`'s `chosen`
-  state, `<.table_default fit>`'s column fitting, `activity_list/1`, `Storage.ResourceFolders`,
-  `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
-  `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
-  the LiveViews use; the compound form keeps the ceiling open across later 2.x
-  minors and `core_pin_conformance_test.exs` guards it),
-  `phoenix_kit_ai` `~> 0.18` (hard — the AI-translation pipeline),
-  `phoenix_kit_comments` `~> 0.3` (hard — `ProjectShowLive` does
-  `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `~> 0.8` (hard since the module-table-ownership
+- **Depends on:** `phoenix_kit` `>= 3.3.0 and < 4.0.0` (Hex — the release this
+  package is built and tested against, and the first on Hex since 3.0.0, which
+  stopped creating the module tables; the compound form keeps the ceiling open
+  across later 3.x minors and `core_pin_conformance_test.exs` guards it),
+  `phoenix_kit_ai` `~> 0.28` (hard — the AI-translation pipeline),
+  `phoenix_kit_comments` `~> 0.5` (hard — `ProjectShowLive` does
+  `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `>= 0.11.1 and < 1.0.0` (hard since the module-table-ownership
   work — this chain's foreign keys point at staff's tables, so staff's chain
-  must run first; code still reads staff data only through
-  `PhoenixKitProjects.People`), `phoenix_kit_entities` `~> 0.3` (hard for the
+  must run first; 0.11.1 is the release whose `up/1` never lowers its marker,
+  which a host's older staff migration file would otherwise do after this
+  chain has run; code still reads staff data only through
+  `PhoenixKitProjects.People`), `phoenix_kit_entities` `~> 0.7` (hard for the
   same reason — the workflow-status catalog; `Statuses.available?/0` still
   gates every call), plus `phoenix_live_gantt` `~> 0.4`
   (Timeline) and `phoenix_live_calendar` `~> 0.3` (Calendar).
@@ -72,8 +71,8 @@ portal), dashboard widgets and a public issue portal.
   `:not_found` / `:template_not_found` / `:task_not_found` plus a generic
   fallback. Add a branch when a context function introduces a new
   `{:error, atom}` shape.
-- **No direct `PhoenixKitStaff.*` calls** — staff is optional; the People
-  doorway is the only sanctioned path (see Conventions).
+- **No direct `PhoenixKitStaff.*` calls** — the People doorway is the only
+  sanctioned path (see Conventions).
 - **No plain-POST fallback for the public portal** — `/portal/:slug/report` is
   a `live` route, so submitting needs JS. A real no-JS fallback means a
   controller action doing its own honeypot / fill-time / rate-limit pass, i.e.
@@ -208,8 +207,8 @@ Repo-local aliases:
   trashed (`AssigneePicker.vet_posted/2`) — a `kind:uuid` naming nobody
   otherwise fails on a foreign key inside the save.
 - **Cross-module people lookups**: NEVER call `PhoenixKitStaff.*` directly
-  (staff is optional) — go through `PhoenixKitProjects.People`, read-only
-  shadow schemas over the CORE-owned staff tables, trashed-excluded by default,
+  — go through `PhoenixKitProjects.People`, read-only shadow schemas over
+  staff's tables, trashed-excluded by default,
   staff-parity label semantics. The doorway's reads rescue to safe defaults;
   the sanctioned staff references are its guarded `apply/3` probes —
   `People.staff_admin_available?/0` (gates admin-UI affordances only),
@@ -477,7 +476,7 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.TaskDefaultAssignee` | `phoenix_kit_project_task_assignees` (V30 — a library task's default assignees; written only through `Task.changeset/2`, under the task row's lock) |
 | (no schema module) | `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
-| `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
+| `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over staff's tables) |
 
 UUIDv7 PKs except the registry's string `key`; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
 (`schema_prefix_conformance_test.exs` pins it).
@@ -728,13 +727,15 @@ in hosts by comparing `current_version/0` against
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on
 `Schema.current_version()` so a chain bump re-runs automatically.
 
-The chain is **adoptive**. The project tables were historically created by
-core's chain, which stays authoritative for installs migrating through it —
-**this chain requires core ≥ V128** and takes over from that composed shape:
+The chain is **adoptive**. Core's chain created the project tables through
+2.x; since 3.0 no core version creates or changes them. An install that came
+through 2.x keeps those tables and this chain takes over from that composed
+shape (core's own rule: a host below core V225 passes through 2.65.0 first); on
+a fresh install this chain builds them:
 
 - **V1 is a baseline**: an idempotent (`IF NOT EXISTS`) restatement of the
-  exact table shape core's chain produces. On a core-migrated install every
-  statement no-ops and the marker is simply stamped.
+  exact table shape core's chain produced. On an install that came through 2.x
+  every statement no-ops and the marker is simply stamped.
   `migrated_version_runtime/1` treats a marker-less-but-present
   `phoenix_kit_projects` table as already at V1, so existing installs never
   regenerate a pointless migration. **Never edit V1** — a shape change is V2+,
@@ -1857,15 +1858,6 @@ reference:
 
 ## TODOs
 
-- **Drop the embed-user core-helper fallback.** `Web.Helpers.assign_embed_user/2`
-  delegates to core's `PhoenixKitWeb.Users.Auth.assign_embedded_current_user/2`
-  only when the running `phoenix_kit` exports it (a `function_exported?`/`apply`
-  forward-compat guard), and otherwise falls back to a local copy
-  (`local_assign_embed_user/2` + `resolve_embed_identity/1`) so a Hex-pinned
-  build stays green against older cores. The two paths are behaviourally
-  identical. **Trigger:** once the `phoenix_kit` floor in `mix.exs` includes the
-  release shipping `assign_embedded_current_user/2`, remove the guard, the
-  fallback and `resolve_embed_identity/1`, and call the core helper directly.
 - **Per-task "count as work hours" toggle + per-user work schedule.** The
   planned replacement for `planned_end_for/2`'s weekday-only approximation;
   design, migration scope and out-of-scope list are in

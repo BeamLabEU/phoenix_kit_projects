@@ -21,7 +21,6 @@ defmodule PhoenixKitProjects.FileReferencesTest do
   alias PhoenixKitProjects.Test.Repo
 
   @moduletag :integration
-  @moduletag :requires_core_file_references
 
   @tables [
     "phoenix_kit_project_assignment_files",

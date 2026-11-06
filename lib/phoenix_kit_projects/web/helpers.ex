@@ -31,8 +31,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
   See `dev_docs/embedding_emit.md` for the full contract.
   """
 
-  alias PhoenixKit.Users.Auth
-  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
 
   require Logger
@@ -683,26 +681,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
   @spec assign_embed_user(Phoenix.LiveView.Socket.t(), map()) ::
           Phoenix.LiveView.Socket.t()
   def assign_embed_user(socket, session) when is_map(session) do
-    # Prefer core's canonical implementation when the running phoenix_kit
-    # exposes it (the release that promoted this helper into
-    # `PhoenixKitWeb.Users.Auth`); fall back to the local copy against older
-    # cores so the Hex-pinned build stays green. `apply/3` (not a direct
-    # call) keeps compilation warning-free against a core that lacks the
-    # function. The two are behaviourally identical — drop the fallback
-    # (and `resolve_embed_identity/1`) once the `phoenix_kit` floor includes
-    # the core helper.
-    socket =
-      if function_exported?(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, 2) do
-        # `apply/3` is intentional here (see above): a direct call would emit an
-        # `unknown_function` warning — fatal under `--warnings-as-errors` — when
-        # compiled against an older core that lacks this helper.
-        # credo:disable-for-next-line Credo.Check.Refactor.Apply
-        apply(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, [socket, session])
-      else
-        local_assign_embed_user(socket, session)
-      end
-
-    declare_ref_writer(socket)
+    socket
+    |> PhoenixKitWeb.Users.Auth.assign_embedded_current_user(session)
+    |> declare_ref_writer()
   end
 
   def assign_embed_user(socket, _session), do: declare_ref_writer(socket)
@@ -737,56 +718,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
     PhoenixKitProjects.Actor.put(PhoenixKitProjects.Activity.actor_uuid(socket))
     socket
   end
-
-  defp local_assign_embed_user(socket, session) do
-    # A non-nil scope means the on_mount hook already ran (router mount).
-    # on_mount runs before mount/3, so an embedded mount — which skips the
-    # live_session entirely — always sees nil here. Don't clobber a real
-    # scope with a reconstructed one.
-    if is_nil(socket.assigns[:phoenix_kit_current_scope]) do
-      {user, scope} = resolve_embed_identity(Map.get(session, "current_user_uuid"))
-
-      Phoenix.Component.assign(socket,
-        phoenix_kit_current_user: user,
-        phoenix_kit_current_scope: scope
-      )
-    else
-      socket
-    end
-  end
-
-  # Loads the user behind the host-supplied uuid and pairs it with a scope.
-  # `get_user/1` is nil-safe (validates the uuid shape, returns nil on a
-  # miss); `ensure_active_user/1` drops a deactivated user so a revoked
-  # account can't act through an embed. The DB-error rescue mirrors the
-  # module-wide convention (see the cross-module staff-lookup rule in
-  # AGENTS.md) so a transient DB blip degrades to anonymous instead of
-  # 500-ing the host page.
-  defp resolve_embed_identity(uuid) when is_binary(uuid) and uuid != "" do
-    user =
-      uuid
-      |> Auth.get_user()
-      |> Auth.ensure_active_user()
-
-    if is_nil(user) do
-      Logger.warning(
-        "[phoenix_kit_projects] embed session current_user_uuid=#{inspect(uuid)} " <>
-          "did not resolve to an active user — embedded UI degrades to anonymous"
-      )
-    end
-
-    {user, Scope.for_user(user)}
-  rescue
-    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
-      Logger.warning(
-        "[phoenix_kit_projects] failed to load embed user #{inspect(uuid)}: " <>
-          Exception.message(e) <> " — degrading to anonymous"
-      )
-
-      {nil, Scope.for_user(nil)}
-  end
-
-  defp resolve_embed_identity(_), do: {nil, Scope.for_user(nil)}
 
   @doc """
   Routes per `:embed_mode`. In navigate mode: `push_navigate(to: opts[:to])`.

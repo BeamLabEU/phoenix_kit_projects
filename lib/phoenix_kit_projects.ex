@@ -191,10 +191,7 @@ defmodule PhoenixKitProjects do
 
   @impl PhoenixKit.Module
   # Lifecycle hook: core calls this BEFORE a user row deletes, while
-  # memberships still exist. RELEASE-GATED: the callback ships in an
-  # unreleased core, so the Hex-pin build won't compile until that
-  # release — gates run via PHOENIX_KIT_PATH (the admin-ui-overhaul
-  # precedent). Sole-owner departures get succession or an
+  # memberships still exist. Sole-owner departures get succession or an
   # orphan-warning audit row.
   def before_user_delete(user_uuid) do
     PhoenixKitProjects.Members.handle_user_deletion(user_uuid)

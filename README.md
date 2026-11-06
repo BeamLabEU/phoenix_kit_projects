@@ -28,16 +28,14 @@ A [PhoenixKit](https://github.com/BeamLabEU/phoenix_kit) plugin for **project + 
 Add to your parent PhoenixKit app's `mix.exs`:
 
 ```elixir
-{:phoenix_kit_projects, "~> 0.21"},
-# Optional — the people admin UI (assignee data works without it):
-{:phoenix_kit_staff, "~> 0.1"}
+{:phoenix_kit_projects, "~> 0.32"}
 ```
 
 (For local development inside the PhoenixKit workspace, use the path-dep form instead: `{:phoenix_kit_projects, path: "../phoenix_kit_projects"}`.)
 
-`phoenix_kit_staff` and `phoenix_kit_entities` are required: this module's migrations reference their tables, so their migrations run first. This module maps its own read-only shadow schemas over staff's tables for the polymorphic assignee.
+`phoenix_kit_staff` and `phoenix_kit_entities` come with it as dependencies: this module's migrations reference their tables, so their migrations run first. This module maps its own read-only shadow schemas over staff's tables for the polymorphic assignee.
 
-Also add the apps to `extra_applications` so `PhoenixKit.ModuleDiscovery` finds them (include `:phoenix_kit_staff` only if you installed it):
+Also add the apps to `extra_applications` so `PhoenixKit.ModuleDiscovery` finds them:
 
 ```elixir
 def application do
@@ -49,7 +47,7 @@ Run `mix deps.get`, then toggle the module on from **Admin > Modules**.
 
 ## Database
 
-Tables are created by the **V101** versioned migration inside `phoenix_kit` core. V101 depends on V100 (staff tables). Run via `mix phoenix_kit.install` / `mix phoenix_kit.update` in the parent app.
+Tables are created by this module's own versioned chain, `PhoenixKitProjects.Migrations.Schema`, which runs staff's and entities' chains first. Run via `mix phoenix_kit.install` / `mix phoenix_kit.update` in the parent app.
 
 Tables created:
 

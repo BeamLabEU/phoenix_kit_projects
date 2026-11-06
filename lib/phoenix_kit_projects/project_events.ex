@@ -133,20 +133,14 @@ defmodule PhoenixKitProjects.ProjectEvents do
   # rules (Max's call: events notify all members). Core's
   # fan_out_from_activity/2 re-routes the committed entry per recipient
   # (prefs, channels, digests, actor self-skip) without extra feed rows.
-  # `apply/3` + function_exported?: the fan-out ships in an unreleased
-  # core — against the Hex pin this is a clean no-op until the release
-  # (the release-gating convention); the path-dep build runs it live.
   defp notify_members({:ok, entry}, project_uuid) do
-    if function_exported?(PhoenixKit.Notifications, :fan_out_from_activity, 2) do
-      recipients =
-        project_uuid
-        |> Members.list_members()
-        |> Enum.map(& &1.user_uuid)
+    recipients =
+      project_uuid
+      |> Members.list_members()
+      |> Enum.map(& &1.user_uuid)
 
-      if recipients != [] do
-        # credo:disable-for-next-line Credo.Check.Refactor.Apply
-        apply(PhoenixKit.Notifications, :fan_out_from_activity, [entry, recipients])
-      end
+    if recipients != [] do
+      PhoenixKit.Notifications.fan_out_from_activity(entry, recipients)
     end
 
     :ok

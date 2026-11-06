@@ -1607,15 +1607,12 @@ defmodule PhoenixKitProjects.Portal do
   end
 
   # The Phase H fan-out: one committed activity entry re-routed to every
-  # member's notification rules. Release-gated like project_events.
+  # member's notification rules.
   defp notify_members({:ok, entry}, project_uuid) do
-    if function_exported?(PhoenixKit.Notifications, :fan_out_from_activity, 2) do
-      recipients = project_uuid |> Members.list_members() |> Enum.map(& &1.user_uuid)
+    recipients = project_uuid |> Members.list_members() |> Enum.map(& &1.user_uuid)
 
-      if recipients != [] do
-        # credo:disable-for-next-line Credo.Check.Refactor.Apply
-        apply(PhoenixKit.Notifications, :fan_out_from_activity, [entry, recipients])
-      end
+    if recipients != [] do
+      PhoenixKit.Notifications.fan_out_from_activity(entry, recipients)
     end
 
     :ok

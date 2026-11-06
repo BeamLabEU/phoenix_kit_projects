@@ -5,15 +5,14 @@ defmodule PhoenixKitProjects.People do
 
   ## Why shadow schemas, not a bridge
 
-  The staff DB tables are created by CORE's migrations (V100), not by the
-  `phoenix_kit_staff` package — staff ships no migrations; it is the
-  admin UI + context over core-owned tables. So the tables (and projects'
-  SQL FKs to them) exist on every install, and projects can keep its
-  `belongs_to` graph, preloads, authz relationship grants, and direct
-  assignee queries by mapping its OWN minimal read-only schemas
+  The staff DB tables belong to the `phoenix_kit_staff` package's own chain
+  (core 3.x creates none of them), and this module's chain runs it first,
+  because its SQL FKs point at them. So the tables exist wherever this
+  module is installed, and projects can keep its `belongs_to` graph,
+  preloads, authz relationship grants, and direct assignee queries by
+  mapping its OWN minimal read-only schemas
   (`PhoenixKitProjects.People.{Person,Team,Department,TeamMembership}`)
-  over those tables. The staff PACKAGE is optional: it is the people
-  ADMIN surface, not the data's owner.
+  over those tables, reading them without going through staff's code.
 
   ## Rules
 
