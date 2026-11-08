@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.34.0 - 2026-11-08
+
+A whole-module audit and its fixes
+(`dev_docs/pull_requests/2026/2026-11-08-full-audit/`).
+
+No new chain version, so `mix phoenix_kit.update` has nothing to apply. The
+chain's V12, V14 and V21 steps were made safe to replay, which the next chain
+bump will do (see "Fixed").
+
+### Changed
+
+- **An "everyone" project opens only to people who can enter Projects** (the base `projects` key or `"*"`), as its access panel always said. Before, any signed-in account could open it from the user dashboard and, under the open default floors, edit its tasks. Members and group grants need no module key, as before. `Authz.module_reacher?/1` is the check.
+- **The JSON API and the public portal close while the module is switched off:** every API call answers 503 `module_disabled`; a portal link resolves to nothing.
+- **API:** an `Idempotency-Key` that is sent but cannot be kept (empty, over 128 bytes, sent twice) is a 422 `idempotency_key_invalid`, never a run without one. A note's `usage.minutes` needs `time:write` as well as `usage:write`, and on a project note the `project_time` flag. An invoiced ledger entry is never amended or removed (409 `invoiced_entry`). Comment and note authors are named, never by their email address. The error table in `llms.txt` lists every code the API sends.
+- **The site's project order is an administrator's** (`projects.admin_all`): reordering projects, and reordering or dragging one-off tasks, is refused for anyone else. "Reorder all" on the task library reorders the list on screen, never the other lens with it.
+- **Deleting a task with a sub-project under it is refused** ("Move it out or delete it on its own first"); a sub-project's own row still deletes it, with its own question.
+- **The project's "who may comment" floor applies on the web,** as it did on the API: below it, the comment threads are read-only.
+- **Ending or reopening ongoing work** from the project form logs `projects.project_completed` / `projects.project_reopened`, which History tells.
+- **Requires nothing new;** the lock moves to `phoenix_kit` 3.4.0, `phoenix_kit_ai` 0.29.1 and `phoenix_kit_staff` 0.11.2, all inside the existing requirements.
+
+### Fixed
+
+- **The migration chain holds on replay.** V14 re-added its `review_status` check without V23's `removed` (failing the upgrade on any install holding a removed task) and re-ran its backfill (sending accepted portal requests back to review). V12 and V21 found their constraints by name or `current_schema()`, which broke on a named-schema install.
+- **Access:** a revoked API-keys right stopped working only on reload; a shared embed topic opened one viewer's drawer on every viewer's page; "Make standalone" skipped the move's owner check; the Hours tab showed any task's title by its ref; the Overview tiles and the Workload widget counted the whole site; the forms posted server-owned fields (a template could be turned into a project); the task form prefilled from any posted task; the Events and Whiteboards tabs kept their write right from their first mount; the portal's `@` typeahead revealed commenters' emails; a `javascript:` link could reach the description editor.
+- **Data:** an estimate of "1.5 hours" saved as 2 minutes; a project made from a template shared its one-off tasks with the template; saving a project's health could undo a newer visibility or permission change; adding a task with its library dependencies could crash on a repeated edge; the project-row lock could deadlock with task numbering; two last ticks at once completed a project twice; a second Start moved the start date; the nesting limit could be passed; the typed list deleted tasks holding files; invoice drafts could bill twice and their totals did not add up; the progress slider changed status past the step rules; a note's ledger broadcast went out before its commit; a failed read of a one-time flag could re-grant revoked sub-keys.
+- **Pages:** portal screenshots picked with the file dialog were dropped; deleting a sub-project threw its parent's page out; the deadline popover closed under typing; the Events tab had two month navigators; the Tasks page without `manage_library` had no search, lens or Columns; unknown events crashed several pages.
+- **Words:** save errors read as translated sentences with field names, never as `%{count}` templates; counts use plural forms; translation corrections in all seven languages; widgets and the member dashboard show names in the reader's language; notices name tasks and projects in the reader's language.
+
 ## 0.33.1 - 2026-11-06
 
 No migration.
