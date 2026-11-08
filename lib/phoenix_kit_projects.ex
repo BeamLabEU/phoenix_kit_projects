@@ -353,16 +353,42 @@ defmodule PhoenixKitProjects do
   # role granted `projects` later gets the narrow meaning. `:grant` and
   # `:holders` are parameters only so a test can make either fail.
   def backfill_sub_keys(flag, keys, opts \\ []) do
-    if Settings.get_setting(flag) == "true" do
-      :ok
-    else
-      grant = Keyword.get(opts, :grant, &Permissions.grant_permission/3)
-      holders = Keyword.get(opts, :holders, &role_uuids_holding/1)
+    case Keyword.get(opts, :flag_set?, &backfill_done?/1).(flag) do
+      true ->
+        :ok
 
-      with {:ok, base, held} <- read_holders(holders, keys) do
-        grant_missing(flag, keys, base, held, grant)
-      end
+      false ->
+        grant = Keyword.get(opts, :grant, &Permissions.grant_permission/3)
+        holders = Keyword.get(opts, :holders, &role_uuids_holding/1)
+
+        with {:ok, base, held} <- read_holders(holders, keys) do
+          grant_missing(flag, keys, base, held, grant)
+        end
+
+      :unreadable ->
+        {:error, :flag_unreadable}
     end
+  end
+
+  # The one-time flag, read with a query of our own: core's `get_setting/1`
+  # rescues a failed read to nil, which here reads as "never ran" — and a
+  # boot whose one read hiccupped would hand back every sub-key an Owner had
+  # revoked since. A failed read is `:unreadable`: nothing is granted.
+  defp backfill_done?(flag) do
+    value =
+      RepoHelper.repo().one(
+        from(s in PhoenixKit.Settings.Setting, where: s.key == ^flag, select: s.value)
+      )
+
+    value == "true"
+  rescue
+    error ->
+      Logger.warning(
+        "[PhoenixKitProjects] permission backfill could not read #{flag}, will retry next boot: " <>
+          Exception.message(error)
+      )
+
+      :unreadable
   end
 
   defp read_holders(holders, keys) do
@@ -390,8 +416,20 @@ defmodule PhoenixKitProjects do
       end
 
     if failures == [] do
-      Settings.update_setting_with_module(flag, "true", module_key())
-      :ok
+      # A flag that did not save leaves the backfill to run again next boot,
+      # where the grants it finds already held are skipped: said, not hidden.
+      case Settings.update_setting_with_module(flag, "true", module_key()) do
+        {:ok, _} ->
+          :ok
+
+        other ->
+          Logger.warning(
+            "[PhoenixKitProjects] #{flag} granted but not recorded, will check again next boot: " <>
+              inspect(other)
+          )
+
+          {:error, :flag_not_saved}
+      end
     else
       Logger.warning(
         "[PhoenixKitProjects] #{flag} incomplete, will retry next boot: " <> inspect(failures)
@@ -1006,7 +1044,7 @@ defmodule PhoenixKitProjects do
       # its first child.
       %Tab{
         id: :admin_projects_api_keys,
-        label: "API keys",
+        label: gettext_noop("API keys"),
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
         icon: "hero-key",
@@ -1411,7 +1449,7 @@ defmodule PhoenixKitProjects do
       },
       %Tab{
         id: :admin_projects_assignment_edit,
-        label: "Edit Assignment",
+        label: "Edit Task",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
         path: "projects/:project_id/assignments/:id/edit",

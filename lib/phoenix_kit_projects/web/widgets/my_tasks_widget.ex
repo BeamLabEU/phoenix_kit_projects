@@ -106,7 +106,7 @@ defmodule PhoenixKitProjects.Web.Widgets.MyTasksWidget do
                 class="pk-slot-meta truncate leading-tight text-base-content/50"
                 style={fit_text(9, "24cqh", 12)}
               >
-                {a.project.name}
+                {project_name(a.project)}
               </p>
             </div>
             <span
@@ -126,7 +126,7 @@ defmodule PhoenixKitProjects.Web.Widgets.MyTasksWidget do
   end
 
   # A subtask on a plate names the task it sits under: "Kitchen / Order tiles".
-  defp task_label(%Assignment{} = a), do: Assignment.label_under(a) || gettext("Untitled task")
+  defp task_label(%Assignment{} = a), do: task_name(a) || gettext("Untitled task")
 
   defp dot_class("in_progress"), do: "bg-warning"
   defp dot_class("done"), do: "bg-success"

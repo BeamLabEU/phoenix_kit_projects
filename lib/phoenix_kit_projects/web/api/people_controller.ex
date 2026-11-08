@@ -19,7 +19,11 @@ defmodule PhoenixKitProjects.Web.Api.PeopleController do
          {:ok, conn} <- Json.require_scope(conn, "people:read"),
          {:ok, conn} <- Json.require_feature(conn, :assignees),
          {:ok, conn} <- Json.require_action(conn, :view) do
-      q = params["q"] |> to_string() |> String.trim() |> String.downcase()
+      # Only a string is a search (`?q[x]=1` is a map, which `to_string/1`
+      # raised on — a 500).
+      q =
+        if is_binary(params["q"]), do: params["q"] |> String.trim() |> String.downcase(), else: ""
+
       me = Assignee.person_uuid(conn.assigns.pk_api_key)
 
       people =

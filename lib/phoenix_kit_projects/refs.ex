@@ -6,7 +6,7 @@ defmodule PhoenixKitProjects.Refs do
 
   The uuid stays the identity of every row and stays valid everywhere; a
   ref is a locator on top of it. A project's key can be renamed (the old
-  one keeps resolving, see `Projects.project_by_ref/1`), so anything that
+  one keeps resolving, see `Projects.project_by_key/1`), so anything that
   STORES a pointer stores the uuid and shows the ref.
 
   Designed with a four-seat panel (codex, grok, zai, gemini, 2026-10-10),

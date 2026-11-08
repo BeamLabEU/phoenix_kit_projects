@@ -32,6 +32,7 @@ defmodule PhoenixKitProjects.Web.TimeLive do
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   import PhoenixKitProjects.Web.Components.TimeInput, only: [datetime_input: 1]
+  import PhoenixKitWeb.Components.Core.DateNav, only: [date_nav: 1]
 
   @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
   # Lines shown per row before "+N more".
@@ -206,6 +207,9 @@ defmodule PhoenixKitProjects.Web.TimeLive do
   # ── Events ──────────────────────────────────────────────────────
 
   @impl true
+  def handle_event("set_view", %{"tab" => v}, socket) when v in ["day", "week"],
+    do: handle_event("set_view", %{"view" => v}, socket)
+
   def handle_event("set_view", %{"view" => v}, socket) when v in ["day", "week"] do
     {:noreply, socket |> assign(view: String.to_existing_atom(v)) |> reset_ui() |> load()}
   end
@@ -339,69 +343,47 @@ defmodule PhoenixKitProjects.Web.TimeLive do
             <h2 class="card-title text-lg shrink-0">
               <.icon name="hero-calendar-days" class="w-5 h-5 text-primary" /> {gettext("Time")}
             </h2>
-            <div role="tablist" class="join">
-              <button
-                :for={{v, label} <- [{"day", gettext("Day")}, {"week", gettext("Week")}]}
-                type="button"
-                role="tab"
-                aria-selected={to_string(Atom.to_string(@view) == v)}
-                phx-click="set_view"
-                phx-value-view={v}
-                class={["btn btn-sm join-item", Atom.to_string(@view) == v && "btn-active"]}
-              >
-                {label}
-              </button>
-            </div>
-            <div class="join">
-              <button
-                type="button"
-                class="btn btn-sm join-item"
-                phx-click="step"
-                phx-value-dir="prev"
-                aria-label={gettext("Previous")}
-              >
-                <.icon name="hero-chevron-left" class="w-4 h-4" />
-              </button>
-              <button type="button" class="btn btn-sm join-item" phx-click="today">
-                {gettext("Today")}
-              </button>
-              <button
-                type="button"
-                class="btn btn-sm join-item"
-                phx-click="step"
-                phx-value-dir="next"
-                aria-label={gettext("Next")}
-              >
-                <.icon name="hero-chevron-right" class="w-4 h-4" />
-              </button>
-            </div>
-            <form id="time-date-form" phx-change="pick_date">
-              <input
-                type="date"
-                name="date"
-                value={Date.to_iso8601(@date)}
-                class="input input-sm"
-                aria-label={gettext("Date")}
-              />
-            </form>
-            <span class="font-semibold">{range_label(@view, @from, @to)}</span>
+            <.nav_tabs
+              active_tab={Atom.to_string(@view)}
+              on_change="set_view"
+              variant={:boxed}
+              class="tabs-sm"
+              tabs={[%{id: "day", label: gettext("Day")}, %{id: "week", label: gettext("Week")}]}
+            />
+            <%!-- Core's date navigator: arrows, the way back to today and the
+                 picker, a week at a time in the week view. --%>
+            <.date_nav
+              id="time-date-nav"
+              date={@date}
+              today={L10n.local_date(DateTime.utc_now())}
+              step={if @view == :week, do: 7, else: 1}
+              label={if @view == :week, do: range_label(@view, @from, @to)}
+              today_label={if @view == :week, do: gettext("This week")}
+              picker={@view == :day}
+              event="pick_date"
+              pick_event="pick_date"
+            />
+            <span :if={@view == :day} class="font-semibold">{range_label(@view, @from, @to)}</span>
             <div class="flex flex-wrap items-center gap-3 ml-auto">
-              <label :if={@view == :day} class="label cursor-pointer gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  class="toggle toggle-sm"
-                  checked={@full_day?}
-                  phx-click="toggle_full_day"
-                />
-                {gettext("Full 24 h")}
-              </label>
+              <.checkbox
+                :if={@view == :day}
+                id="time-full-day"
+                name="full_day"
+                variant="toggle"
+                checked={@full_day?}
+                label={gettext("Full 24 h")}
+                class="toggle-sm"
+                phx-click="toggle_full_day"
+              />
               <form :if={@project_options != []} id="time-project-form" phx-change="filter_project">
-                <select name="project" class="select select-sm" aria-label={gettext("Project")}>
-                  <option value="">{gettext("All projects")}</option>
-                  <option :for={{name, uuid} <- @project_options} value={uuid} selected={uuid == @project_filter}>
-                    {name}
-                  </option>
-                </select>
+                <.select
+                  name="project"
+                  value={@project_filter || ""}
+                  prompt={gettext("All projects")}
+                  options={@project_options}
+                  class="select-sm"
+                  aria-label={gettext("Project")}
+                />
               </form>
             </div>
           </div>

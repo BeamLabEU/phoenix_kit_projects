@@ -68,6 +68,22 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
     assert {:error, :not_found} = Attachments.remove_task_file(ctx.a, file.uuid, ctx.me)
   end
 
+  test "a task with files of its own counts as carrying something", ctx do
+    # The typed list deletes a plain one-off line outright, and holds one
+    # that carries something; deleting it would take its files' links along.
+    refute Map.has_key?(PhoenixKitProjects.Outline.carrying([ctx.a.uuid]), ctx.a.uuid)
+
+    {:ok, _} =
+      Attachments.store_task_file(
+        ctx.a,
+        tmp("photo #{System.unique_integer()}"),
+        [filename: "photo.txt", content_type: "text/plain", size_bytes: 6],
+        ctx.me
+      )
+
+    assert PhoenixKitProjects.Outline.carrying([ctx.a.uuid]) == %{ctx.a.uuid => true}
+  end
+
   test "the edit popup lists the task's files on More, and a pasted image is stored", ctx do
     path = tmp("notes #{System.unique_integer()}")
 

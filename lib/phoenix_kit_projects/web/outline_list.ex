@@ -592,12 +592,23 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     {:noreply, assign(socket, :outline_folded, folded)}
   end
 
+  # Ctrl+Enter in a card title opens the task the way a click on it does:
+  # the drawer on a drawer page, the host's popup in an embed (never a
+  # navigation of the host away), the task's own page otherwise.
   def handle_event("outline_open", %{"id" => uuid}, socket, _reload) do
     case own(socket, uuid) do
-      %Assignment{} ->
+      %Assignment{} = a ->
+        project = socket.assigns.project
+
+        session =
+          if socket.view == ProjectShowLive,
+            do: ProjectShowLive.view_session(%{project_uuid: project.uuid, uuid: a.uuid}),
+            else: %{"project_id" => project.uuid, "id" => a.uuid}
+
         {:noreply,
-         Phoenix.LiveView.push_navigate(socket,
-           to: Paths.view_assignment(socket.assigns.project.uuid, uuid)
+         WebHelpers.navigate_or_open(socket,
+           to: Paths.view_assignment(project.uuid, a.uuid),
+           open: {PhoenixKitProjects.Web.AssignmentViewLive, session}
          )}
 
       _ ->

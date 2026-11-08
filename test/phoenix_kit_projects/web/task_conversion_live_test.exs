@@ -207,4 +207,44 @@ defmodule PhoenixKitProjects.Web.TaskConversionLiveTest do
       assert Projects.get_assignment(ctx.link.uuid).child_project_uuid == ctx.child.uuid
     end
   end
+
+  describe "deleting a task with a sub-project under it" do
+    setup ctx do
+      parent = task!(ctx.project, "Kitchen")
+
+      {:ok, %{assignment: link, child_project: child}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Worktop"})
+
+      # However it got there (a conversion back to a task carries the
+      # sub-project's rows along), a sub-project row can sit under a task.
+      Repo.update_all(from(a in Assignment, where: a.uuid == ^link.uuid),
+        set: [parent_uuid: parent.uuid]
+      )
+
+      {:ok, parent: parent, child: child}
+    end
+
+    test "the page refuses and names why, the sub-project stays", ctx do
+      {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
+
+      html = render_click(view, "remove_assignment", %{"uuid" => ctx.parent.uuid})
+
+      assert html =~ "A sub-project sits under this task"
+      assert Projects.get_assignment(ctx.parent.uuid)
+      assert Projects.get_project(ctx.child.uuid)
+    end
+
+    test "the task form refuses too", ctx do
+      {:ok, view, _html} =
+        live(
+          ctx.conn,
+          "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.parent.uuid}/edit"
+        )
+
+      html = render_click(view, "delete_task", %{})
+
+      assert html =~ "A sub-project sits under this task"
+      assert Projects.get_project(ctx.child.uuid)
+    end
+  end
 end

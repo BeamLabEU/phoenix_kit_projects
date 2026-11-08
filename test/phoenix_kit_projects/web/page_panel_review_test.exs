@@ -32,7 +32,9 @@ defmodule PhoenixKitProjects.Web.PagePanelReviewTest do
 
     if html =~ ~s(row-deadline-form-#{a.uuid}) do
       refute html =~ ~r/type="submit"[^>]*name="clear"/s
-      assert html =~ ~r/phx-value-clear="1"/
+      # A plain button pushing `save_deadline` with `clear` (and closing the
+      # popover), never a second submit of the form.
+      assert html =~ ~r/&quot;clear&quot;:&quot;1&quot;/
     end
   end
 

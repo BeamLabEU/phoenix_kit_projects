@@ -141,7 +141,7 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
                 class="block truncate leading-tight hover:underline"
                 style={fit_text(11, "34cqh", 15)}
               >
-                {row.project.name}
+                {project_name(row.project)}
               </.link>
               <p
                 :if={@view == "detailed"}

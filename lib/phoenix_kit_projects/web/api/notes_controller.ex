@@ -80,15 +80,44 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
   end
 
   # Usage on a note is a ledger append: the same scope, gate and floor as
-  # the usage endpoints, checked only when usage is sent.
+  # the usage endpoints, checked only when usage is sent. Minutes are TIME
+  # rows, the time area's (`json.ex`: "minutes are the time area's"), so
+  # they also need `time:write` — a key with time "none" otherwise wrote
+  # hours through a note that `POST /time` refuses it.
   defp require_usage_rights(conn, usage) when is_map(usage) and map_size(usage) > 0 do
     with {:ok, conn} <- Json.require_scope(conn, "usage:write"),
+         {:ok, conn} <- require_time_scope(conn, usage),
          {:ok, conn} <- Json.require_feature(conn, :ledger) do
       Json.require_action(conn, :log_time)
     end
   end
 
   defp require_usage_rights(conn, _), do: {:ok, conn}
+
+  defp require_time_scope(conn, usage) do
+    if minutes?(usage), do: Json.require_scope(conn, "time:write"), else: {:ok, conn}
+  end
+
+  defp minutes?(%{"minutes" => m}) when is_number(m), do: m > 0
+  defp minutes?(_), do: false
+
+  # A project note's minutes are time on the project as a whole — kept only
+  # where the project keeps it (`project_time`), as `POST /time` asks.
+  defp require_project_time(conn, usage) do
+    if minutes?(usage) and not Map.get(conn.assigns.pk_fx, :project_time, false) do
+      {:halt,
+       Json.error(
+         conn,
+         :unprocessable_entity,
+         "task_required",
+         "Name a task — this project keeps time on its tasks only. " <>
+           "Put the minutes on a note of the task they went on.",
+         %{feature: :project_time}
+       )}
+    else
+      {:ok, conn}
+    end
+  end
 
   # ── The project's own notes ──────────────────────────────────────
 
@@ -119,7 +148,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
          {:ok, conn} <- Json.require_scope(conn, "notes:write"),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :comment),
-         {:ok, conn} <- require_usage_rights(conn, params["usage"]) do
+         {:ok, conn} <- require_usage_rights(conn, params["usage"]),
+         {:ok, conn} <- require_project_time(conn, params["usage"]) do
       Json.idempotent(conn, [required: true], fn -> do_create(conn, nil, params) end)
     else
       {:halt, conn} -> conn

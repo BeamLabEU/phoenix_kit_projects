@@ -257,8 +257,25 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   @spec idempotent(Plug.Conn.t(), keyword(), (-> {integer(), map()})) :: Plug.Conn.t()
   def idempotent(conn, opts, fun) do
     key = conn.assigns.pk_api_key
-    header = idempotency_key(conn)
 
+    case idempotency_key(conn) do
+      :invalid ->
+        # Sent, but not one we can keep: refused rather than run without
+        # one — the caller believes it is protected, and a retry of a call
+        # that ran unkeyed would do the work twice.
+        error(
+          conn,
+          :unprocessable_entity,
+          "idempotency_key_invalid",
+          "The Idempotency-Key header must be sent once, 1 to 128 bytes."
+        )
+
+      header ->
+        run_idempotent(conn, key, header, opts, fun)
+    end
+  end
+
+  defp run_idempotent(conn, key, header, opts, fun) do
     if is_nil(header) and Keyword.get(opts, :required, false) do
       error(
         conn,
@@ -299,10 +316,13 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   def idempotency_scope(header, project_uuid),
     do: :crypto.hash(:sha256, project_uuid <> ":" <> header) |> Base.encode16(case: :lower)
 
+  # nil when absent; `:invalid` when sent but not keepable (empty, over 128
+  # bytes, or sent twice).
   defp idempotency_key(conn) do
     case get_req_header(conn, "idempotency-key") do
+      [] -> nil
       [v] when byte_size(v) in 1..128 -> v
-      _ -> nil
+      _ -> :invalid
     end
   end
 

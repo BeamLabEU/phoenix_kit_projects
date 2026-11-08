@@ -1016,7 +1016,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
         "template_uuid" => template.uuid
       })
 
-    assert html =~ "1 tasks from this template" or html =~ "tasks from this template"
+    # A real plural now: "1 task from this template", "2 tasks …".
+    assert html =~ ~r/\d+ tasks? from this template/
     assert html =~ "Config Ext"
 
     # An unrelated validate cycle between selection and submit (the user

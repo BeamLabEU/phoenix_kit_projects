@@ -5,8 +5,10 @@ defmodule PhoenixKitProjects.Ledger do
   one table, so "what did this task actually cost" is a single query
   across people-hours and AI spend.
 
-  Append-only: corrections are new entries; nothing here updates or
-  deletes rows. Ledger writes ride the `ledger` feature flag at the
+  Appended to; corrected only through `update_time/3`, `update_amount/3`
+  and `delete_entry/2`, each of which leaves its trace in the activity feed
+  and refuses an entry already on an invoice (`{:error, :invoiced}`).
+  Ledger writes ride the `ledger` feature flag at the
   CALLER (LV) layer — the context trusts its callers, mirroring the rest
   of the module.
 
@@ -32,6 +34,7 @@ defmodule PhoenixKitProjects.Ledger do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.Invoicing
   alias PhoenixKitProjects.PubSub
   alias PhoenixKitProjects.Schemas.WorkEntry
 
@@ -294,8 +297,18 @@ defmodule PhoenixKitProjects.Ledger do
     end
   end
 
+  # An entry already on an invoice is never changed or removed (here, the
+  # Hours page and the API alike): the invoice states that figure.
   def update_time(%WorkEntry{kind: "time"} = entry, minutes, opts)
       when is_integer(minutes) and minutes > 0 do
+    if Invoicing.invoiced?(entry.uuid),
+      do: {:error, :invoiced},
+      else: do_update_time(entry, minutes, opts)
+  end
+
+  def update_time(%WorkEntry{}, _minutes, _opts), do: {:error, :invalid}
+
+  defp do_update_time(entry, minutes, opts) do
     # `ended_at` follows the new length only when the entry has a start; an
     # API entry has none, and its `ended_at` IS the reported `occurred_at`.
     attrs =
@@ -322,8 +335,6 @@ defmodule PhoenixKitProjects.Ledger do
         error
     end
   end
-
-  def update_time(%WorkEntry{}, _minutes, _opts), do: {:error, :invalid}
 
   defp maybe_put_ended_at(attrs, %WorkEntry{started_at: %DateTime{} = started}, minutes),
     do: Map.put(attrs, :ended_at, DateTime.add(started, minutes * 60))
@@ -354,6 +365,14 @@ defmodule PhoenixKitProjects.Ledger do
           {:ok, WorkEntry.t()} | {:error, term()}
   def update_amount(%WorkEntry{kind: kind} = entry, amount, opts)
       when kind in ["tokens", "cost"] and is_number(amount) and amount >= 0 do
+    if Invoicing.invoiced?(entry.uuid),
+      do: {:error, :invoiced},
+      else: do_update_amount(entry, amount, opts)
+  end
+
+  def update_amount(%WorkEntry{}, _amount, _opts), do: {:error, :invalid}
+
+  defp do_update_amount(entry, amount, opts) do
     entry
     |> WorkEntry.changeset(%{amount: amount})
     |> RepoHelper.repo().update()
@@ -374,8 +393,6 @@ defmodule PhoenixKitProjects.Ledger do
     end
   end
 
-  def update_amount(%WorkEntry{}, _amount, _opts), do: {:error, :invalid}
-
   @doc """
   Removes an entry. Logs `projects.work_removed` with what it held, so the
   figure is still in the project's history.
@@ -392,6 +409,12 @@ defmodule PhoenixKitProjects.Ledger do
   end
 
   def delete_entry(%WorkEntry{} = entry, opts) do
+    if Invoicing.invoiced?(entry.uuid),
+      do: {:error, :invoiced},
+      else: do_delete_entry(entry, opts)
+  end
+
+  defp do_delete_entry(entry, opts) do
     case RepoHelper.repo().delete(entry) do
       {:ok, deleted} ->
         Activity.log("projects.work_removed",

@@ -51,7 +51,9 @@ defmodule PhoenixKitProjects.Web.ApiKeysFilters do
     chosen =
       params
       |> Map.take(@fields)
-      |> Enum.reject(fn {_k, v} -> v in [nil, ""] end)
+      # Only plain strings: the address is the viewer's to edit, and a
+      # `?q[]=x` list or map reaching the filters crashed the page.
+      |> Enum.filter(fn {_k, v} -> is_binary(v) and v != "" end)
       |> Map.new()
 
     if shown?(rows) and not Map.has_key?(chosen, "status") and

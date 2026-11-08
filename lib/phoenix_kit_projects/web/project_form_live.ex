@@ -66,6 +66,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col mx-auto max-w-xl px-4 py-6 gap-4"
 
+  # The fields only the context's own paths write (start, end, archive, the
+  # template machinery, ordering): never taken from a post of this form.
+  @server_owned ~w(is_template started_at completed_at archived_at position external_id
+                   current_status_slug)
+
   @impl true
   def mount(params, session, socket) do
     WebHelpers.maybe_put_locale(session)
@@ -243,6 +248,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # People, teams and departments in one ranked list. Each row carries its
   # own kind, and anything already queued is filtered out so it can't be
   # added twice.
+  defp parse_limit(n) when is_integer(n) and n > 0, do: n
+
+  defp parse_limit(n) when is_binary(n) do
+    case Integer.parse(n) do
+      {i, _} -> max(i, 1)
+      :error -> 8
+    end
+  end
+
+  defp parse_limit(_), do: 8
+
   defp search_participants(socket, query, limit, taken) do
     q = query |> to_string() |> String.trim() |> String.downcase()
 
@@ -911,28 +927,23 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # The picker's three events. Rows are {kind, uuid, label} so a pick is
   # self-describing — nothing pairs a kind chosen in one control with an id
   # chosen in another.
-  def handle_event("participant_search", %{"q" => q} = params, socket) do
-    limit =
-      case params["limit"] do
-        n when is_integer(n) and n > 0 ->
-          n
+  # The people directory answers only someone who may save this form (it
+  # names people and their email), never more than a page at a time.
+  def handle_event("participant_search", %{"q" => q} = params, socket) when is_binary(q) do
+    if write_allowed?(socket) do
+      limit = params["limit"] |> parse_limit() |> min(50)
 
-        n when is_binary(n) ->
-          case Integer.parse(n) do
-            {i, _} -> max(i, 1)
-            :error -> 8
-          end
+      taken = Enum.map(socket.assigns.participants, &{&1.kind, &1.uuid})
+      {rows, has_more} = search_participants(socket, q, limit, taken)
 
-        _ ->
-          8
-      end
-
-    taken = Enum.map(socket.assigns.participants, &{&1.kind, &1.uuid})
-    {rows, has_more} = search_participants(socket, q, limit, taken)
-
-    {:noreply,
-     push_event(socket, "participant_results", %{q: q, results: rows, has_more: has_more})}
+      {:noreply,
+       push_event(socket, "participant_results", %{q: q, results: rows, has_more: has_more})}
+    else
+      {:noreply, socket}
+    end
   end
+
+  def handle_event("participant_search", _params, socket), do: {:noreply, socket}
 
   def handle_event("participant_pick", %{"kind" => kind, "uuid" => uuid} = params, socket) do
     label = Map.get(params, "label", "")
@@ -1059,6 +1070,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       attrs =
         attrs
         |> Map.delete("settings")
+        # Server-owned: `Project.changeset/2` casts them for the context's
+        # own callers, so the form drops what it never draws — a crafted
+        # `project[is_template]=false` turned a template into an ownerless
+        # project, and the lifecycle stamps skipped start/end/archive (their
+        # cementing, history and broadcasts).
+        |> Map.drop(@server_owned)
         |> merge_attrs(socket)
         |> AssigneePicker.vet_posted(socket.assigns.project)
         |> maybe_apply_status_mode(params, project, fx)
@@ -1986,7 +2003,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     # source unchanged, the re-cement branch inside
     # `update_project_with_statuses/2` never fires for a started project;
     # unstarted projects (source still editable) cement at start as usual.
-    attrs = Statuses.lock_status_source(attrs, socket.assigns.project)
+    #
+    # Locked against the project as stored NOW — one started (its statuses
+    # cemented) since this form opened is frozen too — while the update
+    # still diffs against the held record, which keeps others' edits.
+    attrs = Statuses.lock_status_source(attrs, fresh_project(socket.assigns.project))
 
     case Statuses.update_project_with_statuses(socket.assigns.project, attrs) do
       {:ok, project} ->
@@ -2042,20 +2063,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> put_flash(:error, first_error_message(cs))
   end
 
-  defp first_error_message(%Ecto.Changeset{errors: [{field, {msg, _opts}} | _]}) do
-    gettext("%{field}: %{message}", field: humanize(field), message: msg)
-  end
-
-  defp first_error_message(_), do: gettext("Could not save the project.")
-
-  # The V26 link fields are named as their boxes are, in the viewer's
-  # language; older fields keep the generic spelling.
-  defp humanize(:external_url), do: gettext("Address")
-  defp humanize(:external_label), do: gettext("Button text")
-
-  defp humanize(field) do
-    field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
-  end
+  # The field named by its label and the message translated
+  # (`WebHelpers.changeset_error_text/3`) — never a raw `%{count}`.
+  defp first_error_message(cs),
+    do: WebHelpers.changeset_error_text(cs, gettext("Could not save the project."))
 
   # ── Creation-page render helpers ─────────────────────────────────
 
@@ -2116,7 +2127,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end
   end
 
-  defp template_summary(%{task_count: n}), do: gettext("Template: %{count} tasks", count: n)
+  defp template_summary(%{task_count: n}),
+    do: ngettext("Template: 1 task", "Template: %{count} tasks", n)
+
   defp template_summary(_preview), do: nil
 
   # ── Collapsed-section summaries ─────────────────────────────────────
@@ -2303,7 +2316,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     <%!-- What the template brings (server-rendered preview). --%>
     <div :if={@template_preview} class="rounded-lg border border-base-200 bg-base-200/40 p-3 text-xs">
       <p class="font-semibold">
-        {gettext("%{count} tasks from this template", count: @template_preview.task_count)}
+        {ngettext(
+          "1 task from this template",
+          "%{count} tasks from this template",
+          @template_preview.task_count
+        )}
       </p>
       <p :if={@template_preview.sample_titles != []} class="mt-1 opacity-70">
         {Enum.join(@template_preview.sample_titles, " · ")}<span :if={@template_preview.task_count > 5}> …</span>
@@ -2529,18 +2546,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     """
   end
 
-  # The multilang name+description card — the house pattern shared by
-  # BOTH actions (Max: every create form offers all languages from the
-  # start). One definition so the two branches can never drift.
-  attr(:form, :any, required: true)
-  attr(:multilang_enabled, :boolean, required: true)
-  attr(:language_tabs, :list, required: true)
-  attr(:current_lang, :string, required: true)
-  attr(:primary_language, :string, required: true)
-  attr(:ai_in_flight, :list, required: true)
-  attr(:ai_translate, :any, required: true)
-  attr(:key_field, :any, default: nil)
-
   attr(:choice, :string, required: true)
   attr(:project, :map, required: true)
   attr(:editing?, :boolean, default: false)
@@ -2614,6 +2619,22 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     </div>
     """
   end
+
+  # The multilang name+description card — the house pattern shared by
+  # BOTH actions (Max: every create form offers all languages from the
+  # start). One definition so the two branches can never drift.
+  attr(:form, :any, required: true)
+  attr(:multilang_enabled, :boolean, required: true)
+  attr(:language_tabs, :list, required: true)
+  attr(:current_lang, :string, required: true)
+  attr(:primary_language, :string, required: true)
+  attr(:ai_in_flight, :list, required: true)
+  attr(:ai_translate, :any, required: true)
+  attr(:key_field, :any, default: nil)
+  attr(:scope, :any, default: nil)
+  attr(:project, :any, default: nil)
+  attr(:uploads, :any, default: nil)
+  attr(:completion, :map, default: nil, doc: "`completion_control/1`'s attrs; nil hides it")
 
   defp translatable_card(assigns) do
     ~H"""
@@ -3041,7 +3062,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       <span class="text-sm">
                         {translate_catalog_string(flag.label)}
                         <span :if={flag.requires != []} class="block text-xs opacity-40">
-                          {gettext("Needs: %{list}", list: Enum.join(flag.requires, ", "))}
+                          {gettext("Needs: %{list}",
+                            list:
+                              flag.requires
+                              |> Features.flag_labels()
+                              |> Enum.map_join(", ", &translate_catalog_string/1)
+                          )}
                         </span>
                       </span>
                     </label>
@@ -3272,7 +3298,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </.form_pane>
 
           <.form_pane prefix="project" pane="schedule" active={@pane}>
-              <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+              <%!-- An existing project's own lifecycle flag (`@fx`);
+                   `@flag_states` is the creation page's and is empty here. --%>
+              <.start_block
+                form={@form}
+                lifecycle={
+                  if @live_action == :edit,
+                    do: @fx[:lifecycle] != false,
+                    else: @flag_states["lifecycle"] != false
+                }
+              />
 
               <%!-- Schedule math config — gated on `scheduling` (start mode /
                    date below stay: they're lifecycle, not schedule math). --%>
@@ -4021,7 +4056,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     with true <- Authz.can?(scope, project, :manage_modules),
          {:ok, updated} <- do_end_or_resume(project, act) do
       Activity.log(
-        if(act == :end, do: "projects.project_ended", else: "projects.project_resumed"),
+        # The project lifecycle's own actions, which History tells as
+        # "finished the project" / "reopened the project".
+        if(act == :end, do: "projects.project_completed", else: "projects.project_reopened"),
         actor_uuid: Activity.actor_uuid(socket),
         resource_type: "project",
         resource_uuid: updated.uuid,

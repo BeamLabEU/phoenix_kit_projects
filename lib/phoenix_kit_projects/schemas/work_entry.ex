@@ -9,8 +9,9 @@ defmodule PhoenixKitProjects.Schemas.WorkEntry do
     * `"tokens"` — token count
     * `"cost"`   — cents
 
-  Append-only by convention (corrections are new entries; there is no
-  update path in `PhoenixKitProjects.Ledger`). `actor_uuid` is FK-less —
+  Appended to, and corrected only through `PhoenixKitProjects.Ledger`'s
+  amend and remove functions (traced in the activity feed; an invoiced
+  entry is never changed). `actor_uuid` is FK-less —
   AI agents aren't users, and the activity log is the audit trail.
   """
 

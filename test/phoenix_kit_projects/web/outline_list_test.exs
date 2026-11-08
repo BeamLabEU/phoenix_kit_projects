@@ -224,7 +224,9 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
-      [board] = Regex.run(~r/id="board-column-waiting".*?id="board-column-todo"/s, html)
+      [board] =
+        Regex.run(~r/id="board-column-waiting-[^"]*".*?id="board-column-todo-[^"]*"/s, html)
+
       assert board =~ "Card"
       refute board =~ "Inside"
     end

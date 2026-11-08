@@ -169,11 +169,24 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     end
   end
 
-  def handle_info({:projects, :project_deleted, _payload}, socket) do
+  # This tab listens on every project of the tree it draws: only THIS
+  # project's deletion leaves the page. A sub-project's (its row deleted
+  # on the list) is a change to draw, like a deleted task.
+  def handle_info(
+        {:projects, :project_deleted, %{uuid: uuid}},
+        %{assigns: %{project: %{uuid: uuid}}} = socket
+      ) do
     {:noreply,
      socket
      |> put_flash(:info, gettext("This project was deleted."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
+  end
+
+  def handle_info({:projects, :project_deleted, _payload}, socket) do
+    case Projects.get_project_with_assignee(socket.assigns.project.uuid) do
+      nil -> {:noreply, socket}
+      project -> {:noreply, socket |> assign(project: project) |> load_gantt()}
+    end
   end
 
   # Announced for consumers outside the page; its own reloads follow

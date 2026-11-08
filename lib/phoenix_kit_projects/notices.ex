@@ -236,13 +236,18 @@ defmodule PhoenixKitProjects.Notices do
 
         # `for_rendering/1` never answers nil: no preference means the
         # site's language, never whatever the sender is reading in.
+        lang = RecipientLocale.for_rendering(recipient)
+
         display =
-          RecipientLocale.in_locale(RecipientLocale.for_rendering(recipient), fn ->
+          RecipientLocale.in_locale(lang, fn ->
             # Inside: the "Someone" fallback is the reader's word too.
             actor = actor_name(Keyword.get(opts, :actor_uuid))
 
             %{
-              "notification_text" => line(action, subject, actor, meta),
+              # The names in the READER's language too: `in_locale/2` sets
+              # the Gettext locales only, and the content language would
+              # otherwise be the sender's (the dialect of their page).
+              "notification_text" => line(action, subject, actor, meta, lang),
               "notification_icon" => icon(action),
               "notification_link" => link(action, subject)
             }
@@ -395,14 +400,18 @@ defmodule PhoenixKitProjects.Notices do
   end
 
   @doc false
-  # The one line, in the current Gettext locale. Public for the tests.
-  @spec line(String.t(), Assignment.t() | Project.t(), String.t(), map()) :: String.t()
-  def line(action, subject, actor, meta) do
+  # The one line, in the current Gettext locale, the names in `lang` (the
+  # current content language when nil). Public for the tests.
+  @spec line(String.t(), Assignment.t() | Project.t(), String.t(), map(), String.t() | nil) ::
+          String.t()
+  def line(action, subject, actor, meta, lang \\ nil) do
+    lang = lang || L10n.current_content_lang()
+
     ctx = %{
       actor: actor,
-      task: subject_label(subject),
-      project: project_name(subject),
-      meta: localize_after(meta),
+      task: subject_label(subject, lang),
+      project: project_name(subject, lang),
+      meta: localize_after(meta, lang),
       subject: subject
     }
 
@@ -591,10 +600,10 @@ defmodule PhoenixKitProjects.Notices do
 
   # The task a hand-off names as done, in the reader's language (the row
   # keeps the primary name, like every audit row).
-  defp localize_after(%{"after_uuid" => uuid} = meta) when is_binary(uuid) do
+  defp localize_after(%{"after_uuid" => uuid} = meta, lang) when is_binary(uuid) do
     case Projects.get_assignment(uuid) do
       %Assignment{} = a ->
-        case Assignment.label(a, L10n.current_content_lang()) do
+        case Assignment.label(a, lang) do
           label when is_binary(label) and label != "" -> Map.put(meta, "after", label)
           _ -> meta
         end
@@ -604,12 +613,19 @@ defmodule PhoenixKitProjects.Notices do
     end
   end
 
-  defp localize_after(meta), do: meta
+  defp localize_after(meta, _lang), do: meta
 
-  @doc "A task's or project's name as a notice and the history say it."
-  @spec subject_label(Assignment.t() | Project.t()) :: String.t()
-  def subject_label(%Assignment{} = a), do: Assignment.label(a, L10n.current_content_lang()) || ""
-  def subject_label(%Project{} = p), do: project_name(p)
+  @doc """
+  A task's or project's name as a notice and the history say it, in `lang`
+  (the current content language when nil).
+  """
+  @spec subject_label(Assignment.t() | Project.t(), String.t() | nil) :: String.t()
+  def subject_label(subject, lang \\ nil)
+
+  def subject_label(%Assignment{} = a, lang),
+    do: Assignment.label(a, lang || L10n.current_content_lang()) || ""
+
+  def subject_label(%Project{} = p, lang), do: project_name(p, lang)
 
   defp primary_label(%Assignment{} = a), do: Assignment.label(a) || ""
   defp primary_label(%Project{name: name}), do: name || ""
@@ -618,16 +634,17 @@ defmodule PhoenixKitProjects.Notices do
   defp primary_project_name(%Project{name: name}), do: name || ""
   defp primary_project_name(_), do: ""
 
-  defp project_name(%Assignment{project: %Project{} = p}), do: project_name(p)
+  defp project_name(%Assignment{project: %Project{} = p}, lang), do: project_name(p, lang)
 
-  defp project_name(%Assignment{project_uuid: uuid}) do
+  defp project_name(%Assignment{project_uuid: uuid}, lang) do
     case Projects.get_project(uuid) do
-      %Project{} = p -> project_name(p)
+      %Project{} = p -> project_name(p, lang)
       _ -> ""
     end
   end
 
-  defp project_name(%Project{} = p), do: Project.localized_name(p, L10n.current_content_lang())
+  defp project_name(%Project{} = p, lang),
+    do: Project.localized_name(p, lang || L10n.current_content_lang())
 
   @doc "The actor's name for a line: their staff/account name, else \"Someone\"."
   @spec actor_name(binary() | nil) :: String.t()

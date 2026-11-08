@@ -245,7 +245,7 @@ Repo-local aliases:
     `mix gettext.extract && mix gettext.merge priv/gettext --no-fuzzy` from
     this repo.
   - **Common/generic strings** (date/month formatting in
-    `PhoenixKitProjects.L10n`, generic table chrome) stay on core's
+    `PhoenixKitProjects.L10n` — the one file left on it) stay on core's
     `PhoenixKitWeb.Gettext` backend. Their msgids ship in core's
     `lib/phoenix_kit_web/projects_gettext_manifest.ex` (extraction target,
     never called at runtime), mirroring the `legal_gettext_manifest.ex`
@@ -622,6 +622,16 @@ and for `assignment` / `project_task_notes` those projects' assignment uuids.
 Manager, not an `Authz` action: the container actions floor at owner and the
 work actions at viewer. A fixed number of reads however many projects.
 
+**An "everyone" project's open viewer seat needs the module key.** Visibility
+`"everyone"` hands a viewer seat to anyone who can enter Projects
+(`Authz.module_reacher?/1`: the base key or `"*"`), never to every account:
+the user dashboard admits members without the key, and under the open
+default floors a seat handed to any account (a shop customer) could edit the
+project. `Authz.effective_role/2` and `Members.accessible_projects/1` /
+`accessible_project_uuids/1` ask the same condition, so a list never shows a
+project its page refuses. Direct members and group grants need no module key,
+by design.
+
 `Authz.can?/5` resolves `site permission ∧ project role ∧ relationship grant`;
 extension/flag gating composes at the call site (`Extensions.enabled?/3` +
 `Features.on?/2` answer "is this capability present on this project", which is
@@ -763,7 +773,15 @@ a fresh install this chain builds them:
 
 Every statement in every version guards itself, so `up/1` always runs the whole
 chain start-to-finish and re-running is safe — which is also how the baseline's
-idempotency is proved on every test boot. Before its own versions `up/1` runs
+idempotency is proved on every test boot. "Guards itself" means against TODAY's
+data, not the shape the version was written for: a backfill runs only on the
+pass that adds its column, a CHECK is added only when absent (looked up by
+`conrelid = '<prefix>.<table>'::regclass`, never by name alone or
+`current_schema()`, which miss a named-schema install) and a later version
+widens it. V14 broke both rules until this audit — a replay sent accepted
+portal requests back to review and failed on held tasks;
+`test/integration/migration_replay_test.exs` replays the chain over real rows
+in a named schema. Before its own versions `up/1` runs
 staff's and entities' chains (passed as module values and called only when
 loaded, so the `WITHOUT_STAFF=1` gate holds): this chain's foreign keys point at their tables, core 3.x no longer
 creates them, and a host's migration files written under core 2.x run this
@@ -830,7 +848,7 @@ Support modules in `test/support/`:
 | `Test.Layouts` | root + app layouts; `app/1` renders `#flash-info` / `#flash-error` / `#flash-warning` so smoke tests can assert flash via `render(view) =~ "Saved."`, and renders `page_crumbs` as `data-crumb` anchors |
 | `Test.Hooks` | `:assign_scope` `on_mount` reading `"phoenix_kit_test_scope"` from the session |
 | `Test.SchemaMigration` | wraps the module chain for `Ecto.Migrator` |
-| `DataCase` | `:integration` tag + SQL Sandbox; hosts `fixture_task/1`, `fixture_project/1`, `fixture_template/1`, `errors_on/1` |
+| `DataCase` | `:integration` tag + SQL Sandbox; switches the module on (`projects_enabled`: the API, the portal and library writes refuse while it is off — a test of the off state switches it off itself); hosts `fixture_task/1`, `fixture_project/1`, `fixture_template/1`, `errors_on/1` |
 | `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}` — by default a site admin holding every sub-key (`admin_all`, the API key rights, `manage_library`, `settings`); pass `permissions: ["projects"]` for a plain module-reacher. Its setup switches the module on (`projects_enabled`), which library writes require; reuses `DataCase` fixtures |
 | `ActivityLogAssertions` | `assert_activity_logged/2`, `refute_activity_logged/2` |
 | `QueryCounter` | statement counting for the batched-read tests |
@@ -865,7 +883,13 @@ entry's `ended_at`; `inserted_at` stays the receipt time). Every key has a
 rate limit (`Web.Api.RateLimit`, a bucket per key on core's Hammer backend,
 `config :phoenix_kit_projects, :api_rate_limit, limit: 300, window_ms: 60_000`;
 `limit: nil` turns it off) applied in the auth plug, so a 429 is never stored
-as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
+as an idempotent reply. The module switched off (Admin › Modules) closes the
+API too: every call answers 503 `module_disabled` (`Web.Api.Auth`), and every
+portal with it (`Portal.resolve/1`). An `Idempotency-Key` that is sent but
+cannot be kept (empty, over 128 bytes, sent twice) is a 422
+`idempotency_key_invalid`, never a run without one. A note's `usage.minutes`
+are time rows, so they need `time:write` as well as `usage:write`, and on a
+project note the `project_time` flag. The routes come from `Web.Routes.generate/1` and are
 mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
 them.
 
@@ -1351,8 +1375,8 @@ modules and its agent's key behind.
   its ancestors, which reach it only while it is nested there) and where
   it could go; `run/4` checks the mover (`:edit_settings` on the project,
   `:edit_tasks` on a new parent) and carries what was ticked, each thing
-  only where the mover may grant it. `ApiKeys.move/3` points a key at the
-  project and keeps its token. `preview.links` counts the task ↔
+  only where the mover may grant it. `ApiKeys.carry_grant/4` gives a key
+  the moved project's grant and keeps its token. `preview.links` counts the task ↔
   interaction links that point at an interaction logged OUTSIDE the
   project (the interactions provider's optional `projects_of/1` says
   where); the dialog says they keep opening while the project has the same
@@ -1411,7 +1435,7 @@ modules and its agent's key behind.
   (`user_uuid` on the intent): a host topic shared by everyone who has the
   record open reaches every viewer's page.
 - **Task form**: tabs, a live header, an assignee search
-  (`Assignees.search_assignees/3`, `recent_for_project/3`); faces of the
+  (`Assignees.search_assignees/3`, `recent_for_viewer/4`); faces of the
   assignees come from `Assignees.faces/2` (batched, through the `People`
   shadows) and render with core's `user_avatar`.
 - **Board**: columns are SortableJS lists driven by the `PkpBoard` hook
@@ -1561,7 +1585,7 @@ secret, retries with backoff, and a delivery log). Until then an agent polls
 |---|---|---|
 | Embedding via `live_render` | Every LV is embeddable and must stay so — an LV that exports `handle_params/3` cannot mount off-router. The host passes identity, the host authorizes. | [`dev_docs/guides/embedding.md`](dev_docs/guides/embedding.md), [`dev_docs/embedding_audit.md`](dev_docs/embedding_audit.md), [`dev_docs/embedding_emit.md`](dev_docs/embedding_emit.md) |
 | The project page, list pages, breadcrumbs | Every tab target is validated against the feature map / contributed tab list — a forged `switch_tab` lands on the list, never on a gated tab. Timeline and Calendar render the SAME `ScheduleLayout` walk, so they can never disagree about a date. | [`dev_docs/guides/project-page.md`](dev_docs/guides/project-page.md) |
-| Quick-add and the add-task sheet | The write is ONE transaction that locks the project row (`FOR UPDATE`) and does nothing else — broadcasts fire after commit, the activity log stays with the LiveView. The full form calls the same helper, so the two paths cannot drift. | [`dev_docs/guides/quick-add.md`](dev_docs/guides/quick-add.md) |
+| Quick-add and the add-task sheet | The write is ONE transaction that locks the project row (`FOR NO KEY UPDATE`, which still excludes other lockers but not an insert's foreign-key check) and does nothing else — broadcasts fire after commit, the activity log stays with the LiveView. The full form calls the same helper, so the two paths cannot drift. | [`dev_docs/guides/quick-add.md`](dev_docs/guides/quick-add.md) |
 | Workflow statuses | Statuses cement at `started_at` and the source freezes with them: `save(:edit)` runs `Statuses.lock_status_source/2` server-side, so a crafted submit past the disabled control cannot change a started project's source. | [`dev_docs/guides/workflow-statuses.md`](dev_docs/guides/workflow-statuses.md) |
 | Sub-projects | The child project is the source of truth; the parent's linking assignment carries denormalized rollup so every existing read site works unchanged. Exactly one of `task_uuid` / `child_project_uuid` (DB CHECK + changeset), at most one parent (partial unique index), `ON DELETE RESTRICT`. | [`dev_docs/guides/sub-projects.md`](dev_docs/guides/sub-projects.md) |
 | Multilang user-input content | Non-translatable fields must be siblings OUTSIDE `<.multilang_fields_wrapper>` — the wrapper keys its id on `@current_lang`, so morphdom re-mounts everything inside on a tab switch and their state is lost. An `:edit` form opens on the viewing language (`mount_multilang(open_on: :viewing_language)`); `:new` opens on the main language, which holds the required fields. | [`dev_docs/guides/multilang-content.md`](dev_docs/guides/multilang-content.md) |
@@ -1770,8 +1794,10 @@ plus what is nested under them). Filters ride core's `UrlState` in `:history`
 mode; only the routed page renders the sync hook, a tab leaving the address
 bar to its host. Logging one's own time needs `:log_time`; logging for
 somebody else, or changing another person's entry, `:edit_tasks`; an entry
-already on an invoice (`Invoicing.invoiced_entry_uuids/1`) is shown and never
-changed there. The chart is server-rendered boxes (no JS, no new hook); its
+already on an invoice is shown and never changed — not there, nor over the
+API: `Ledger.update_time/3`, `update_amount/3` and `delete_entry/2` answer
+`{:error, :invoiced}` (the API's 409 `invoiced_entry`), asked through
+`Invoicing.invoiced?/1`, which fails CLOSED. The chart is server-rendered boxes (no JS, no new hook); its
 colours are eight CSS variables on `.pk-hours-viz`. The report replaces the
 page's content rather than opening a dialog (a dialog prints as its box):
 `Hours.Report` builds the text and the CSV (formula-leading cells written as

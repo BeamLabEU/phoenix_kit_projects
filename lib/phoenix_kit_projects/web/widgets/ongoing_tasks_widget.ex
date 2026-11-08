@@ -92,7 +92,7 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame title={gettext("Ongoing — %{name}", name: @project.name)} href={Paths.project(@project.uuid)}>
+      <.frame title={gettext("Ongoing — %{name}", name: project_name(@project))} href={Paths.project(@project.uuid)}>
       <.empty :if={@tasks == []} icon="hero-check-circle" message={gettext("No ongoing tasks.")} />
       <%!-- N-SLOT self-fit: `limit` budget of slots; cq row type. --%>
       <ul :if={@tasks != []} class="flex h-full min-h-0 flex-col divide-y divide-base-200">
@@ -137,7 +137,7 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
       not is_nil(a.end_date)
   end
 
-  defp task_label(%Assignment{} = a), do: Assignment.label_under(a) || gettext("Untitled task")
+  defp task_label(%Assignment{} = a), do: task_name(a) || gettext("Untitled task")
 
   defp dot_class("in_progress"), do: "bg-warning"
   defp dot_class("done"), do: "bg-success"

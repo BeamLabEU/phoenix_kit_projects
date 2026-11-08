@@ -92,15 +92,11 @@ defmodule PhoenixKitProjects.Web.PortalHeaders do
     end
   end
 
-  defp board_description(project) do
-    case project.description do
-      desc when is_binary(desc) and desc != "" ->
-        desc |> String.slice(0, 200)
-
-      _ ->
-        gettext("Public issue board")
-    end
-  end
+  # Never the project's own description: it is internal text (people's and
+  # records' mention tokens, picture references, the primary language) that
+  # the board itself deliberately does not show — yet every crawler and chat
+  # unfurler would read it from these tags.
+  defp board_description(_project), do: gettext("Public issue board")
 
   # One indexed lookup by slug. The LiveView resolves the portal again for
   # its own reasons; doing it here too is what lets the header decision be

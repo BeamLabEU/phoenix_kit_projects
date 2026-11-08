@@ -88,6 +88,14 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
     {:noreply, reload_boards(socket)}
   end
 
+  # Who may do what here changed: the right this tab was handed at mount
+  # (it also reaches the canvas as `can_annotate`) is asked again, so a
+  # viewer demoted meanwhile stops drawing without a reload.
+  def handle_info({:projects, event, _payload}, socket)
+      when event in [:project_members_changed, :project_grants_changed, :project_updated] do
+    {:noreply, assign(socket, can_write: may_write?(socket))}
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   # ── Events ──────────────────────────────────────────────────────
@@ -124,7 +132,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
       is_nil(project) ->
         {:noreply, socket}
 
-      not socket.assigns.can_write ->
+      not may_write?(socket) ->
         {:noreply,
          put_flash(socket, :error, gettext("You don't have permission to change whiteboards."))}
 
@@ -179,7 +187,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
     # Same identity gate as create: a session whose user did not resolve
     # must not destroy a board (and, file-less, its drawings) with a nil
     # actor on the activity row.
-    with true <- socket.assigns.can_write,
+    with true <- may_write?(socket),
          %{uuid: actor_uuid} <- user,
          %{} = board <- project && Whiteboards.get(project.uuid, uuid),
          :ok <- Whiteboards.delete(board, actor_uuid: actor_uuid) do
@@ -199,6 +207,18 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # ── Internals ───────────────────────────────────────────────────
+
+  # The tab's write right as it stands now (`WebHelpers.tab_write?/5`), not
+  # only as the hub handed it at mount.
+  defp may_write?(socket) do
+    WebHelpers.tab_write?(
+      socket.assigns.can_write,
+      socket.assigns.current_user && socket.assigns.current_user.uuid,
+      socket.assigns.project && socket.assigns.project.uuid,
+      :upload_files,
+      "whiteboards"
+    )
+  end
 
   defp load_user(nil), do: nil
 
@@ -366,11 +386,18 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                       {ConfirmAction.ask("delete_board",
                         uuid: board.uuid,
                         title: gettext("Delete whiteboard “%{name}”?", name: board.name),
-                        message: gettext("The drawing stays in the project files."),
+                        # Since V16 a board holds its drawing itself; only an
+                        # older, file-backed board leaves a file behind.
+                        message:
+                          if(board.file_uuid,
+                            do: gettext("The drawing stays in the project files."),
+                            else: gettext("Its drawing is deleted with it.")
+                          ),
                         confirm: gettext("Delete")
                       )}
                       class="btn btn-ghost btn-xs text-error ml-auto"
                       title={gettext("Delete whiteboard")}
+                      aria-label={gettext("Delete whiteboard")}
                     >
                       <.icon name="hero-trash" class="w-3.5 h-3.5" />
                     </button>

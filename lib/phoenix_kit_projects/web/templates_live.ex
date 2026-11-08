@@ -493,7 +493,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
           >
           <.bulk_actions_toolbar
             on_open_reorder="open_reorder_modal"
-            reorder_dialog_id="reorder-modal"
+            reorder_dialog_id={"templates-reorder-modal"}
             noun_singular={gettext("template")}
             noun_plural={gettext("templates")}
             allow_delete={false}
@@ -548,7 +548,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         </.bulk_select_scope>
       <% end %>
 
+      <%!-- An id of its own per list: the three list pages are embeddable,
+           and two on one host page opened each other's dialog. --%>
       <.reorder_modal
+        id="templates-reorder-modal"
         show={@show_reorder_modal}
         on_close="close_reorder_modal"
         on_apply="apply_reorder"

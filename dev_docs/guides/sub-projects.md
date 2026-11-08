@@ -134,6 +134,14 @@ the tier + sort helpers read it like the old flat summary.
 
 ## Assignee on projects + sub-projects
 
+> **Since V30** a project's assignees are a SET, like a task's: any number of
+> people, teams and departments in `phoenix_kit_project_assignees`, written only
+> through `Project.changeset/2` (`AssigneeSet`). The `assigned_*` columns below
+> are the one-assignee mirror (the assignee while there is exactly one, else
+> empty), kept for readers that predate the set; read through
+> `AssigneeSet.keys/1`, never the columns. The rest of this section is the
+> pre-V30 shape, kept for the history.
+
 A project carries the same polymorphic assignee as a task — `assigned_team_uuid`
 / `assigned_department_uuid` / `assigned_person_uuid` on `phoenix_kit_projects`,
 one-of via a `num_nonnulls(...) <= 1` CHECK + `Project.validate_single_assignee/1`.

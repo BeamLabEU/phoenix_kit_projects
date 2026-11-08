@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Attachments, Extensions, Health, Projects}
+  alias PhoenixKitProjects.Test.Repo
 
   setup %{conn: conn} do
     PhoenixKitProjects.Extensions.Registry.refresh()
@@ -129,6 +130,25 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       # Note trims to absent; previous status recorded in the activity row.
       {:ok, project} = Health.set(project, "on_track", "   ")
       refute Health.get(project)["note"]
+    end
+
+    test "a stale struct never writes the other settings back", %{project: project} do
+      # The page holds the project from its mount; an owner then makes it
+      # private and tightens a floor. Setting the health from the stale
+      # struct must touch settings["health"] only.
+      stale = project
+      {:ok, _} = Projects.set_visibility(project, "everyone")
+
+      Repo.query!(
+        ~S|UPDATE phoenix_kit_projects SET settings = jsonb_set(COALESCE(settings,'{}'::jsonb), '{authz}', '{"delete_tasks":"managers"}'::jsonb) WHERE uuid = $1::uuid|,
+        [Ecto.UUID.dump!(project.uuid)]
+      )
+
+      {:ok, updated} = Health.set(stale, "some_risk", "Supplier slipping")
+
+      assert updated.settings["visibility"] == "everyone"
+      assert updated.settings["authz"] == %{"delete_tasks" => "managers"}
+      assert Health.get(updated)["status"] == "some_risk"
     end
 
     test "show page renders the strip and saves through the modal",

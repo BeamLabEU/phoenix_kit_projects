@@ -80,7 +80,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame title={@project.name} icon="hero-calendar-days" href={Paths.project(@project.uuid)}>
+      <.frame title={project_name(@project)} icon="hero-calendar-days" href={Paths.project(@project.uuid)}>
       <div class="flex flex-col gap-2">
         <div>
           <div class="mb-0.5 flex items-center justify-between text-xs text-base-content/60">

@@ -9,27 +9,29 @@
 #
 #   createdb phoenix_kit_projects_test
 #
-# After that, `mix test` boots the repo, runs core's versioned migrations
-# via `PhoenixKit.Migration.ensure_current/2` (V40 extensions +
-# uuid_generate_v7, V03 settings, V90 activities, V100 staff tables,
-# V101 projects tables, V112 projects.archived_at + visible partial
-# index), and lets the Ecto sandbox handle isolation. No module-owned DDL.
+# After that, `mix test` boots the repo and builds the schema as a host
+# does: core's versioned migrations (`PhoenixKit.Migration.ensure_current/2`),
+# then the chains of the modules this one's foreign keys point at (AI,
+# comments, entities, staff), then this module's own chain
+# (`PhoenixKitProjects.Migrations.Schema`, keyed on its current version).
+# The Ecto sandbox handles isolation.
 
-# Elixir 1.19 quirk — see `phoenix_kit_locations` test_helper for context.
-support_dir = Path.expand("support", __DIR__)
-
-[
-  "test_repo.ex",
-  "schema_migration.ex",
-  "test_layouts.ex",
-  "hooks.ex",
-  "test_router.ex",
-  "test_endpoint.ex",
-  "activity_log_assertions.ex",
-  "data_case.ex",
-  "live_case.ex"
-]
-|> Enum.each(&Code.require_file(&1, support_dir))
+# Elixir 1.19's `mix test` compiles `test/support` (`elixirc_paths(:test)`)
+# but does not load those modules before this file runs. They are loaded here
+# from the compiled build — never `Code.require_file/2`'d again from source,
+# which redefined each one (a "redefining module" warning per file per run).
+for mod <- [
+      PhoenixKitProjects.Test.Repo,
+      PhoenixKitProjects.Test.SchemaMigration,
+      PhoenixKitProjects.Test.Layouts,
+      PhoenixKitProjects.Test.Hooks,
+      PhoenixKitProjects.Test.Router,
+      PhoenixKitProjects.Test.Endpoint,
+      PhoenixKitProjects.ActivityLogAssertions,
+      PhoenixKitProjects.DataCase,
+      PhoenixKitProjects.LiveCase
+    ],
+    do: Code.ensure_loaded!(mod)
 
 alias PhoenixKitProjects.Test.Repo, as: TestRepo
 
@@ -76,14 +78,10 @@ repo_available =
     try do
       {:ok, _} = TestRepo.start_link()
 
-      # Build the schema directly from core's versioned migrations — same
-      # call the host app makes in production. Replaces the hand-rolled
-      # `test/support/postgres/migrations/` shim, which was a transition
-      # state from when V100 (staff) and V101 (projects) weren't yet in
-      # core's published Hex release. `ensure_current/2` (core 1.7.105+
-      # / phoenix_kit#515) re-applies any newly-shipped Vxxx migrations
-      # on every boot. See `dev_docs/migration_cleanup.md` for the
-      # staleness story.
+      # Build the schema the way a host does: core's versioned migrations
+      # first (`ensure_current/2` re-applies any newly shipped version on
+      # every boot), then the chains of the modules whose tables this one's
+      # foreign keys point at, then this module's own chain.
       PhoenixKit.Migration.ensure_current(TestRepo, log: false)
 
       # The tables other modules own (core 3.0 no longer creates them): their real
@@ -96,20 +94,6 @@ repo_available =
           ],
           stmt <- chain.up_statements("public") do
         TestRepo.query!(stmt)
-      end
-
-      # Then entities' chain, because the Data project extension reads and
-      # writes entity records through `PhoenixKitEntities`' own schemas. Its
-      # V1 is adoptive, so this is a no-op today — it is here so it stays
-      # one. The moment entities ships a version that adds a column, a
-      # harness that never ran its chain fails on an `undefined_column`
-      # raised from a query this module did not write. Guarded because
-      # entities is an optional dep: absent, its schemas are unreachable
-      # anyway, so there is nothing to migrate.
-      if Code.ensure_loaded?(PhoenixKitEntities.Migrations) do
-        for stmt <- PhoenixKitEntities.Migrations.up_statements("public") do
-          TestRepo.query!(stmt)
-        end
       end
 
       # Then run the module-owned chain (V1 baselines the core-built shape,
@@ -155,8 +139,6 @@ repo_available =
         false
     end
   end
-
-Application.put_env(:phoenix_kit_projects, :test_repo_available, repo_available)
 
 # Minimal PhoenixKit services needed by the context layer.
 {:ok, _pid} = PhoenixKit.PubSub.Manager.start_link([])

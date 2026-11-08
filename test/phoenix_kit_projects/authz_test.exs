@@ -49,7 +49,9 @@ defmodule PhoenixKitProjects.AuthzTest do
       # handed them every project on the site, because the resolver
       # short-circuited on module access before membership was consulted.
       # This is the contractor shape: may enter the module, member of
-      # nothing, so may do nothing here.
+      # nothing, so may do nothing here. (No database here: this pins the
+      # admin override alone; `Integration.MembersTest` proves the same
+      # against real membership rows.)
       scope = fake_scope(permissions: ["projects"])
       refute Authz.can?(scope, @project, :view)
       refute Authz.can?(scope, @project, :manage_modules)

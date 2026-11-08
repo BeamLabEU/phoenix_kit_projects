@@ -39,7 +39,9 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
       tiles =
         projects
         |> Enum.map(fn p -> %{project: p, lifecycle: Project.derived_status(p)} end)
-        |> Enum.sort_by(fn t -> {Map.get(@lifecycle_rank, t.lifecycle, 9), t.project.name} end)
+        |> Enum.sort_by(fn t ->
+          {Map.get(@lifecycle_rank, t.lifecycle, 9), project_name(t.project)}
+        end)
 
       {:ok,
        socket
@@ -92,12 +94,12 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
         <.link
           :for={t <- @tiles}
           navigate={Paths.project(t.project.uuid)}
-          title={"#{t.project.name} · #{lifecycle_label(t.lifecycle)}"}
+          title={"#{project_name(t.project)} · #{lifecycle_label(t.lifecycle)}"}
           class={["min-w-0 rounded-md px-2 py-1.5 transition-colors", tint(t.lifecycle)]}
         >
           <span class="flex min-w-0 items-center gap-1.5">
             <span class={["h-2 w-2 shrink-0 rounded-full", dot(t.lifecycle)]} aria-hidden="true" />
-            <span class="truncate text-xs font-medium">{t.project.name}</span>
+            <span class="truncate text-xs font-medium">{project_name(t.project)}</span>
           </span>
           <span class="mt-0.5 flex min-w-0 items-center gap-1 pl-3.5">
             <span

@@ -144,7 +144,7 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
     send(view.pid, :unexpected_message)
 
     assert Process.alive?(view.pid)
-    assert render(view) =~ "time-date-form"
+    assert render(view) =~ "time-date-nav"
   end
 
   test "Set deadline is refused without :edit_tasks", %{conn: conn, project: project} do
@@ -284,7 +284,10 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
 
   test "the week view has seven day columns", %{conn: conn} do
     {:ok, view, _html} = live(conn, @path)
-    html = view |> element("button[phx-value-view=week]") |> render_click()
+
+    html =
+      view |> element(~s(button[phx-click="set_view"][phx-value-tab="week"])) |> render_click()
+
     assert html =~ "Mon"
     assert html =~ "Sun"
   end
@@ -292,7 +295,9 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
   test "the week starts on the site's first weekday, as the calendars do", %{conn: conn} do
     {:ok, _} = PhoenixKit.Settings.update_setting("week_start_day", "7")
     {:ok, view, _html} = live(conn, @path)
-    html = view |> element("button[phx-value-view=week]") |> render_click()
+
+    html =
+      view |> element(~s(button[phx-click="set_view"][phx-value-tab="week"])) |> render_click()
 
     assert [_, "Sun"] = Regex.run(~r/<span>(Mon|Tue|Wed|Thu|Fri|Sat|Sun)<\/span>/, html)
   end

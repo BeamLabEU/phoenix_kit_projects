@@ -214,6 +214,16 @@ defmodule PhoenixKitProjects.ResourceLinks do
     # the assignment, not the task. The task's column is `title`, not
     # `name` — an assignment has no name of its own.
     |> where([a, _t], a.project_uuid in ^accessible_list(accessible))
+    # What every list shows: accepted rows only (never a pending or
+    # rejected portal request, nor a row the typed list holds), and no
+    # template's task (a template is a pattern, not work to point at).
+    |> where([a, _t], a.review_status == "accepted")
+    |> where(
+      [a, _t],
+      a.project_uuid in subquery(
+        from(p in Project, where: p.is_template == false, select: p.uuid)
+      )
+    )
     |> match_title_or_ref(query)
     |> limit(@search_limit)
     |> preload([:task, :project])

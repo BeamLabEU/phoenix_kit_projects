@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Web.Api.CommentsController do
 
   use Phoenix.Controller, formats: [:json]
 
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.{Activity, RefText}
   alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.{Json, TasksController}
@@ -139,8 +140,13 @@ defmodule PhoenixKitProjects.Web.Api.CommentsController do
     }
   end
 
+  # A person by name, never by email address: a shared key acts for nobody,
+  # and every commenter's address would otherwise be one GET away. An
+  # account with no name shows the part before the @ (core's display name).
   defp author(%{attributed_label: label}) when is_binary(label) and label != "", do: label
   defp author(%{author_display_name: name}) when is_binary(name) and name != "", do: name
-  defp author(%{user: %{email: email}}) when is_binary(email), do: email
+
+  defp author(%{user: %User{} = user}), do: User.display_name(user)
+
   defp author(_), do: nil
 end

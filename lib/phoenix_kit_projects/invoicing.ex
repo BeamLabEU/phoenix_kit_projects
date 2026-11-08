@@ -24,6 +24,8 @@ defmodule PhoenixKitProjects.Invoicing do
   onto the line items at generation. Lines group by task.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   import Ecto.Query
 
   require Logger
@@ -89,6 +91,20 @@ defmodule PhoenixKitProjects.Invoicing do
     _ -> []
   end
 
+  @doc """
+  Is this entry on an invoice? For a WRITE guard, so it fails CLOSED: a read
+  that fails answers `true` — `invoiced_entry_uuids/1`'s `[]` on error would
+  read as "not invoiced" and let the figure behind an invoice change.
+  """
+  @spec invoiced?(binary()) :: boolean()
+  def invoiced?(entry_uuid) when is_binary(entry_uuid) do
+    from(r in @refs_table, where: r.entry_uuid == ^Ecto.UUID.dump!(entry_uuid), select: 1)
+    |> with_prefix()
+    |> RepoHelper.repo().exists?()
+  rescue
+    _ -> true
+  end
+
   @doc "Uninvoiced billable HUMAN time entries for a project, oldest first."
   @spec uninvoiced_entries(binary()) :: [WorkEntry.t()]
   def uninvoiced_entries(project_uuid) do
@@ -112,54 +128,72 @@ defmodule PhoenixKitProjects.Invoicing do
 
   @doc """
   Generates the draft invoice: prices the uninvoiced entries, creates the
-  billing draft, then records the refs. Idempotent at the entry level
-  (the PK); a refs failure after the draft exists is surfaced as
-  `{:error, :refs_failed, invoice_uuid}` — the draft is real, the
-  entries stay re-billable, and the caller tells the human to reconcile
-  (the consult's compensating-action note).
+  billing draft, then records the refs — in ONE transaction, under a lock
+  per project (`pg_advisory_xact_lock`): two clicks (two tabs, two people)
+  never bill the same entries twice — the second waits, then finds nothing
+  left to bill — and a refs failure rolls the draft back with it rather
+  than leaving one the entries do not point at. The billing module writes
+  through the same repo, so its draft joins this transaction.
   """
   @spec generate_draft(map(), keyword()) ::
           {:ok, %{invoice_uuid: binary(), line_count: non_neg_integer(), total_cents: integer()}}
           | {:error, atom()}
-          | {:error, :refs_failed, binary()}
   def generate_draft(project, opts \\ []) do
     with {:ok, %{profile: profile, rate_cents: rate_cents}} <- setup(project),
-         entries when entries != [] <- uninvoiced_entries(project.uuid),
-         {:ok, invoice} <- create_billing_draft(project, profile, rate_cents, entries) do
-      case insert_refs(project.uuid, entries, invoice_uuid(invoice)) do
-        :ok ->
-          Activity.log("projects.invoice_generated",
-            actor_uuid: Keyword.get(opts, :actor_uuid),
-            resource_type: "project",
-            resource_uuid: project.uuid,
-            metadata: %{
-              "invoice_uuid" => invoice_uuid(invoice),
-              "entries" => length(entries),
-              "total_cents" => total_cents(entries, rate_cents)
-            }
-          )
+         {:ok, {invoice, lines, total}} <- draft_in_tx(project, profile, rate_cents) do
+      Activity.log("projects.invoice_generated",
+        actor_uuid: Keyword.get(opts, :actor_uuid),
+        resource_type: "project",
+        resource_uuid: project.uuid,
+        metadata: %{
+          "invoice_uuid" => invoice_uuid(invoice),
+          "lines" => length(lines),
+          "total_cents" => total
+        }
+      )
 
-          PubSub.broadcast_project(:project_invoice_generated, %{uuid: project.uuid})
+      PubSub.broadcast_project(:project_invoice_generated, %{uuid: project.uuid})
 
-          {:ok,
-           %{
-             invoice_uuid: invoice_uuid(invoice),
-             line_count: length(entries),
-             total_cents: total_cents(entries, rate_cents)
-           }}
+      {:ok, %{invoice_uuid: invoice_uuid(invoice), line_count: length(lines), total_cents: total}}
+    end
+  end
+
+  defp draft_in_tx(project, profile, rate_cents) do
+    repo = RepoHelper.repo()
+
+    repo.transaction(fn ->
+      repo.query!("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        "pkp_invoice:" <> project.uuid
+      ])
+
+      with entries when entries != [] <- uninvoiced_entries(project.uuid),
+           lines = build_line_items(project, rate_cents, entries),
+           total = lines_total(lines),
+           {:ok, invoice} <-
+             create_billing_draft(
+               profile,
+               Enum.map(lines, &Map.delete(&1, "cents")),
+               total,
+               project
+             ),
+           :ok <- insert_refs(project.uuid, entries, invoice_uuid(invoice)) do
+        {invoice, lines, total}
+      else
+        [] ->
+          repo.rollback(:nothing_to_bill)
 
         :error ->
-          Logger.error(
-            "[Projects.Invoicing] draft #{invoice_uuid(invoice)} created but refs failed — " <>
-              "entries remain re-billable; reconcile manually"
-          )
+          Logger.error("[Projects.Invoicing] refs insert failed — the draft is rolled back")
+          repo.rollback(:billing_write_failed)
 
-          {:error, :refs_failed, invoice_uuid(invoice)}
+        {:error, reason} ->
+          repo.rollback(reason)
       end
-    else
-      [] -> {:error, :nothing_to_bill}
-      {:error, _} = error -> error
-    end
+    end)
+  rescue
+    e ->
+      Logger.error("[Projects.Invoicing] draft failed: #{Exception.message(e)}")
+      {:error, :billing_write_failed}
   end
 
   # ── Internals ───────────────────────────────────────────────────
@@ -212,9 +246,8 @@ defmodule PhoenixKitProjects.Invoicing do
     _ -> {:error, :profile_not_found}
   end
 
-  defp create_billing_draft(project, profile, rate_cents, entries) do
-    line_items = build_line_items(project, rate_cents, entries)
-    total = Decimal.div(Decimal.new(total_cents(entries, rate_cents)), 100)
+  defp create_billing_draft(profile, line_items, total_cents, project) do
+    total = Decimal.div(Decimal.new(total_cents), 100)
 
     attrs = %{
       status: "draft",
@@ -240,7 +273,11 @@ defmodule PhoenixKitProjects.Invoicing do
 
   # One line per task (assignment), quantity in hours (2dp), the rate
   # snapshotted as the unit price. Project-level entries (no assignment)
-  # group under the project's own name.
+  # group under the project's own name. Each line keeps its own cents
+  # (`"cents"`, read by `lines_total/1`), so the draft's total is the sum of
+  # its lines — three 20-minute lines at 100/h are 33.33 each and 99.99 in
+  # all, never a total of 100.00 under them. The text is in the language of
+  # whoever generates the draft.
   defp build_line_items(project, rate_cents, entries) do
     labels = assignment_labels(project.uuid, entries)
 
@@ -253,14 +290,22 @@ defmodule PhoenixKitProjects.Invoicing do
 
       %{
         "name" => Map.get(labels, assignment_uuid, project.name),
-        "description" => "Logged effort (#{length(group)} entries)",
+        "description" =>
+          ngettext(
+            "Logged effort (1 entry)",
+            "Logged effort (%{count} entries)",
+            length(group)
+          ),
         "quantity" => hours,
         "unit_price" => format_cents(rate_cents),
-        "total" => format_cents(cents)
+        "total" => format_cents(cents),
+        "cents" => cents
       }
     end)
     |> Enum.sort_by(& &1["name"])
   end
+
+  defp lines_total(lines), do: lines |> Enum.map(& &1["cents"]) |> Enum.sum()
 
   defp assignment_labels(project_uuid, entries) do
     uuids = entries |> Enum.map(& &1.assignment_uuid) |> Enum.reject(&is_nil/1) |> Enum.uniq()
@@ -273,15 +318,10 @@ defmodule PhoenixKitProjects.Invoicing do
       from(a in Assignment, where: a.uuid in ^uuids and a.project_uuid == ^project_uuid)
       |> preload([:task, :child_project])
       |> RepoHelper.repo().all()
-      |> Map.new(fn a -> {a.uuid, Assignment.label(a, lang) || "Task"} end)
+      |> Map.new(fn a -> {a.uuid, Assignment.label(a, lang) || gettext("Task")} end)
     end
   rescue
     _ -> %{}
-  end
-
-  defp total_cents(entries, rate_cents) do
-    minutes = entries |> Enum.map(&Decimal.to_float(&1.amount)) |> Enum.sum()
-    round(minutes / 60 * rate_cents)
   end
 
   defp format_cents(cents) do

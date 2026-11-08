@@ -290,7 +290,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           if(a.worker != "",
             do: Enum.find_value(worker_options, a.worker, &(&1.key == a.worker && &1.name))
           ),
-        "task" => if(a.mode == :project and a.task != "", do: picked_task(a.task, lang)),
+        "task" =>
+          if(a.mode == :project and a.task != "",
+            do: picked_task(a.task, project_uuids, lang)
+          ),
         "project" =>
           if(a.project_filter != "",
             do:
@@ -360,10 +363,31 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   defp who_filter("ai"), do: :ai
   defp who_filter(_), do: :all
 
-  defp picked_task(uuid, lang) do
+  # Only a task of the projects this read covers: the value is the
+  # address's, and `task_option/2` resolves a ref (`SECRET-7`) as well as a
+  # uuid — a crafted pick on one project's tab showed any task's title.
+  defp picked_task(uuid, project_uuids, lang) do
     case Hours.task_option(uuid, lang) do
-      %{} = task -> task_label(task)
-      nil -> gettext("A removed task")
+      %{project_uuid: p} = task when is_list(project_uuids) ->
+        if p in project_uuids, do: task_label(task), else: gettext("A removed task")
+
+      %{} = task when project_uuids == :all ->
+        task_label(task)
+
+      _ ->
+        gettext("A removed task")
+    end
+  end
+
+  # A picked task, as its uuid, when it belongs to the projects shown; ""
+  # (no task filter) otherwise.
+  defp own_task_uuid(socket, value) do
+    uuids = project_uuids(socket)
+
+    case Hours.task_option(value) do
+      %{uuid: uuid, project_uuid: p} when is_list(uuids) -> if p in uuids, do: uuid, else: ""
+      %{uuid: uuid} when uuids == :all -> uuid
+      _ -> ""
     end
   end
 
@@ -565,7 +589,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
     case pick_field_of(id) do
       "worker" -> {:noreply, push_url_state(socket, worker: value)}
-      "task" -> {:noreply, push_url_state(socket, task: value)}
+      "task" -> {:noreply, push_url_state(socket, task: own_task_uuid(socket, value))}
       "project" -> {:noreply, push_url_state(socket, project_filter: value)}
       "logtask" -> {:noreply, put_log_value(socket, "task", value)}
       "logperson" -> {:noreply, put_log_value(socket, "person", value)}

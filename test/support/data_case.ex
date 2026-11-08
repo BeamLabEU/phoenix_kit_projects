@@ -43,6 +43,11 @@ defmodule PhoenixKitProjects.DataCase do
 
     on_exit(fn -> Sandbox.stop_owner(pid) end)
 
+    # A host's Projects module is switched on: the API, the public portal
+    # and library writes all refuse while it is off. A test of the
+    # switched-off behaviour switches it off itself.
+    {:ok, _} = PhoenixKit.Settings.update_boolean_setting("projects_enabled", true)
+
     :ok
   end
 

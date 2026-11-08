@@ -62,6 +62,10 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
          # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
          page_title: gettext("Files"),
          project: project,
+         # Who may add and remove: the controls follow it (every write asks
+         # again, `with_upload_authz/2`), so a viewer is not shown buttons
+         # that only answer "you don't have permission".
+         can_upload: Authz.can?(scope(socket), project, :upload_files),
          show_picker: false,
          folder_uuid: Attachments.folder_uuid(project, Activity.actor_uuid(socket))
        )
@@ -91,6 +95,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
        project: nil,
        files: [],
        download_urls: %{},
+       can_upload: false,
        show_picker: false,
        folder_uuid: nil,
        wrapper_class: socket.assigns[:wrapper_class] || @default_wrapper_class
@@ -165,9 +170,16 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
     end)
   end
 
+  # An event the page does not take (or `remove_file` without its uuid).
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # Asked of the project as stored now: the Files extension switched off
+  # since the page opened closes the writes too (the mount checked it once).
   defp with_upload_authz(socket, fun) do
-    if socket.assigns.project &&
-         Authz.can?(scope(socket), socket.assigns.project, :upload_files) do
+    project = socket.assigns.project && Projects.get_project(socket.assigns.project.uuid)
+
+    if project && Extensions.enabled?(project, "files") &&
+         Authz.can?(scope(socket), project, :upload_files) do
       fun.()
     else
       {:noreply,
@@ -233,7 +245,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
             </.smart_link>
           </:back_link>
           <:actions>
-            <button type="button" class="btn btn-primary btn-sm" phx-click="open_picker">
+            <button :if={@can_upload} type="button" class="btn btn-primary btn-sm" phx-click="open_picker">
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add files")}
             </button>
           </:actions>
@@ -241,7 +253,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
 
         <%= if @files == [] do %>
           <.empty_state icon="hero-paper-clip" title={gettext("No files yet.")}>
-            <:cta>
+            <:cta :if={@can_upload}>
               <button type="button" class="link link-primary text-sm" phx-click="open_picker">
                 {gettext("Add the first file")}
               </button>
@@ -274,6 +286,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
                   <.icon name="hero-arrow-top-right-on-square" class="w-4 h-4" />
                 </a>
                 <button
+                  :if={@can_upload}
                   type="button"
                   class="btn btn-ghost btn-xs btn-circle text-error"
                   {ConfirmAction.ask("remove_file",

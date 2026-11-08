@@ -135,6 +135,27 @@ defmodule PhoenixKitProjects.Web.Components.DurationInput do
 
   def estimate_attrs(attrs), do: attrs
 
+  @doc """
+  A changeset built from `estimate_attrs/1`'s converted fields, echoing the
+  estimate as it was TYPED: on a `validate` the form must show what the
+  person typed, or the unit select (not focused, so redrawn) jumps to the
+  converted unit under an amount box the browser keeps as typed — and the
+  next Save posts "1.5" with "minutes". The converted values still decide
+  the changeset's validity; only what the inputs show is the raw pair.
+  """
+  @spec keep_typed(Ecto.Changeset.t(), map()) :: Ecto.Changeset.t()
+  def keep_typed(%Ecto.Changeset{params: %{} = params, changes: changes} = cs, %{} = raw) do
+    typed = Map.take(raw, ["estimated_duration", "estimated_duration_unit"])
+
+    # A form shows a field's CHANGE before its param, so the converted pair
+    # leaves the changes too; the errors it caused stay.
+    keys = for k <- Map.keys(typed), do: String.to_existing_atom(k)
+
+    %{cs | params: Map.merge(params, typed), changes: Map.drop(changes, keys)}
+  end
+
+  def keep_typed(cs, _raw), do: cs
+
   defp step_down(n, "days"), do: whole_or_down(n * 8, "hours")
   defp step_down(n, "hours"), do: whole_or_down(n * 60, "minutes")
   defp step_down(n, unit), do: {round(n), unit}

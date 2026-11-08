@@ -213,9 +213,13 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
 
   defp resolve(_key, _value), do: invalid(shape_message())
 
+  # Looked up as stored (lowercase): the shape check accepts either case, so
+  # an uppercase uuid was "No team" before.
   defp named(kind, uuid) when is_binary(uuid) do
+    uuid = String.downcase(uuid)
+
     if Regex.match?(@uuid, uuid) and exists?(kind, uuid),
-      do: {:ok, [{kind, String.downcase(uuid)}]},
+      do: {:ok, [{kind, uuid}]},
       else: invalid("No #{kind} with that uuid. GET /people lists who a task can be for.")
   end
 

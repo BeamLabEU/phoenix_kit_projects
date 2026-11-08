@@ -53,6 +53,16 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
       refute html =~ "task-menu-"
     end
 
+    test "still has the tools to find a task: search, sort and Columns", %{conn: conn} do
+      fixture_task(%{"title" => "Shared step #{n()}"})
+      {:ok, view, _html} = live(put_test_scope(conn, base_scope()), "/en/admin/projects/tasks")
+
+      assert has_element?(view, "#tasks-local-search")
+      assert has_element?(view, ~s(form[phx-submit="search"]))
+      assert has_element?(view, ~s([phx-click="open_column_modal"]))
+      refute has_element?(view, "#tasks-bulk-scope")
+    end
+
     test "crafted delete, promote and reorder events change nothing", %{conn: conn} do
       lib = fixture_task(%{"title" => "Keep me #{n()}"})
       other = fixture_task(%{"title" => "Other #{n()}"})
@@ -371,6 +381,28 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
 
       later_uuid = later.uuid
       refute_received {:granted, ^later_uuid, _}
+    end
+
+    test "a flag that cannot be read grants nothing — never 'never ran'" do
+      # Core's `get_setting/1` rescues a failed read to nil: read that way,
+      # one bad boot handed back every sub-key an Owner had revoked.
+      _role = role_with_projects!()
+      test_pid = self()
+
+      grant = fn role_uuid, key, _by ->
+        send(test_pid, {:granted, role_uuid, key})
+        {:ok, :granted}
+      end
+
+      assert {:error, :flag_unreadable} =
+               PhoenixKitProjects.backfill_sub_keys(
+                 "projects_manage_library_backfilled",
+                 ["projects.manage_library"],
+                 grant: grant,
+                 flag_set?: fn _flag -> :unreadable end
+               )
+
+      refute_received {:granted, _, _}
     end
 
     test "a failed grant leaves the flag unset so the next boot retries" do

@@ -12,6 +12,8 @@ defmodule PhoenixKitProjects.Health do
   is just the latest judgment.
   """
 
+  import Ecto.Query
+
   require Logger
 
   alias PhoenixKit.RepoHelper
@@ -55,8 +57,7 @@ defmodule PhoenixKitProjects.Health do
         |> maybe_put_note(note)
 
       project
-      |> Ecto.Changeset.change(settings: Map.put(project.settings || %{}, "health", health))
-      |> RepoHelper.repo().update()
+      |> write_health(health)
       |> case do
         {:ok, updated} ->
           Activity.log("projects.health_updated",
@@ -83,6 +84,39 @@ defmodule PhoenixKitProjects.Health do
     else
       {:error, :invalid_status}
     end
+  end
+
+  # ATOMIC targeted write, like `Features.set_flags/3`: `settings` is a shared
+  # column (visibility, the "who can do what" floors, features, completion,
+  # the agent policy live beside "health"), and a whole-map write from the
+  # caller's struct — a project page mounted before an owner tightened any of
+  # them — silently put the old values back. jsonb_set touches ONLY
+  # settings["health"], over whatever is in the row now.
+  defp write_health(%Project{uuid: uuid}, health) do
+    query =
+      from(p in Project,
+        where: p.uuid == ^uuid,
+        update: [
+          set: [
+            settings:
+              fragment(
+                "jsonb_set(COALESCE(settings, '{}'::jsonb), '{health}', ?::jsonb)",
+                ^health
+              ),
+            updated_at: fragment("NOW()")
+          ]
+        ],
+        select: p
+      )
+
+    case RepoHelper.repo().update_all(query, []) do
+      {1, [updated]} -> {:ok, updated}
+      _ -> {:error, :not_found}
+    end
+  rescue
+    e in Postgrex.Error ->
+      Logger.warning("[Projects.Health] set failed: #{Exception.message(e)}")
+      {:error, :not_found}
   end
 
   defp maybe_put_note(health, note) when is_binary(note) do

@@ -318,7 +318,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
               words_by_key_uuid: key.uuid
             })
 
-          apply_labels(project, a, params["labels"])
+          apply_labels(project, a, params["labels"], key)
 
           # last under its parent (checked above); the top level needs no move
           if is_binary(params["parent"]), do: Outline.move(a, params["parent"], :last)
@@ -377,7 +377,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
                   {:ok, _} <- update_fields(a, assignment_attrs),
                   :ok <- stamp_words(a, key, content),
                   :ok <- keep_interaction_tokens(conn, a),
-                  :ok <- apply_labels(project, a, params["labels"]),
+                  :ok <- apply_labels(project, a, params["labels"], key),
                   :ok <- link_interaction(conn, a, params["interaction"]) do
                {:ok, :written}
              end
@@ -667,28 +667,22 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     do: {:error, Json.error_body(422, "validation_failed", "interaction must be a uuid.")}
 
   # Labels by name, when the project has labels on; a nil means "leave them".
-  defp apply_labels(_project, _a, nil), do: :ok
+  defp apply_labels(_project, _a, nil, _key), do: :ok
 
-  defp apply_labels(project, a, names) when is_list(names) do
+  defp apply_labels(project, a, names, key) when is_list(names) do
     if Features.on?(project, "labels") do
-      Labels.set_assignment_labels(a, Labels.ensure_by_names(project, names, label_opts(a)))
+      Labels.set_assignment_labels(a, Labels.ensure_by_names(project, names, label_opts(key)))
     end
 
     :ok
   end
 
-  defp apply_labels(_project, _a, _), do: :ok
+  defp apply_labels(_project, _a, _, _key), do: :ok
 
-  # The key behind a label made on the fly, in its activity row.
-  defp label_opts(a) do
-    case Projects.get_assignment(a.uuid) do
-      %Assignment{created_by_uuid: uuid, created_by_key_uuid: key_uuid} ->
-        [actor_uuid: uuid, metadata: %{"via" => "api", "api_key" => key_uuid}]
-
-      _ ->
-        []
-    end
-  end
+  # The key making THIS call behind a label made on the fly, in its activity
+  # row (the task's creator may be another key, or a person).
+  defp label_opts(key),
+    do: [actor_uuid: ApiKey.accountable_uuid(key), metadata: api_metadata(key, %{})]
 
   # Label names: a list of strings, each 1–60 characters (the registry's
   # cap); anything else is a 422 rather than a silent drop.

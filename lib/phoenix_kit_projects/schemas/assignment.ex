@@ -436,7 +436,8 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
   Used both to create the linking row (`create_subproject/2`) and to sync the
   denormalized rollup fields whenever the child project changes
-  (`sync_project_rollup/1`). Unlike `changeset/2` it:
+  (`Projects.recompute_project_completion/1`, which climbs the rollup to
+  the parent). Unlike `changeset/2` it:
 
     * casts `child_project_uuid` and the server-owned rollup fields
       (`status` / `progress_pct` / `estimated_duration` / `completed_at` /

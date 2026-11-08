@@ -119,6 +119,13 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
       {:error, %Ecto.Changeset{} = cs} ->
         Json.changeset_error(cs)
 
+      {:error, :too_deep} ->
+        Json.error_body(
+          409,
+          "conflict",
+          "There is no room for another level of sub-projects under this project."
+        )
+
       {:error, _} ->
         Json.error_body(404, "not_found", "No such project within this key's reach.")
     end

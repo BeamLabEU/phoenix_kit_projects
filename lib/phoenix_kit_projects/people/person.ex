@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.People.Person do
   @moduledoc """
-  READ-ONLY shadow schema over the core-owned `phoenix_kit_staff_people`
+  READ-ONLY shadow schema over the staff-owned `phoenix_kit_staff_people`
   table (created by core migration V100 — present on every install,
   whether or not the `phoenix_kit_staff` package is). Part of the
   staff-optional seam (see `PhoenixKitProjects.People`): projects' own

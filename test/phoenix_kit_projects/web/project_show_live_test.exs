@@ -1149,7 +1149,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
 
     defp timeline_fragment(html) do
-      case :binary.match(html, "id=\"project-show-timeline\"") do
+      case :binary.match(html, "id=\"project-show-timeline-") do
         {start, _} ->
           rest = binary_part(html, start, byte_size(html) - start)
 

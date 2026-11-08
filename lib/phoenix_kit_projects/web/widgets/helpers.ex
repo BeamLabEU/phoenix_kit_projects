@@ -16,8 +16,8 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
 
   import PhoenixKitWeb.Components.Core.Icon
 
-  alias PhoenixKitProjects.Projects
-  alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.{L10n, Projects}
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @doc "True when the projects module is loaded and enabled."
   @spec available?() :: boolean()
@@ -152,12 +152,24 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
   def hours(nil), do: "—"
   def hours(h) when h == 0, do: "0h"
 
-  def hours(h) when is_number(h), do: PhoenixKitProjects.L10n.format_decimal(h) <> "h"
+  def hours(h) when is_number(h), do: L10n.format_decimal(h) <> "h"
+
+  @doc "A project's name in the reader's language (the primary name when it has none)."
+  @spec project_name(Project.t() | map() | nil) :: String.t()
+  def project_name(%Project{} = p),
+    do: Project.localized_name(p, L10n.current_content_lang()) || p.name || ""
+
+  def project_name(%{name: name}) when is_binary(name), do: name
+  def project_name(_), do: ""
+
+  @doc "A task's label (under its parent's, for a subtask) in the reader's language."
+  @spec task_name(Assignment.t()) :: String.t() | nil
+  def task_name(a), do: Assignment.label_under(a, L10n.current_content_lang())
 
   @doc "A datetime as the module prints dates (`L10n.format_date/1`, translated), or `—`."
   @spec date(DateTime.t() | nil) :: String.t()
   def date(nil), do: "—"
-  def date(%DateTime{} = dt), do: PhoenixKitProjects.L10n.format_date(dt)
+  def date(%DateTime{} = dt), do: L10n.format_date(dt)
 
   @doc """
   A shared widget card frame: header (icon + title + optional link) + body slot.

@@ -21,7 +21,6 @@ defmodule PhoenixKitProjects.Web.ProjectApiLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.{Activity, ApiAccess, ApiKeys, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Project}
   alias PhoenixKitProjects.Web.Api.Docs
@@ -166,8 +165,8 @@ defmodule PhoenixKitProjects.Web.ProjectApiLive do
   @doc false
   # The global API keys page; with a project, its "new key" form starts
   # on that project.
-  def keys_page(nil), do: Routes.path("/admin/projects/api-keys")
-  def keys_page(project_uuid), do: Routes.path("/admin/projects/api-keys?project=#{project_uuid}")
+  def keys_page(nil), do: Paths.api_keys()
+  def keys_page(project_uuid), do: Paths.api_keys(project_uuid)
 
   defp project_name(%Project{} = project),
     do: Project.localized_name(project, L10n.current_content_lang())

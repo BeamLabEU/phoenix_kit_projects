@@ -267,6 +267,10 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
+  # The report form's change event: it carries the picked files to the
+  # upload; the typed text stays in the browser until the submit.
+  def handle_event("report_change", _params, socket), do: {:noreply, socket}
+
   def handle_event("submit_issue", params, socket) do
     do_submit(socket, params)
   end
@@ -429,9 +433,18 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         </p>
       </div>
 
-      <div :if={@error} class="alert alert-error text-sm">{@error}</div>
+      <div :if={@error} class="alert alert-error text-sm" role="alert">{@error}</div>
 
-      <form id="portal-submit-form" phx-submit="submit_issue" class="flex flex-col gap-4">
+      <%!-- `phx-change`: LiveView tracks a file picked with the browser's
+           dialog only through the form's change event — without it a
+           picked screenshot never uploaded and the report went in without
+           it, in silence (drag-and-drop still worked). --%>
+      <form
+        id="portal-submit-form"
+        phx-change="report_change"
+        phx-submit="submit_issue"
+        class="flex flex-col gap-4"
+      >
         <.input
           type="text"
           name="title"

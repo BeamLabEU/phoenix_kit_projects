@@ -99,6 +99,32 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
       end
     end
 
+    test "safe_content never hands the editor a link that runs script" do
+      # Leaf's link popover opens the address: a portal submitter's
+      # `javascript:` link must not reach it.
+      for {bad, expected} <- [
+            {"[x](javascript:alert(1))", "[x](#)"},
+            {"[x](JaVaScRiPt:alert(1))", "[x](#)"},
+            {"![p](data:text/html,hi)", "![p](#)"}
+          ] do
+        assert DescriptionEditor.safe_content(bad) == expected
+      end
+
+      # Spelled with an entity, the scheme cannot be replaced by its text:
+      # the brackets go, so it reads as words, never as a link.
+      assert DescriptionEditor.safe_content("[x](javascript&#58;alert(1))") ==
+               "\\[x](javascript&#58;alert(1))"
+
+      for kept <- [
+            "[site](https://example.com)",
+            "[mail](mailto:a@b.c)",
+            "[here](/admin/projects)",
+            "![pic](pkfile:0190a3b4-0000-7000-8000-000000000001)"
+          ] do
+        assert DescriptionEditor.safe_content(kept) == kept
+      end
+    end
+
     test "a stored description's tag reaches the task form's editor as text", ctx do
       evil = ~S|Call them <img src=x onerror="alert(1)"> today|
 

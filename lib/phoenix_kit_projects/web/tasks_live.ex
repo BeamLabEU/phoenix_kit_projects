@@ -444,7 +444,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         uuids -> uuids
       end
 
-    case Projects.reorder_tasks_by(strategy, scope, actor_uuid: Activity.actor_uuid(socket)) do
+    opts = [actor_uuid: Activity.actor_uuid(socket), ad_hoc: lens_filter(socket.assigns.lens)]
+
+    result =
+      if one_off_order_refused?(socket),
+        do: {:error, :forbidden},
+        else: Projects.reorder_tasks_by(strategy, scope, opts)
+
+    case result do
       :ok ->
         {:noreply,
          socket
@@ -460,6 +467,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
            gettext("Selected rows share positions. Apply \"Reorder all\" first to normalise.")
          )}
 
+      {:error, :forbidden} ->
+        {:noreply,
+         socket
+         |> assign(show_reorder_modal: false, captured_uuids: [])
+         |> put_flash(:error, gettext("Only an administrator can reorder one-off tasks."))}
+
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, gettext("Could not reorder tasks."))}
     end
@@ -474,7 +487,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     moved_id = params["moved_id"]
     actor_uuid = Activity.actor_uuid(socket)
 
-    case Projects.reorder_tasks(ordered_ids, actor_uuid: actor_uuid) do
+    result =
+      if one_off_order_refused?(socket),
+        do: {:error, :forbidden},
+        else: Projects.reorder_tasks(ordered_ids, actor_uuid: actor_uuid)
+
+    case result do
       :ok ->
         {:noreply,
          socket
@@ -513,6 +531,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   defp library_write(_event, _params, socket), do: {:noreply, socket}
+
+  # The one-off lens shows a non-admin only their own projects' one-offs:
+  # their order is everyone's, so only an administrator of every project
+  # sets it (a member's 1..N would land on rows they cannot see).
+  defp one_off_order_refused?(socket) do
+    socket.assigns.lens == :one_off and
+      not Authz.admin_all?(socket.assigns[:phoenix_kit_current_scope])
+  end
 
   defp delete_task(socket, task) do
     case Projects.delete_task(task) do
@@ -784,7 +810,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             >
               <.bulk_actions_toolbar
                 on_open_reorder="open_reorder_modal"
-                reorder_dialog_id="reorder-modal"
+                reorder_dialog_id={"tasks-reorder-modal"}
                 noun_singular={gettext("task")}
                 noun_plural={gettext("tasks")}
                 allow_delete={false}
@@ -857,19 +883,63 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             </div>
           </.bulk_select_scope>
 
-          <%= if not @bulk_enabled? do %>
-            <.sort_selector
-              sort_by={@sort_by}
-              sort_dir={@sort_dir}
-              options={sort_options()}
-              manual_field={:position}
-            />
+          <%!-- Read-only (no `manage_library`): the same finding tools —
+               the lens, search, sort, Columns, the view switcher — just no
+               selection or reorder. Only the writing part needs the right. --%>
+          <div
+            :if={not @bulk_enabled?}
+            id="tasks-local-search"
+            phx-hook="TableLocalSearch"
+            data-local-search-enabled={to_string(@local_search?)}
+            class="flex flex-col gap-2"
+          >
+            <div class="flex flex-wrap items-center gap-2">
+              <.nav_tabs
+                :if={@one_off_count > 0 or @lens == :one_off}
+                active_tab={Atom.to_string(@lens)}
+                on_change="set_lens"
+                variant={:boxed}
+                class="tabs-sm"
+                tabs={[
+                  %{id: "library", label: gettext("Library")},
+                  %{id: "one_off", label: gettext("One-off"), badge: @one_off_count}
+                ]}
+              />
+              <.search_toolbar
+                value={@search}
+                on_submit="search"
+                loading_indicator={not @local_search?}
+                placeholder={gettext("Search tasks...")}
+                class="w-48"
+              />
+              <div class="flex items-center gap-2 ml-auto">
+                <.sort_selector
+                  sort_by={@sort_by}
+                  sort_dir={@sort_dir}
+                  options={sort_options()}
+                  manual_field={:position}
+                />
+                <ListUi.columns_button />
+                {view_switcher(assigns)}
+              </div>
+            </div>
+
             {render_tasks_table(assigns, lang)}
-          <% end %>
+
+            <p
+              data-local-search-empty
+              class={["text-sm text-base-content/50 text-center py-2", @tasks != [] && "hidden"]}
+            >
+              {gettext("No tasks match.")}
+            </p>
+          </div>
         <% end %>
       <% end %>
 
+      <%!-- An id of its own per list: the three list pages are embeddable,
+           and two on one host page opened each other's dialog. --%>
       <.reorder_modal
+        id="tasks-reorder-modal"
         show={@show_reorder_modal}
         on_close="close_reorder_modal"
         on_apply="apply_reorder"
@@ -977,7 +1047,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     draggable? =
       assigns.can_manage_library and assigns.sort_by == :position and
         String.trim(assigns.search) == "" and
-        (assigns.local_search? or assigns.loaded_count >= assigns.total_count)
+        (assigns.local_search? or assigns.loaded_count >= assigns.total_count) and
+        (assigns.lens != :one_off or Authz.admin_all?(assigns[:phoenix_kit_current_scope]))
 
     assigns = assign(assigns, lang: lang, draggable?: draggable?)
 

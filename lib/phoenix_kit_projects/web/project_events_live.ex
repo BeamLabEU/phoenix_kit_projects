@@ -73,6 +73,13 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
     {:noreply, socket |> load_events() |> assign(selected: selected)}
   end
 
+  # Who may do what here changed: the right this tab was handed at mount is
+  # asked again (the buttons follow; every write asks for itself anyway).
+  def handle_info({:projects, event, _payload}, socket)
+      when event in [:project_members_changed, :project_grants_changed, :project_updated] do
+    {:noreply, assign(socket, can_write: may_write?(socket))}
+  end
+
   # An extension's own dated things changed (the CRM planned, moved or
   # cancelled a client meeting): read them again.
   def handle_info({:projects, :project_calendar_changed, _payload}, socket),
@@ -88,8 +95,12 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
     {:noreply, assign(socket, selected: selected)}
   end
 
+  # A day click opens the new-event form only for someone who may add one
+  # (a viewer got a form whose save was then refused).
   def handle_info({:calendar_date_click, %Date{} = date}, socket) do
-    {:noreply, assign(socket, modal_open: true, modal_date: date)}
+    if socket.assigns.can_write,
+      do: {:noreply, assign(socket, modal_open: true, modal_date: date)},
+      else: {:noreply, socket}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -113,7 +124,9 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   end
 
   def handle_event("open_new_event", _params, socket) do
-    {:noreply, assign(socket, modal_open: true, modal_date: socket.assigns.today)}
+    if socket.assigns.can_write,
+      do: {:noreply, assign(socket, modal_open: true, modal_date: socket.assigns.today)},
+      else: {:noreply, socket}
   end
 
   def handle_event("close_new_event", _params, socket) do
@@ -133,7 +146,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   end
 
   def handle_event("create_event", params, socket) do
-    case {socket.assigns.can_write, socket.assigns.project} do
+    case {may_write?(socket), socket.assigns.project} do
       {false, _} ->
         {:noreply,
          put_flash(socket, :error, gettext("You don't have permission to change events."))}
@@ -163,7 +176,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   end
 
   def handle_event("delete_event", %{"uuid" => uuid}, socket) do
-    with true <- socket.assigns.can_write,
+    with true <- may_write?(socket),
          %{} = project <- socket.assigns.project,
          %ProjectEvent{} = event <- ProjectEvents.get(project.uuid, uuid),
          :ok <- ProjectEvents.delete(event, actor_uuid: socket.assigns.current_user_uuid) do
@@ -188,6 +201,18 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # ── Internals ───────────────────────────────────────────────────
+
+  # The tab's write right as it stands now (`WebHelpers.tab_write?/5`), not
+  # only as the hub handed it at mount.
+  defp may_write?(socket) do
+    WebHelpers.tab_write?(
+      socket.assigns.can_write,
+      socket.assigns.current_user_uuid,
+      socket.assigns.project && socket.assigns.project.uuid,
+      :create_tasks,
+      "events"
+    )
+  end
 
   defp load_events(socket) do
     case socket.assigns.project do
@@ -270,9 +295,17 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
       "#{L10n.format_date(item.starts_at)} #{L10n.local_time(item.starts_at)}"
 
     case Map.get(item, :ends_at) do
-      %DateTime{} = ends_at -> "#{start_label} – #{L10n.local_time(ends_at)}"
+      %DateTime{} = ends_at -> "#{start_label} – #{end_label(item.starts_at, ends_at)}"
       _ -> start_label
     end
+  end
+
+  # The end's time alone on the start's day; its date too when it ends on
+  # another ("Mon 09:00 – 17:00" read as one day for a three-day event).
+  defp end_label(starts_at, ends_at) do
+    if L10n.local_date(ends_at) == L10n.local_date(starts_at),
+      do: L10n.local_time(ends_at),
+      else: "#{L10n.format_date(ends_at)} #{L10n.local_time(ends_at)}"
   end
 
   # Where the item is managed: the extension's own tab on this project when
@@ -428,7 +461,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
 
     case e.ends_at do
       nil -> start_label
-      ends_at -> "#{start_label} – #{L10n.local_time(ends_at)}"
+      ends_at -> "#{start_label} – #{end_label(e.starts_at, ends_at)}"
     end
   end
 
@@ -484,6 +517,10 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
           </button>
         </div>
 
+        <%!-- One month navigator, the tab's own above: it is what reads the
+             events (and the extensions' items) for the month shown. The
+             component's header moved only its grid, which then drifted from
+             the label and showed months nothing was read for. --%>
         <.live_component
           module={PhoenixLiveCalendar.CalendarComponent}
           translations={CalendarDisplay.translations()}
@@ -493,6 +530,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
           date={@anchor_date}
           today={@today}
           expand_cells={true}
+          show_header={false}
           on_event_click={fn id -> send(self(), {:calendar_event_click, id}) end}
           on_date_select={fn date -> send(self(), {:calendar_date_click, date}) end}
         />
@@ -622,7 +660,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
         <%!-- Create modal. `close_guard`: a quick Esc must not throw away
              what was just typed. --%>
         <.modal
-          :if={@modal_open}
+          :if={@modal_open and @can_write}
           show
           on_close="close_new_event"
           id={"event-new-#{@project.uuid}"}

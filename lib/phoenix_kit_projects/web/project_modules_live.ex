@@ -91,23 +91,20 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
     end
   end
 
+  # No project named. Through `refuse/2`, which sets every key the template
+  # reads: in emit or popup mode `close_or_navigate` does not leave, so the
+  # page renders — and a missing assign crashed it instead of closing.
   def mount(_params, session, socket) do
     WebHelpers.maybe_put_locale(session)
 
-    {:ok,
-     socket
-     |> WebHelpers.assign_embed_state(session)
-     |> assign(
-       wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
-       project: nil,
-       extensions: [],
-       flag_groups: [],
-       presets: [],
-       api_keys: [],
-       key_people: []
-     )
-     |> put_flash(:error, gettext("Project not found."))
-     |> WebHelpers.close_or_navigate(Paths.projects())}
+    socket
+    |> WebHelpers.assign_embed_state(session)
+    |> assign(
+      wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
+      embedded_in_form: Map.get(session, "embedded_in_form", false),
+      confirm_rev: 0
+    )
+    |> refuse(gettext("Project not found."))
   end
 
   # As a PAGE, a refusal navigates away with a flash. As a SECTION inside
@@ -948,9 +945,14 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           flag.key in unmet,
           do: WebHelpers.translate_catalog(flag.label)
 
+    # A required flag whose extension is off is not in the groups shown:
+    # named from the catalog then, never as its raw key.
     case labels do
-      [] -> Enum.join(unmet, ", ")
-      found -> Enum.join(found, ", ")
+      [] ->
+        unmet |> Features.flag_labels() |> Enum.map_join(", ", &WebHelpers.translate_catalog/1)
+
+      found ->
+        Enum.join(found, ", ")
     end
   end
 

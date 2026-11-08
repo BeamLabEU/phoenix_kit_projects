@@ -124,41 +124,30 @@ defmodule PhoenixKitProjects.MixProject do
       # `core_ui_api_conformance_test.exs` the core attrs and slots the pages use.
       pk_dep(:phoenix_kit, ">= 3.3.0 and < 4.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
-      # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
-      # floor — that's the release that actually ships the AI-translation move
-      # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
-      # 0.3.0 predates it and won't compile against this module.
+      # `AITranslatable` / `AITranslateBinding` code plugs into, and calls
+      # `handle_ai_usage/1` back. 0.28 is the release this package is built and
+      # tested against (its own V6 migration comes with it).
       pk_dep(:phoenix_kit_ai, "~> 0.28"),
-      # 0.3 is the floor: `Assignees` calls
-      # `PhoenixKitStaff.Schemas.Person.display_name/1`, which staff first
-      # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
-      # The call is unguarded, so `~> 0.1` admitted releases where building an
-      # assignee list raises `UndefinedFunctionError`.
-      # Hard dep: this package's own chain (`Migrations.Schema`) creates 18 foreign
+      # Hard dep: this package's own chain (`Migrations.Schema`) creates foreign
       # keys into staff's tables, and core no longer creates them, so a host that
       # has projects needs staff's chain run first. `Modules.order_by_dependencies/1`
-      # reads this edge to order the module migrations.
-      #
-      # The 0.3 floor above still applies: making a dependency hard does not make
-      # an older release safe.
+      # reads this edge to order the module migrations. The code itself reads
+      # staff data only through `PhoenixKitProjects.People` (the `WITHOUT_STAFF=1`
+      # compile gate proves it).
       #
       # 0.11.1 is the floor: `Migrations.Schema` runs staff's chain before its own,
       # so on a fresh install a host's older staff migration file runs after it,
       # and before 0.11.1 that file could lower the marker. Compound form, because
       # `~> 0.11.1` would also lower the ceiling to `< 0.12.0`.
       pk_dep(:phoenix_kit_staff, ">= 0.11.1 and < 1.0.0"),
-      # 0.2.6 is the floor: `ProjectShowLive` does `use
-      # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
-      # admitted 0.2.0–0.2.5, where that `use` site fails to compile.
+      # `ProjectShowLive` does `use PhoenixKitComments.Embed`; 0.5 is the release
+      # this package is built and tested against.
       pk_dep(:phoenix_kit_comments, "~> 0.5"),
 
       # Hard dep: `Migrations.Schema` references `phoenix_kit_entities` (workflow
       # status FK), so entities' chain must run first. The module is also the
       # source/catalog for project workflow statuses.
       pk_dep(:phoenix_kit_entities, "~> 0.7"),
-
-      # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
-      # for polymorphic assignee FKs (team / department / person).
       {:phoenix_live_view, "~> 1.1"},
       {:ecto_sql, "~> 3.13"},
       # Gantt/waterfall chart for the project timeline view. 0.4 is the floor —

@@ -42,13 +42,30 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
       # The limit is taken before anything else is read about the key: a
       # key over its window costs the key lookup and one counter write, not
       # the account, grant and project reads a served call makes.
-      case rate_limit(conn, key) do
-        {:ok, conn} -> admit(conn, key)
-        {:halt, conn} -> count_refused(conn, key)
+      # Switched off in Admin › Modules (an incident, a migration): the
+      # admin pages close through core's mount gate, and the API with them
+      # — a key must not go on writing tasks and time meanwhile.
+      if PhoenixKitProjects.enabled?() do
+        case rate_limit(conn, key) do
+          {:ok, conn} -> admit(conn, key)
+          {:halt, conn} -> count_refused(conn, key)
+        end
+      else
+        module_disabled(conn)
       end
     else
       _ -> unauthorized(conn)
     end
+  end
+
+  defp module_disabled(conn) do
+    conn
+    |> Json.error(
+      :service_unavailable,
+      "module_disabled",
+      "The Projects module is switched off on this site."
+    )
+    |> halt()
   end
 
   defp admit(conn, key) do
@@ -91,10 +108,13 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
 
   # Where a call without `project` acts: the key's home (V24) — its first
   # grant's project when the home was taken away.
+  # A grant that gives no access (empty scopes) is not a home: the first
+  # one that gives some is, else the first.
   defp home_project(key) do
     with nil <- key.project_uuid && Projects.get_project(key.project_uuid),
-         [first | _] <- ApiKeys.grants(key) do
-      Projects.get_project(first.project_uuid)
+         [first | _] = grants <- ApiKeys.grants(key) do
+      grant = Enum.find(grants, first, &(&1.scopes not in [nil, []]))
+      Projects.get_project(grant.project_uuid)
     else
       [] -> nil
       project -> project

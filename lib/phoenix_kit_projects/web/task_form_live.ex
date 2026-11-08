@@ -279,9 +279,13 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   # Same `:action`-not-stamped pattern as `ProjectFormLive.validate` —
   # surfacing errors only after a failed submit so live editing never
   # red-borders untouched fields.
-  def handle_event("validate", %{"task" => attrs}, socket) do
-    attrs = merge_attrs(attrs, socket)
-    cs = Projects.change_task(socket.assigns.task, attrs)
+  def handle_event("validate", %{"task" => raw}, socket) do
+    attrs = merge_attrs(raw, socket)
+
+    cs =
+      socket.assigns.task
+      |> Projects.change_task(attrs)
+      |> DurationInput.keep_typed(raw)
 
     {:noreply, socket |> assign_form(cs) |> WebHelpers.mark_dirty()}
   end
@@ -553,15 +557,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     |> put_flash(:error, first_error_message(cs))
   end
 
-  defp first_error_message(%Ecto.Changeset{errors: [{field, {msg, _opts}} | _]}) do
-    gettext("%{field}: %{message}", field: humanize(field), message: msg)
-  end
-
-  defp first_error_message(_), do: gettext("Could not save the task.")
-
-  defp humanize(field) do
-    field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
-  end
+  # The field named by its label and the message translated
+  # (`WebHelpers.changeset_error_text/3`) — never a raw `%{count}`.
+  defp first_error_message(cs),
+    do: WebHelpers.changeset_error_text(cs, gettext("Could not save the task."))
 
   @impl true
   def render(assigns) do

@@ -350,6 +350,11 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
         {:noreply, socket}
 
+      not own_viewer?(socket, payload) ->
+        # Another viewer's click on a topic this host shares with them (a
+        # per-record host topic): their drawer, not this page's.
+        {:noreply, socket}
+
       not stale_safe_opener?(socket, emitter_ref) ->
         # The event's `frame_ref` doesn't match the current top of the
         # stack (nil = root view). A non-top emitter means the source
@@ -694,6 +699,17 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     case current_top_ref(socket) do
       ^emitter_ref -> true
       _ -> false
+    end
+  end
+
+  # An `:opened` from this module's own emitters names its viewer
+  # (`user_uuid`); one without (the host app's own, `session["open"]`) is
+  # the host's. A host with no viewer (anonymous embed) cannot tell
+  # viewers apart and takes them all, as before.
+  defp own_viewer?(socket, payload) do
+    case Map.fetch(payload, :user_uuid) do
+      :error -> true
+      {:ok, uuid} -> socket.assigns.host_current_user_uuid in [nil, uuid]
     end
   end
 

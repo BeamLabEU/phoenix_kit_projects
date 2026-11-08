@@ -61,6 +61,25 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     {project, a1, a2}
   end
 
+  test "deleting a sub-project redraws the timeline, it does not leave the page",
+       %{conn: conn, actor_uuid: actor} do
+    {project, _a1, _a2} = started_project_with_tasks(actor)
+
+    {:ok, %{assignment: link}} =
+      Projects.create_subproject(project.uuid, %{"name" => "Worktop"})
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
+    # The tab listens on the child's topic too; its `:project_deleted` is
+    # the child's, not this page's.
+    {:ok, _} = Projects.delete_assignment(link)
+
+    html = render(view)
+    refute html =~ "This project was deleted."
+    assert Process.alive?(view.pid)
+  end
+
   test "renders one bar per assignment with titles", %{conn: conn, actor_uuid: actor} do
     {project, _a1, _a2} = started_project_with_tasks(actor)
 

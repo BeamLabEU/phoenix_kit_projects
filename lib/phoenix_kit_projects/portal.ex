@@ -189,8 +189,11 @@ defmodule PhoenixKitProjects.Portal do
   # Everything that makes a slug real, EXCEPT who the mode lets in. Shared
   # so the header/oracle path can ask "is this a live portal?" without
   # answering "may this particular visitor enter?".
+  # The module switched off closes every portal with it (the admin pages
+  # close through core's mount gate; the public routes have none).
   defp resolvable_row(slug) when is_binary(slug) and byte_size(slug) in 3..64 do
-    with %PortalRow{} = portal <- RepoHelper.repo().get_by(PortalRow, slug: slug),
+    with true <- PhoenixKitProjects.enabled?(),
+         %PortalRow{} = portal <- RepoHelper.repo().get_by(PortalRow, slug: slug),
          %{} = project <- Projects.get_project(portal.project_uuid),
          true <- project.is_template == false,
          true <- Extensions.enabled?(project, @ext_key) do
@@ -541,9 +544,10 @@ defmodule PhoenixKitProjects.Portal do
     issue_uuid
     |> commenter_uuids()
     |> Auth.get_users_by_uuids()
-    |> Enum.filter(fn user ->
-      matches?(display_name(user), query) or matches?(user.email, query)
-    end)
+    # Matched on the name the board shows, never on the email: whether a
+    # typed `@john.d` finds someone would spell the address out a letter at
+    # a time.
+    |> Enum.filter(&matches?(display_name(&1), query))
     |> Enum.take(@mention_limit)
     |> Enum.map(fn user ->
       %{
@@ -571,15 +575,10 @@ defmodule PhoenixKitProjects.Portal do
     _ -> []
   end
 
-  defp display_name(user) do
-    [Map.get(user, :first_name), Map.get(user, :last_name)]
-    |> Enum.reject(&(is_nil(&1) or &1 == ""))
-    |> Enum.join(" ")
-    |> case do
-      "" -> Map.get(user, :email) || gettext("User")
-      name -> name
-    end
-  end
+  # The name the board prints beside their words (`users_by_uuid/1`): core's
+  # `User.display_name/1`, which for an account with no name shows the part
+  # of its email before the @ — never the whole address.
+  defp display_name(user), do: User.display_name(user)
 
   # An empty query lists the first few rather than nothing: on a board with
   # six issues, typing `#` and being shown them all is the whole feature.
@@ -879,9 +878,9 @@ defmodule PhoenixKitProjects.Portal do
   """
   @spec comment_access_note() :: String.t()
   def comment_access_note do
-    "Anonymous commenting needs a guest identity model (a verified name and " <>
-      "a way to moderate) that isn't built yet. Until then this behaves as " <>
-      "\"signed-in users\"."
+    gettext(
+      "Anonymous commenting needs a guest identity model (a verified name and a way to moderate) that isn't built yet. Until then this behaves as “signed-in users”."
+    )
   end
 
   defp allows?("anyone", _viewer), do: true

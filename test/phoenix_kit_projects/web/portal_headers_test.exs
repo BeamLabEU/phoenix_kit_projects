@@ -83,7 +83,10 @@ defmodule PhoenixKitProjects.Web.PortalHeadersTest do
       og = call(portal.slug).assigns[:og]
 
       assert og.title == project.name
-      assert og.description == "How we track work"
+      # Never the project's own description: internal text (mention tokens,
+      # picture references) that the board itself does not show.
+      assert og.description == "Public issue board"
+      refute og.description =~ "How we track work"
       assert og.url =~ portal.slug
       assert og.type == "website"
     end

@@ -1013,20 +1013,33 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # deleted: a stranger's submission and the decision taken on it are the
   # audit trail for a public intake.
   defp v14_review_status(p) do
-    execute("""
-    ALTER TABLE #{p}phoenix_kit_project_assignments
-    ADD COLUMN IF NOT EXISTS review_status VARCHAR(16) NOT NULL DEFAULT 'accepted'
-    """)
-
+    # `up/1` replays every version on every chain bump, so the backfill below
+    # must run only on the pass that ADDS the column. Unguarded, each replay
+    # sent every accepted portal request still at "todo" back to the review
+    # queue.
+    #
     # Anything from the portal that was never published to a board and
     # never started is, by definition, a request nobody acted on. Published
     # or in-progress rows were accepted by whoever did that, so they keep
     # the default and no project wakes up with a queue full of work it has
     # already been doing.
     execute("""
-    UPDATE #{p}phoenix_kit_project_assignments
-    SET review_status = 'pending'
-    WHERE source = 'portal' AND public = false AND status = 'todo'
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = '#{p}phoenix_kit_project_assignments'::regclass
+          AND attname = 'review_status'
+          AND NOT attisdropped
+      ) THEN
+        ALTER TABLE #{p}phoenix_kit_project_assignments
+          ADD COLUMN review_status VARCHAR(16) NOT NULL DEFAULT 'accepted';
+
+        UPDATE #{p}phoenix_kit_project_assignments
+        SET review_status = 'pending'
+        WHERE source = 'portal' AND public = false AND status = 'todo';
+      END IF;
+    END $$;
     """)
 
     # An earlier cut of this version added `sorted_at` and never left this
@@ -1040,15 +1053,23 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     DROP COLUMN IF EXISTS sorted_at
     """)
 
+    # Added only when absent. V23 widens this check with `removed`, and a
+    # replay that dropped and re-added the three-value form here — before
+    # V23 runs again — failed the whole upgrade on any install holding a
+    # removed (held) task.
     execute("""
-    ALTER TABLE #{p}phoenix_kit_project_assignments
-    DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_review_status_check
-    """)
-
-    execute("""
-    ALTER TABLE #{p}phoenix_kit_project_assignments
-    ADD CONSTRAINT phoenix_kit_project_assignments_review_status_check
-    CHECK (review_status IN ('pending', 'accepted', 'rejected'))
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = '#{p}phoenix_kit_project_assignments'::regclass
+          AND conname = 'phoenix_kit_project_assignments_review_status_check'
+      ) THEN
+        ALTER TABLE #{p}phoenix_kit_project_assignments
+          ADD CONSTRAINT phoenix_kit_project_assignments_review_status_check
+          CHECK (review_status IN ('pending', 'accepted', 'rejected'));
+      END IF;
+    END $$;
     """)
 
     # The review queue is a small slice read on every hub load.
@@ -1961,7 +1982,8 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     BEGIN
       IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
-        WHERE conname = 'phoenix_kit_project_assignments_dates_check'
+        WHERE conrelid = '#{p}phoenix_kit_project_assignments'::regclass
+          AND conname = 'phoenix_kit_project_assignments_dates_check'
       ) THEN
         ALTER TABLE #{p}phoenix_kit_project_assignments
           ADD CONSTRAINT phoenix_kit_project_assignments_dates_check
@@ -2351,9 +2373,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     DO $$
     BEGIN
       IF NOT EXISTS (
-        SELECT FROM information_schema.constraint_column_usage
-        WHERE table_schema = current_schema()
-          AND constraint_name = 'phoenix_kit_project_portals_access_mode_check'
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = '#{p}phoenix_kit_project_portals'::regclass
+          AND conname = 'phoenix_kit_project_portals_access_mode_check'
       ) THEN
         ALTER TABLE #{p}phoenix_kit_project_portals
           ADD CONSTRAINT phoenix_kit_project_portals_access_mode_check

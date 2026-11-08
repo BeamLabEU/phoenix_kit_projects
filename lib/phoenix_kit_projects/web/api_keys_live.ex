@@ -55,12 +55,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        page_title: gettext("API keys"),
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
        me: me,
-       # "Admin" on this page is the API key right, not projects' admin_all:
-       # who may see and manage every key (`projects.api_keys_manage`).
-       admin?: Authz.api_keys?(scope, :manage),
-       can: Map.new(~w(create edit rotate revoke)a, &{&1, Authz.api_keys?(scope, &1)}),
        new_key_person: nil,
-       scope: scope,
        api_token: nil,
        open_grid: nil,
        new_key: %{"project" => params["project"]},
@@ -70,6 +65,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        show_column_modal: false,
        key_params: %{}
      )
+     |> put_rights()
      |> then(fn socket ->
        assign(socket,
          figures: ListUi.load_columns(socket, ApiKeysUsage.figures_spec()),
@@ -77,6 +73,32 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        )
      end)
      |> load()}
+  end
+
+  # The page's rights, derived from the scope core keeps current. Core
+  # refreshes `phoenix_kit_current_scope` when the viewer's roles change and
+  # then calls `phoenix_kit_scope_changed/1`, so a right revoked mid-session
+  # stops working on the open page instead of lasting until a reload.
+  # "Admin" on this page is the API key right, not projects' admin_all: who
+  # may see and manage every key (`projects.api_keys_manage`).
+  defp put_rights(socket) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    assign(socket,
+      scope: scope,
+      admin?: Authz.api_keys?(scope, :manage),
+      can: Map.new(~w(create edit rotate revoke)a, &{&1, Authz.api_keys?(scope, &1)})
+    )
+  end
+
+  @doc false
+  def phoenix_kit_scope_changed(socket) do
+    socket = socket |> put_rights() |> load()
+
+    case socket.assigns[:live_action] do
+      :usage -> load_usage(socket)
+      _ -> refilter(socket)
+    end
   end
 
   @impl true
@@ -380,7 +402,11 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   def handle_event("key_search", params, socket) do
-    q = params["q"] || params["search"] || ""
+    q =
+      case params["q"] || params["search"] do
+        q when is_binary(q) -> q
+        _ -> ""
+      end
 
     {:noreply,
      push_patch(socket,
@@ -801,13 +827,11 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   defp flash_result({:error, cs}, socket, _msg),
     do: {:noreply, put_flash(socket, :error, error_text(cs))}
 
-  defp error_text(%Ecto.Changeset{} = cs) do
-    cs
-    |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {k, v}, acc -> String.replace(acc, "%{#{k}}", to_string(v)) end)
-    end)
-    |> Enum.map_join("; ", fn {field, msgs} -> "#{field}: #{Enum.join(msgs, ", ")}" end)
-  end
+  # Every error, each field by its label in the viewer's language and the
+  # message translated (`WebHelpers.changeset_error_text/3`); an error that
+  # is not a changeset gets the generic line rather than a crash.
+  defp error_text(cs),
+    do: WebHelpers.changeset_error_text(cs, gettext("Could not save it."), all: true)
 
   # ── render ─────────────────────────────────────────────────────────
 
@@ -887,7 +911,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               />
             </div>
             <div :if={@admin? and @new_key["kind"] == "shared"} class="w-32">
-              <.select name="key[role]" label={gettext("Shared key's role")} value={@new_key["role"] || "member"} options={Enum.map(ApiKey.roles(), &{&1, &1})} />
+              <.select name="key[role]" label={gettext("Shared key's role")} value={@new_key["role"] || "member"} options={Enum.map(ApiKey.roles(), &{ProjectApiLive.role_name(&1), &1})} />
             </div>
             <.button type="submit" phx-disable-with={gettext("Creating…")}>
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Create key")}
@@ -1018,7 +1042,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                     <form id={"role-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_role" class="min-w-28">
                       <input type="hidden" name="key" value={row.key.uuid} />
                       <input type="hidden" name="project" value={grant.project_uuid} />
-                      <.select name="role" class="select-sm" value={grant.role} options={Enum.map(ApiKey.roles(), &{&1, &1})} disabled={not can?} />
+                      <.select name="role" class="select-sm" value={grant.role} options={Enum.map(ApiKey.roles(), &{ProjectApiLive.role_name(&1), &1})} disabled={not can?} />
                     </form>
                   </.table_default_cell>
                   <.table_default_cell class="text-right whitespace-nowrap">

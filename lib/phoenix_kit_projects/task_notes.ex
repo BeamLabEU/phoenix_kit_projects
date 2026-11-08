@@ -44,7 +44,8 @@ defmodule PhoenixKitProjects.TaskNotes do
   import Ecto.Query
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{Ledger, RefText}
+  alias PhoenixKit.Users.Auth.User
+  alias PhoenixKitProjects.{Ledger, PubSub, RefText}
   alias PhoenixKitProjects.Schemas.Assignment
 
   @resource_type "project_task_notes"
@@ -423,13 +424,16 @@ defmodule PhoenixKitProjects.TaskNotes do
     actor = Keyword.get(opts, :actor) || %{kind: "user", uuid: user_uuid}
     extra = Keyword.get(opts, :metadata, %{})
 
-    repo.transaction(fn ->
+    # `PubSub.after_commit/1`: the ledger rows' `:work_logged` broadcast is
+    # held until the note and its usage commit together — a page reloading
+    # on it before then read the rows as missing, and a rollback left a
+    # broadcast for rows that never were. (The comments module's own
+    # broadcast for the note is its own and cannot be held from here.)
+    PubSub.after_commit(fn ->
       with {:ok, note} <- insert_note(target, fields, kind, user_uuid, label, extra),
            {:ok, entries} <- record_usage(target, fields[:usage], note, actor, user_uuid),
            {:ok, note} <- link_entries(note, entries) do
-        %{note: repo.preload(note, [:user]), entries: entries}
-      else
-        {:error, reason} -> repo.rollback(reason)
+        {:ok, %{note: repo.preload(note, [:user]), entries: entries}}
       end
     end)
   end
@@ -659,9 +663,11 @@ defmodule PhoenixKitProjects.TaskNotes do
     }
   end
 
+  # By name, never by email address (see `CommentsController`'s author).
   defp author_label(%{author_display_name: name}) when is_binary(name) and name != "", do: name
 
-  defp author_label(%{user: %{email: email}}) when is_binary(email), do: email
+  defp author_label(%{user: %User{} = user}), do: User.display_name(user)
+
   defp author_label(_), do: nil
 
   defp blank_to_nil(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)

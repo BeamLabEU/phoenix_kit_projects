@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.People.Team do
   @moduledoc """
-  READ-ONLY shadow schema over the core-owned `phoenix_kit_staff_teams`
+  READ-ONLY shadow schema over the staff-owned `phoenix_kit_staff_teams`
   table (core V100). See `PhoenixKitProjects.People.Person` for the
   seam's rules: minimal columns, no changesets, local struct identity.
   """

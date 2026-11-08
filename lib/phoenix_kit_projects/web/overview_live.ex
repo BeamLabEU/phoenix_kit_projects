@@ -213,7 +213,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     socket =
       assign(socket,
         task_count: Projects.count_tasks(),
-        project_count: Projects.count_projects(),
+        # The viewer's, like every bucket here: a member never reads the
+        # site's totals off a tile that then lists their own few projects.
+        project_count: Projects.count_projects(viewer: viewer),
         template_count: Projects.count_templates(),
         active_count: total_active,
         active_summaries: top_summaries,
@@ -223,7 +225,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         any_projects?: any_projects?,
         my_assignments:
           if(user_uuid, do: Projects.list_assignments_for_user(user_uuid), else: []),
-        status_counts: Projects.assignment_status_counts(),
+        status_counts: Projects.assignment_status_counts(viewer: viewer),
         today: today,
         tz_offset: offset,
         all_project_events: calendar_events,
@@ -502,6 +504,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
        popup: false
      )}
   end
+
+  # An event the page does not take, or a known one without its uuid: a
+  # crash would restart the dashboard for nothing.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # Announced beside `:assignment_updated` (which reloads); one reload per
   # change, not two — and none more for every row a tick cascades over.
@@ -1003,7 +1009,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
                   <%= if length(@my_assignments) > 6 do %>
                     <div class="text-xs text-base-content/50 text-center pt-1">
-                      {gettext("+%{count} more", count: length(@my_assignments) - 6)}
+                      {ngettext("+%{count} more", "+%{count} more", length(@my_assignments) - 6)}
                     </div>
                   <% end %>
                 </div>

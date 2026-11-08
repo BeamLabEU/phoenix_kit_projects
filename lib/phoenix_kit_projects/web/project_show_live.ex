@@ -54,6 +54,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # "Post Comment" silently submits empty content. comments is a hard dep here.
   use PhoenixKitComments.Embed
 
+  alias Phoenix.LiveView.JS
   alias PhoenixKit.Utils.Routes
 
   alias PhoenixKitProjects.{
@@ -88,6 +89,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
   alias PhoenixKitProjects.Outline
+  alias PhoenixKitProjects.ProjectMove
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
   alias PhoenixKitProjects.Repeats
@@ -443,6 +445,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
           {:ok,
            socket
+           |> assign_comment_right()
            |> load_assignments()
            |> load_comment_counts()
            |> load_ledger()
@@ -574,6 +577,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       comments_resource: nil,
       notes_summary_preview: nil,
       comments_enabled: false,
+      may_comment?: false,
       project_thread?: false,
       all_comments?: false,
       all_comments: [],
@@ -614,12 +618,29 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              :assignment_deleted,
              :assignment_reordered,
              :dependency_added,
-             :dependency_removed,
-             # Task-library renames change displayed assignment titles.
-             :task_updated,
-             :task_deleted
+             :dependency_removed
            ] do
     {:noreply, socket |> load_assignments() |> load_labels()}
+  end
+
+  # Task renames arrive on the site-wide tasks topic — every rename of any
+  # task anywhere, typed-list syncs included. Reload only when a row this
+  # page shows (its own or an expanded sub-project's) uses that task;
+  # otherwise every open project page reloaded on every keystroke-pause of
+  # anyone's typed list.
+  def handle_info({:projects, event, %{uuid: task_uuid}}, socket)
+      when event in [:task_updated, :task_deleted] do
+    if shows_task?(socket, task_uuid),
+      do: {:noreply, socket |> load_assignments() |> load_labels()},
+      else: {:noreply, socket}
+  end
+
+  # Who may do what here changed (a member added, removed or re-roled, a
+  # group grant set or revoked). The rights the page holds — the typed
+  # list's, the comment boxes' — are recomputed from the live scope.
+  def handle_info({:projects, event, _payload}, socket)
+      when event in [:project_members_changed, :project_grants_changed] do
+    {:noreply, socket |> assign_comment_right() |> load_assignments()}
   end
 
   def handle_info({:projects, event, _payload}, socket)
@@ -644,6 +665,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          socket
          |> assign(project: p, health: Health.get(p))
          |> refresh_status_state()
+         |> assign_comment_right()
          |> load_assignments()}
     end
   end
@@ -703,8 +725,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> activate_tab(active)
 
     # Ledger visibility follows the flag: flipping it on mid-session must
-    # populate the totals; flipping it off clears them.
-    {:noreply, load_ledger(socket)}
+    # populate the totals; flipping it off clears them. The rows, the typed
+    # list's face and the labels read the gates too (`outline_fx`), so they
+    # are rebuilt from the new map rather than left showing the old one.
+    {:noreply, socket |> load_ledger() |> load_assignments() |> load_labels()}
   end
 
   def handle_info({:projects, :project_deleted, _payload}, socket) do
@@ -766,6 +790,36 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Logger.debug("[ProjectShowLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}
   end
+
+  # Does a row on this page (its own, or an expanded sub-project's inset
+  # task) use this library/one-off task?
+  defp shows_task?(socket, task_uuid) do
+    rows =
+      (socket.assigns[:assignments] || []) ++
+        Enum.flat_map(Map.values(socket.assigns[:subproject_child_tasks] || %{}), & &1)
+
+    Enum.any?(rows, &(&1.task_uuid == task_uuid))
+  end
+
+  # The project's "who may comment" floor (`:comment`, overridable) for the
+  # web comment boxes on this page — the Comments tab and the task drawer.
+  # The comments component has no permission hook of its own: handed a nil
+  # user it renders the thread read-only and refuses its write events, which
+  # is what someone below the floor gets. Recomputed when membership or the
+  # project changes (the API enforces the same floor).
+  defp assign_comment_right(socket) do
+    may? =
+      Authz.can?(
+        socket.assigns[:phoenix_kit_current_scope],
+        socket.assigns.project,
+        :comment
+      )
+
+    assign(socket, may_comment?: may?)
+  end
+
+  defp comment_user(assigns),
+    do: if(assigns[:may_comment?], do: assigns[:phoenix_kit_current_user])
 
   # The FULL set stays on the socket: kanban, gantt and calendar all read
   # `@assignments` and every one of them needs the whole project. The list
@@ -1717,6 +1771,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # Removes one task with its notices and history line; the caller
   # reloads.
+  defp do_remove_assignment(socket, a) do
+    case remove_task(socket, a) do
+      {:ok, socket} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Task deleted."))
+         |> sync_project_completion()
+         |> load_assignments()}
+
+      {:error, socket} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not delete task."))}
+    end
+  end
+
+  # Deleting the task would take a whole project along (`delete_assignment/1`
+  # tears a sub-project row's project down) behind a question that counts it
+  # as one subtask. Its own row says what deleting it does.
+  defp subproject_below_message,
+    do: gettext("A sub-project sits under this task. Move it out or delete it on its own first.")
+
   defp remove_task(socket, %Assignment{uuid: uuid} = a) do
     case PhoenixKitProjects.Notices.removing(a, Activity.actor_uuid(socket), fn ->
            Projects.delete_assignment(a)
@@ -1811,41 +1885,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         gettext("This task changed meanwhile. Have a look and try again.")
       )
 
-  # Translates Ecto validator messages through the gettext "errors"
-  # domain — Ecto emits English literals like `"is invalid"` /
-  # `"must be greater than 0"` from `validate_*` plus interpolation
-  # bindings; `Gettext.dngettext/6` is the canonical translator for
-  # those (matches the Phoenix scaffolding pattern). Without this,
-  # the inline error summary (e.g. on a failed `complete` from a
-  # validation-rejected status transition) renders English regardless
-  # of the user's locale — Phase 1 PR #1 review item #15, deferred
-  # then to Phase 2 C3 + closed in this re-validation batch.
-  #
-  # Core's `PhoenixKitWeb.Components.Core.Input.translate_error/1` (imported
-  # by `use PhoenixKitWeb, :live_view`) does the translating, in the
-  # "errors" domain of core's catalogue, which owns Ecto's messages.
-  defp error_summary(%Ecto.Changeset{errors: errors}, fallback) do
-    case errors do
-      [] ->
-        fallback
-
-      errs ->
-        Enum.map_join(errs, ", ", fn {k, {msg, opts}} ->
-          "#{humanize_field(k)}: #{translate_error({msg, opts})}"
-        end)
-    end
-  end
-
-  # Renders an Ecto field name like `:estimated_duration` as
-  # `"Estimated duration"` for the cross-field flash summary. The
-  # per-field input component already humanizes its own label, so this
-  # only matters for the multi-error fallback.
-  defp humanize_field(field) do
-    field
-    |> to_string()
-    |> String.replace("_", " ")
-    |> String.capitalize()
-  end
+  # Every error of the changeset, each field by its label and each message
+  # translated through core's "errors" domain, which owns Ecto's messages
+  # (`WebHelpers.changeset_error_text/3`).
+  defp error_summary(cs, fallback),
+    do: WebHelpers.changeset_error_text(cs, fallback, all: true)
 
   # When a mutated assignment belongs to an embedded sub-project (its row is
   # rendered inset in the expand panel, V127), recompute that child's project so
@@ -2457,12 +2501,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       )
 
     ~H"""
-    <details class="dropdown shrink-0" id={"row-deadline-pop-#{@a.uuid}"}>
+    <%!-- `open` is the browser's: kept across patches (the page re-renders
+         on every broadcast, which would otherwise shut it under someone
+         typing a time), closed by Save and Clear themselves. --%>
+    <details
+      class="dropdown shrink-0"
+      id={"row-deadline-pop-#{@a.uuid}"}
+      phx-mounted={JS.ignore_attributes(["open"])}
+    >
       <summary class="list-none cursor-pointer [&::-webkit-details-marker]:hidden" title={gettext("Change the deadline")}>
         <.deadline_chip a={@a} />
       </summary>
       <div class="dropdown-content z-30 mt-1 w-64 rounded-box bg-base-100 border border-base-200 shadow-xl p-3">
-        <form id={"row-deadline-form-#{@a.uuid}"} phx-submit="save_deadline" class="flex flex-col gap-2">
+        <form
+          id={"row-deadline-form-#{@a.uuid}"}
+          phx-submit={JS.push("save_deadline") |> JS.remove_attribute("open", to: "#row-deadline-pop-#{@a.uuid}")}
+          class="flex flex-col gap-2"
+        >
           <input type="hidden" name="uuid" value={@a.uuid} />
           <div class="flex items-center gap-2">
             <input type="date" name="date" value={@date} class="input input-sm flex-1" aria-label={gettext("Day")} />
@@ -2481,9 +2536,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                  its first submit button, which must be Save (panel review). --%>
             <button
               type="button"
-              phx-click="save_deadline"
-              phx-value-uuid={@a.uuid}
-              phx-value-clear="1"
+              phx-click={
+                JS.push("save_deadline", value: %{uuid: @a.uuid, clear: "1"})
+                |> JS.remove_attribute("open", to: "#row-deadline-pop-#{@a.uuid}")
+              }
               class="btn btn-ghost btn-xs text-error"
             >
               {gettext("Clear")}
@@ -3641,18 +3697,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       nil ->
         {:noreply, socket}
 
-      a ->
-        case remove_task(socket, a) do
-          {:ok, socket} ->
-            {:noreply,
-             socket
-             |> put_flash(:info, gettext("Task deleted."))
-             |> sync_project_completion()
-             |> load_assignments()}
+      %Assignment{child_project_uuid: nil} = a ->
+        if Projects.subproject_below?(a),
+          do: {:noreply, put_flash(socket, :error, subproject_below_message())},
+          else: do_remove_assignment(socket, a)
 
-          {:error, socket} ->
-            {:noreply, put_flash(socket, :error, gettext("Could not delete task."))}
-        end
+      a ->
+        do_remove_assignment(socket, a)
     end
   end
 
@@ -3700,16 +3751,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # No menu renders this any more ("Move…" replaced it), but the event is
+  # kept for embeds and old clients. Taking a sub-project out of its parent
+  # moves it, so it goes through `ProjectMove.run/4` — the same rights as
+  # the Move… dialog (`:edit_settings` on the sub-project, an owner's) and
+  # the host's move lock — never just `:edit_tasks` on the parent.
   defp gated_handle_event("detach_subproject", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
-      %Assignment{child_project_uuid: child_uuid} = a when is_binary(child_uuid) ->
-        # Taking a sub-project out of its parent moves it: the host's move
-        # lock holds it here like the Move… dialog does.
-        locked = child_uuid |> Projects.get_project() |> locked_reason()
-
-        if locked,
-          do: {:noreply, put_flash(socket, :error, locked)},
-          else: detach_subproject(socket, a, child_uuid)
+      %Assignment{child_project_uuid: child_uuid} when is_binary(child_uuid) ->
+        detach_subproject(socket, child_uuid)
 
       _ ->
         {:noreply, socket}
@@ -3743,10 +3793,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # The slider moves progress; a status change it implies follows the same
+  # rules as the status buttons. 100 on an open task is a completion
+  # (`complete_or_ask/3`: the subtask question, "next up"); the in-progress
+  # step only where the project has it; a waiting task is never released
+  # here (that is "Ready to start", which asks who to tell).
   defp gated_handle_event("update_progress", %{"uuid" => uuid, "progress_pct" => pct_str}, socket) do
     case scoped_assignment(socket, uuid) do
-      nil -> {:noreply, socket}
-      a -> do_update_progress(socket, a, parse_pct(pct_str))
+      nil ->
+        {:noreply, socket}
+
+      %Assignment{status: status} = a when status != "done" ->
+        case parse_pct(pct_str) do
+          100 -> complete_or_ask(socket, a, %{})
+          pct -> do_update_progress(socket, a, pct)
+        end
+
+      a ->
+        do_update_progress(socket, a, parse_pct(pct_str))
     end
   end
 
@@ -3945,19 +4009,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            put_flash(
              socket,
              :info,
-             gettext("Draft invoice created: %{count} line(s), %{total}. Review it in Billing.",
-               count: count,
+             ngettext(
+               "Draft invoice created: 1 line, %{total}. Review it in Billing.",
+               "Draft invoice created: %{count} lines, %{total}. Review it in Billing.",
+               count,
                total: format_cents(cents)
-             )
-           )}
-
-        {:error, :refs_failed, _invoice_uuid} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext(
-               "The draft was created but marking the entries failed — reconcile in Billing before regenerating."
              )
            )}
 
@@ -4221,6 +4277,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         {:noreply, put_flash(socket, :error, gettext("Could not unarchive project."))}
     end
+  end
+
+  # An event this page does not know, or a known one with parameters it does
+  # not take (a value off a whitelist, a missing uuid): nothing happens. A
+  # crash here would restart the page and lose open dialogs and typed text.
+  defp gated_handle_event(event, _params, socket) do
+    Logger.debug("[ProjectShowLive] ignored event #{inspect(event)}")
+    {:noreply, socket}
   end
 
   # ── Helpers ─────────────────────────────────────────────────────
@@ -4502,8 +4566,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # embedded (nil live_action) mount all default to the list. Templates never
   # expose the alternate views, so they pin to `:list` even on the `/gantt` /
   # `/calendar` routes (the tab bar + both nested LVs are `not @is_template`).
-  # Health labels through gettext (Health.label/1 returns the msgid — the
-  # translation happens at the caller under this module's backend).
+  # Health labels through this module's gettext backend.
   defp health_label("on_track"), do: gettext("On track")
   defp health_label("some_risk"), do: gettext("Some risk")
   defp health_label("concerned"), do: gettext("Concerned")
@@ -4751,20 +4814,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp do_start_project(socket, started_at) do
     case Projects.start_project(socket.assigns.project, started_at) do
       {:ok, project} ->
-        Activity.log("projects.project_started",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "project",
-          resource_uuid: project.uuid,
-          metadata: %{
-            "name" => project.name,
-            "started_at" => DateTime.to_iso8601(started_at)
-          }
-        )
-
-        {:noreply,
-         socket
-         |> assign(project: project, start_modal_open: false)
-         |> put_flash(:info, gettext("Project started!"))}
+        started_now(socket, project, started_at)
 
       {:error, _} ->
         Activity.log_failed("projects.project_started",
@@ -4781,6 +4831,36 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # Already started (another tab, a stale dialog): nothing was written, so
+  # nothing is logged; the page shows the start as it stands.
+  defp started_now(socket, %{started_at: %DateTime{} = was} = project, started_at) do
+    if DateTime.compare(DateTime.truncate(was, :second), DateTime.truncate(started_at, :second)) !=
+         :eq do
+      {:noreply, assign(socket, project: project, start_modal_open: false)}
+    else
+      log_started(socket, project, started_at)
+    end
+  end
+
+  defp started_now(socket, project, started_at), do: log_started(socket, project, started_at)
+
+  defp log_started(socket, project, started_at) do
+    Activity.log("projects.project_started",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "project",
+      resource_uuid: project.uuid,
+      metadata: %{
+        "name" => project.name,
+        "started_at" => DateTime.to_iso8601(started_at)
+      }
+    )
+
+    {:noreply,
+     socket
+     |> assign(project: project, start_modal_open: false)
+     |> put_flash(:info, gettext("Project started!"))}
+  end
+
   defp parse_pct(pct_str) do
     case Integer.parse(pct_str) do
       {n, _} -> max(0, min(n, 100))
@@ -4788,39 +4868,47 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  defp progress_attrs(100, socket),
-    do: %{
-      progress_pct: 100,
-      status: "done",
-      completed_by_uuid: Activity.actor_uuid(socket),
-      completed_at: DateTime.utc_now()
-    }
+  # Only reached for an open task below 100, or a done one (100 on an open
+  # task completes through `complete_or_ask/3`). The status follows the
+  # slider only along the steps the project has: started (`in_progress`)
+  # where that step is on, reopened when a done task is pulled back, back
+  # to "can be started" at 0 for a started one. A waiting task keeps
+  # waiting — releasing it is "Ready to start"'s, which asks who to tell.
+  defp progress_attrs(100, %Assignment{status: "done"}, _socket), do: %{progress_pct: 100}
 
-  defp progress_attrs(0, _socket),
-    do: %{progress_pct: 0, status: "todo", completed_by_uuid: nil, completed_at: nil}
+  defp progress_attrs(pct, %Assignment{status: status}, socket) do
+    in_progress? = socket.assigns.fx[:in_progress] == true
 
-  defp progress_attrs(pct, _socket),
-    do: %{progress_pct: pct, status: "in_progress", completed_by_uuid: nil, completed_at: nil}
+    to =
+      cond do
+        status == "waiting" -> "waiting"
+        pct == 0 and status in ["in_progress", "done"] -> "todo"
+        pct > 0 and in_progress? -> "in_progress"
+        status == "done" -> "todo"
+        true -> status
+      end
 
-  defp progress_action(100, prev_status) when prev_status != "done",
-    do: "projects.assignment_completed"
+    if to == "done" or to == status,
+      do: %{progress_pct: pct},
+      else: %{progress_pct: pct, status: to, completed_by_uuid: nil, completed_at: nil}
+  end
 
-  defp progress_action(pct, prev_status) when pct > 0 and prev_status in ["waiting", "todo"],
-    do: "projects.assignment_started"
+  defp progress_action(%{status: "in_progress"}, _prev), do: "projects.assignment_started"
 
-  defp progress_action(0, prev_status) when prev_status not in ["waiting", "todo"],
+  defp progress_action(%{status: "todo"}, prev) when prev in ["in_progress", "done"],
     do: "projects.assignment_reopened"
 
-  defp progress_action(_pct, _prev_status), do: "projects.assignment_progress_updated"
+  defp progress_action(_attrs, _prev_status), do: "projects.assignment_progress_updated"
 
   defp do_update_progress(socket, a, pct) do
-    attrs = progress_attrs(pct, socket)
+    attrs = progress_attrs(pct, a, socket)
 
-    # Uses the server-trusted path because `progress_attrs/2` sets
-    # `completed_by_uuid` / `completed_at` on the 100% and 0% branches.
-    case Projects.update_assignment_status(a, attrs) do
+    # The server-trusted path, because a reopen clears `completed_by_uuid` /
+    # `completed_at`; `expect:` refuses the write when the row's status moved
+    # since this page drew it.
+    case Projects.update_assignment_status(a, attrs, expect: a.status) do
       {:ok, _} ->
-        Activity.log(progress_action(pct, a.status),
+        Activity.log(progress_action(attrs, a.status),
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: a.uuid,
@@ -4830,12 +4918,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         recompute_owning_subproject(socket, a)
 
         socket =
-          if attrs.status != a.status, do: sync_project_completion(socket), else: socket
+          if Map.get(attrs, :status, a.status) != a.status,
+            do: sync_project_completion(socket),
+            else: socket
 
         {:noreply, load_assignments(socket)}
 
+      {:error, :stale} ->
+        # Someone moved it since the page drew it: show what is there now.
+        {:noreply, load_assignments(socket)}
+
       {:error, cs} ->
-        Activity.log_failed(progress_action(pct, a.status),
+        Activity.log_failed(progress_action(attrs, a.status),
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: a.uuid,
@@ -5447,8 +5541,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp convert_error(_), do: gettext("Could not change it.")
 
-  defp detach_subproject(socket, a, child_uuid) do
-    case Projects.detach_subproject(a) do
+  defp detach_subproject(socket, child_uuid) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    case child_uuid |> Projects.get_project() |> detach_move(scope, socket) do
       {:ok, _} ->
         Activity.log("projects.subproject_detached",
           actor_uuid: Activity.actor_uuid(socket),
@@ -5463,6 +5559,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          |> sync_project_completion()
          |> load_assignments()}
 
+      {:locked, reason} ->
+        {:noreply, put_flash(socket, :error, reason)}
+
+      :forbidden ->
+        {:noreply,
+         put_flash(socket, :error, gettext("You don't have permission to do that here."))}
+
       {:error, _} ->
         Activity.log_failed("projects.subproject_detached",
           actor_uuid: Activity.actor_uuid(socket),
@@ -5474,6 +5577,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:noreply, put_flash(socket, :error, gettext("Could not detach the sub-project."))}
     end
   end
+
+  defp detach_move(%Project{} = child, scope, socket) do
+    case ProjectMove.run(child, :top, scope, actor_uuid: Activity.actor_uuid(socket)) do
+      {:error, {:locked, reason}} -> {:locked, reason}
+      {:error, :forbidden} -> :forbidden
+      other -> other
+    end
+  end
+
+  defp detach_move(_child, _scope, _socket), do: {:error, :not_found}
 
   # ── Work-ledger helpers (Step 10) ────────────────────────────────
 
@@ -6297,7 +6410,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                anywhere else on the card still trigger the existing
                status / duration / dep handlers. --%>
           <div
-            id="project-show-timeline"
+            id={"project-show-timeline-#{@project.uuid}"}
             class="flex flex-col gap-0"
             phx-hook={if @list_manual?, do: "SortableGrid"}
             data-sortable={to_string(@list_manual?)}
@@ -6326,7 +6439,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 style={"margin-left: #{Map.get(ol_depths, a.uuid, 0) * 2}rem"}
                 data-id={a.uuid}
                 tabindex={assigns[:focus_task] == a.uuid && "-1"}
-                phx-mounted={assigns[:focus_task] == a.uuid && Phoenix.LiveView.JS.focus()}
+                phx-mounted={assigns[:focus_task] == a.uuid && JS.focus()}
               >
                 <%!-- Card --%>
                 <%!-- `min-w-0`: a flex child is as wide as its content unless told
@@ -6594,7 +6707,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                   <span class="text-base-content/50">{ct.progress_pct}%</span>
                                 </div>
                               <% else %>
-                                <%!-- Same task card as the top-level timeline, just inset. --%>
+                                <%!-- Same task card as the top-level timeline, just inset.
+                                     No discussion buttons: the thread belongs to the
+                                     sub-project (its own Discussions switch, its own
+                                     floors) and opens from its page. --%>
                                 <div class="relative flex min-w-0">
                                   <div class={"flex-1 min-w-0 card bg-base-100 shadow-sm border #{if ct.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"}"}>
                                     <.task_body
@@ -6606,7 +6722,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       fx={@fx}
                                       embed_mode={@embed_mode}
                                       editing_duration_uuid={@editing_duration_uuid}
-                                      comments_enabled={@comments_enabled}
+                                      comments_enabled={false}
                                       assignment_comment_counts={@assignment_comment_counts}
                                       ledger_minutes={@ledger_minutes}
                                       ledger_ai_minutes={assigns[:ledger_ai_minutes] || %{}}
@@ -6690,6 +6806,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       </button>
       <.quick_add_composer
         :if={@fx.tasks and not @is_template and not @outline_can.edit}
+        id={"quick-add-#{@project.uuid}"}
         project_uuid={@project.uuid}
         embed_mode={@embed_mode}
       />
@@ -6715,8 +6832,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              which renders it properly; dragging one in would coerce a value
              we never wrote and cannot get back. --%>
         <p :if={board_orphans(@assignments) > 0} class="text-xs opacity-60 mb-2">
-          {gettext("%{count} task(s) have a status this board does not show.",
-            count: board_orphans(@assignments)
+          {ngettext(
+            "1 task has a status this board does not show.",
+            "%{count} tasks have a status this board does not show.",
+            board_orphans(@assignments)
           )}
           <button type="button" phx-click="switch_tab" phx-value-tab="list" class="link link-hover">
             {gettext("Open the list")}
@@ -6766,7 +6885,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                  renumber the whole plan from the few cards one column
                  happened to hold. --%>
             <div
-              id={"board-column-#{status}"}
+              id={"board-column-#{status}-#{@project.uuid}"}
               class="pkp-board-list flex-1 flex flex-col gap-2 px-3 pb-3 min-h-32 rounded-b-lg"
               phx-hook="PkpBoard"
               data-board-group={"board-#{@project.uuid}"}
@@ -7066,7 +7185,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             id={"comments-tab-project-#{@project.uuid}"}
             resource_type="project"
             resource_uuid={@project.uuid}
-            current_user={assigns[:phoenix_kit_current_user]}
+            current_user={comment_user(assigns)}
             show_title={false}
             show_likes={false}
           />
@@ -7465,7 +7584,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           id={"comments-drawer-#{@comments_resource.type}-#{@comments_resource.uuid}"}
           resource_type={if notes?, do: TaskNotes.resource_type(), else: @comments_resource.type}
           resource_uuid={@comments_resource.uuid}
-          current_user={assigns[:phoenix_kit_current_user]}
+          current_user={comment_user(assigns)}
           title=""
           show_likes={false}
           decoration_keys={if notes?, do: TaskNotes.decoration_keys(), else: []}

@@ -150,6 +150,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         projects: [],
         move_locks: %{},
         bulk_enabled?: true,
+        # The manual order is the SITE's (one `position` per project, every
+        # admin sees it), so only an administrator of every project sets it:
+        # a member's "Reorder all" rewrote projects they cannot see.
+        can_reorder?: Authz.admin_all?(socket.assigns[:phoenix_kit_current_scope]),
         # `captured_uuids` is the snapshot taken from the DOM at the
         # moment the user clicks an action button (Reorder, etc.). The
         # live selection lives client-side in the BulkSelectScope hook.
@@ -437,6 +441,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       class={["btn btn-sm gap-1", @filters_open && "btn-active"]}
       phx-click="toggle_filters"
       aria-expanded={to_string(@filters_open)}
+      aria-label={gettext("Filters")}
     >
       <.icon name="hero-funnel" class="w-4 h-4" />
       <span class="hidden sm:inline">{gettext("Filters")}</span>
@@ -483,7 +488,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         name={"ext[#{col.id}]"}
         value={if(@f_ext_col == col.id, do: @f_ext_val, else: "")}
         options={Enum.map(Map.get(@ext_filter_options, col.id, []), &{&1, &1})}
-        prompt={gettext("Any %{column}", column: String.downcase(col.label))}
+        prompt={gettext("Any: %{column}", column: col.label)}
         class="select-sm"
         aria-label={col.label}
       />
@@ -676,20 +681,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # to :all — the button label is "Reorder all" in those states, and
   # a single-row permute is a no-op, so treating it as :all matches
   # both the visible UI promise and the only sensible action.
-  def handle_event("open_reorder_modal", params, socket) do
-    uuids =
-      case sanitize_uuids(params) do
-        list when length(list) < 2 -> []
-        list -> list
-      end
-
-    {:noreply, assign(socket, show_reorder_modal: true, captured_uuids: uuids)}
-  end
-
-  def handle_event("close_reorder_modal", _params, socket) do
-    {:noreply, assign(socket, show_reorder_modal: false, captured_uuids: [])}
-  end
-
   # Map gates atom coercion: a crafted payload can't smuggle in an
   # unknown atom (which would crash `String.to_existing_atom` on a
   # garbage string and otherwise leak a fresh atom slot).
@@ -701,8 +692,47 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     "reverse" => :reverse
   }
 
-  def handle_event("apply_reorder", %{"strategy" => strategy_str}, socket)
-      when is_map_key(@reorder_strategies, strategy_str) do
+  def handle_event("close_reorder_modal", _params, socket) do
+    {:noreply, assign(socket, show_reorder_modal: false, captured_uuids: [])}
+  end
+
+  def handle_event(event, params, socket)
+      when event in ~w(open_reorder_modal apply_reorder reorder_projects) do
+    if Authz.admin_all?(socket.assigns[:phoenix_kit_current_scope]),
+      do: reorder_event(event, params, socket),
+      else:
+        {:noreply,
+         socket
+         |> assign(show_reorder_modal: false, captured_uuids: [])
+         |> put_flash(:error, gettext("Only an administrator can change the order of projects."))}
+  end
+
+  def handle_event("delete", %{"uuid" => uuid}, socket) do
+    # Existence was the only check here: a client event naming any project
+    # uuid deleted it, whatever the sender's relationship to it. The list is
+    # scoped now, but a handler must never trust that the row came from the
+    # rendered page.
+    case Projects.get_project(uuid) do
+      nil ->
+        {:noreply, put_flash(socket, :error, gettext("Project not found."))}
+
+      project ->
+        delete_if_permitted(socket, project)
+    end
+  end
+
+  defp reorder_event("open_reorder_modal", params, socket) do
+    uuids =
+      case sanitize_uuids(params) do
+        list when length(list) < 2 -> []
+        list -> list
+      end
+
+    {:noreply, assign(socket, show_reorder_modal: true, captured_uuids: uuids)}
+  end
+
+  defp reorder_event("apply_reorder", %{"strategy" => strategy_str}, socket)
+       when is_map_key(@reorder_strategies, strategy_str) do
     strategy = Map.fetch!(@reorder_strategies, strategy_str)
 
     scope =
@@ -742,12 +772,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # Empty submit (no radio chosen) or a forged strategy string. The
   # form has `required` on the radios so this is the fallback for
   # defense in depth.
-  def handle_event("apply_reorder", _params, socket) do
+  defp reorder_event("apply_reorder", _params, socket) do
     {:noreply, put_flash(socket, :error, gettext("Pick a strategy before applying."))}
   end
 
-  def handle_event("reorder_projects", %{"ordered_ids" => ordered_ids} = params, socket)
-      when is_list(ordered_ids) do
+  defp reorder_event("reorder_projects", %{"ordered_ids" => ordered_ids} = params, socket)
+       when is_list(ordered_ids) do
     moved_id = params["moved_id"]
 
     case Projects.reorder_projects(ordered_ids, actor_uuid: Activity.actor_uuid(socket)) do
@@ -773,20 +803,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
          |> put_flash(:error, gettext("Project list changed; please try again."))
          |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
          |> load_projects()}
-    end
-  end
-
-  def handle_event("delete", %{"uuid" => uuid}, socket) do
-    # Existence was the only check here: a client event naming any project
-    # uuid deleted it, whatever the sender's relationship to it. The list is
-    # scoped now, but a handler must never trust that the row came from the
-    # rendered page.
-    case Projects.get_project(uuid) do
-      nil ->
-        {:noreply, put_flash(socket, :error, gettext("Project not found."))}
-
-      project ->
-        delete_if_permitted(socket, project)
     end
   end
 
@@ -925,8 +941,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
              is its place in its PARENT's plan), so they switch DnD off the
              same way. --%>
         <% draggable? =
-          @sort_by == :position and is_nil(@status_filter) and String.trim(@search) == "" and
-            not filters_set?(assigns) and
+          @can_reorder? and @sort_by == :position and is_nil(@status_filter) and
+            String.trim(@search) == "" and not filters_set?(assigns) and
             (@local_search? or @loaded_count >= @total_count) %>
 
         <.bulk_select_scope
@@ -948,11 +964,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                view's order doesn't reflect positions anyway). --%>
           <.bulk_actions_toolbar
             on_open_reorder="open_reorder_modal"
-            reorder_dialog_id="reorder-modal"
+            reorder_dialog_id={"projects-reorder-modal"}
             noun_singular={gettext("project")}
             noun_plural={gettext("projects")}
             allow_delete={false}
-            reorder_gate={if @sort_by == :position, do: :always, else: :multi}
+            reorder_gate={if @can_reorder? and @sort_by == :position, do: :always, else: :multi}
           >
             <%!-- Control order follows the kit's other lists (catalogue,
                  core's table toolbar): search + data filters on the LEFT,
@@ -1020,7 +1036,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <% end %>
       <% end %>
 
+      <%!-- An id of its own per list: the three list pages are embeddable,
+           and two on one host page opened each other's dialog. --%>
       <.reorder_modal
+        id="projects-reorder-modal"
         show={@show_reorder_modal}
         on_close="close_reorder_modal"
         on_apply="apply_reorder"

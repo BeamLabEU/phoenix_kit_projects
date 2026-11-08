@@ -254,15 +254,19 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
       for status <- ~w(waiting todo done) do
         assert has_element?(
                  view,
-                 ~s(#board-column-#{status}.flex-1[phx-hook="PkpBoard"][data-board-status="#{status}"][data-board-event="board_move"])
+                 ~s(#board-column-#{status}-#{project.uuid}.flex-1[phx-hook="PkpBoard"][data-board-status="#{status}"][data-board-event="board_move"])
                )
       end
 
       # The empty column's note sits inside the drop zone, not above it.
-      assert has_element?(view, "#board-column-done > .pkp-board-empty")
-      refute has_element?(view, "#board-column-waiting > .pkp-board-empty")
+      assert has_element?(view, "#board-column-done-#{project.uuid} > .pkp-board-empty")
+      refute has_element?(view, "#board-column-waiting-#{project.uuid} > .pkp-board-empty")
       # The whole card is what is dragged: an id of its own, no handle.
-      assert has_element?(view, ~s(#board-column-waiting > #board-card-#{a.uuid}.sortable-item))
+      assert has_element?(
+               view,
+               ~s(#board-column-waiting-#{project.uuid} > #board-card-#{a.uuid}.sortable-item)
+             )
+
       refute has_element?(view, "[id^=board-column-][data-sortable-handle]")
       refute html =~ ~r/grid[^"]*items-start[^"]*md:grid-cols/
     end
@@ -300,7 +304,7 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
       # The card waits for the answer, marked, in its own column.
       assert has_element?(
                view,
-               ~s(#board-column-waiting > #board-card-#{a.uuid}.ring-info[title="Waiting for your answer"])
+               ~s(#board-column-waiting-#{project.uuid} > #board-card-#{a.uuid}.ring-info[title="Waiting for your answer"])
              )
     end
 
@@ -353,7 +357,11 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
       # Started work dropped there is reopened as waiting, its progress cleared.
       assert_activity_logged("projects.assignment_reopened", resource_uuid: started.uuid)
       assert Projects.get_assignment(started.uuid).progress_pct == 0
-      assert has_element?(view, "#board-column-waiting > #board-card-#{started.uuid}")
+
+      assert has_element?(
+               view,
+               "#board-column-waiting-#{project.uuid} > #board-card-#{started.uuid}"
+             )
     end
 
     test "a drop a dialog asks about first goes back to its column until answered",

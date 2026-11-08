@@ -85,14 +85,7 @@ defmodule PhoenixKitProjects.Members do
     # their own, so the LIST has to know about them too — otherwise the
     # page gate says yes and the index they came from never showed it.
     open_uuids =
-      RepoHelper.repo().all(
-        from(p in PhoenixKitProjects.Schemas.Project,
-          where:
-            p.is_template == false and
-              fragment("COALESCE(?->>'visibility', 'private') = 'everyone'", p.settings),
-          select: p.uuid
-        )
-      )
+      open_project_uuids(user_uuid)
 
     granted = Enum.reduce(open_uuids, granted, &Map.put_new(&2, &1, "viewer"))
 
@@ -133,6 +126,25 @@ defmodule PhoenixKitProjects.Members do
   end
 
   def accessible_projects(_), do: []
+
+  # The "everyone" projects this user reaches through the open viewer seat —
+  # none unless they can enter the module (`Authz.module_reacher?/1`), the
+  # same condition `Authz.effective_role/2` puts on that seat. The listing and
+  # the page gate must agree, or a list shows a project its page refuses (or
+  # the other way round).
+  defp open_project_uuids(user_uuid) do
+    uuids =
+      RepoHelper.repo().all(
+        from(p in PhoenixKitProjects.Schemas.Project,
+          where:
+            p.is_template == false and
+              fragment("COALESCE(?->>'visibility', 'private') = 'everyone'", p.settings),
+          select: p.uuid
+        )
+      )
+
+    if uuids != [] and PhoenixKitProjects.Authz.module_reacher?(user_uuid), do: uuids, else: []
+  end
 
   @doc """
   The uuid set behind `accessible_projects/1`, without materialising a
@@ -177,14 +189,7 @@ defmodule PhoenixKitProjects.Members do
       end
 
     open_uuids =
-      RepoHelper.repo().all(
-        from(p in PhoenixKitProjects.Schemas.Project,
-          where:
-            p.is_template == false and
-              fragment("COALESCE(?->>'visibility', 'private') = 'everyone'", p.settings),
-          select: p.uuid
-        )
-      )
+      open_project_uuids(user_uuid)
 
     (direct_uuids ++ granted_uuids ++ open_uuids) |> Enum.uniq()
   rescue

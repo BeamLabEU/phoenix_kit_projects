@@ -22,8 +22,14 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
         password: "ValidPassword123!"
       })
 
+    # A writer re-asked at every write (`WebHelpers.tab_write?/5`): a real
+    # account that may upload files here, on a project with the tab on.
+    PhoenixKitProjects.Test.Access.grant_projects!(user)
+    project = fixture_project()
+    {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "whiteboards")
+
     conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid))
-    {:ok, conn: conn, project: fixture_project(), user: user}
+    {:ok, conn: conn, project: project, user: user}
   end
 
   defp mount_tab(conn, project, user) do
@@ -81,6 +87,8 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
     test "the tab appears only when the whiteboards extension is enabled",
          %{conn: conn, project: project} do
       path = "/en/admin/projects/#{project.uuid}"
+      # The setup switched it on for the tab tests below.
+      {:ok, _} = Extensions.disable(project, "whiteboards")
 
       {:ok, _view, html} = live(conn, path)
       refute html =~ "Whiteboards"

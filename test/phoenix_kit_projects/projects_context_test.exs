@@ -587,6 +587,23 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
     end
   end
 
+  describe "start_project/2" do
+    test "a second Start leaves the stored start and tells nobody again" do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      first = ~U[2026-03-02 09:00:00Z]
+      {:ok, started} = Projects.start_project(project, first)
+      assert started.started_at == first
+
+      # A stale dialog in another tab, confirmed a week later.
+      PhoenixKitProjects.PubSub.subscribe(PhoenixKitProjects.PubSub.topic_project(project.uuid))
+      {:ok, again} = Projects.start_project(project, ~U[2026-03-09 09:00:00Z])
+
+      assert again.started_at == first
+      assert Projects.get_project(project.uuid).started_at == first
+      refute_receive {:projects, :project_started, _}, 100
+    end
+  end
+
   describe "create_project_from_template/2" do
     test "returns :template_not_found for an unknown uuid" do
       assert {:error, :template_not_found} =
@@ -627,6 +644,41 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
 
       assignments = Projects.list_assignments(project.uuid)
       assert length(assignments) == 2
+    end
+
+    test "a one-off task of the template is copied, never shared with the clone" do
+      template = fixture_template()
+
+      {:ok, %{assignment: row, task: one_off}} =
+        Projects.create_task_with_assignment(template.uuid, %{
+          "title" => "Measure",
+          "ad_hoc" => true
+        })
+
+      library = fixture_task()
+
+      {:ok, _} =
+        Projects.create_assignment(%{
+          "project_uuid" => template.uuid,
+          "task_uuid" => library.uuid
+        })
+
+      {:ok, project} =
+        Projects.create_project_from_template(template.uuid, %{
+          "name" => "Cloned-#{System.unique_integer([:positive])}",
+          "start_mode" => "immediate"
+        })
+
+      [measure] =
+        project.uuid |> Projects.list_assignments() |> Enum.filter(&(&1.task.title == "Measure"))
+
+      # Its own one-off task: renaming it leaves the template's alone.
+      refute measure.task_uuid == one_off.uuid
+      {:ok, _} = Projects.update_task(measure.task, %{"title" => "Measure twice"})
+      assert Projects.get_assignment(row.uuid).task.title == "Measure"
+
+      # A library task stays shared.
+      assert Enum.any?(Projects.list_assignments(project.uuid), &(&1.task_uuid == library.uuid))
     end
   end
 

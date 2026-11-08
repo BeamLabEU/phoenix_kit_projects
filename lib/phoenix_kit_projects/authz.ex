@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Authz do
   require Logger
 
   alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.Extensions
@@ -397,7 +398,9 @@ defmodule PhoenixKitProjects.Authz do
         false
 
       user_uuid ->
-        case effective_role(project, user_uuid) do
+        # The subject itself, not just its uuid: a scope answers the open
+        # seat's module check from its cached permissions, with no read.
+        case effective_role(project, reach_subject(subject, user_uuid)) do
           nil ->
             # No role at all — but an assignee may still act on their OWN
             # task. Checked here rather than skipped so a task handed to
@@ -445,16 +448,38 @@ defmodule PhoenixKitProjects.Authz do
   direct row never silently lowers what a group already gave them.
   Specificity-wins would make ADDING a grant a revocation. See
   `PhoenixKitProjects.Grants`.
+
+  The second argument is a user uuid or that user's `%Scope{}`; the scope
+  is preferred where the caller has one, since it answers the open seat's
+  module check (`module_reacher?/1`) without a read.
   """
-  @spec effective_role(map() | binary(), binary()) :: atom() | nil
-  def effective_role(project, user_uuid) when is_binary(user_uuid) do
+  @spec effective_role(map() | binary(), binary() | Scope.t()) :: atom() | nil
+  def effective_role(project, %Scope{} = scope) do
+    case subject_user_uuid(scope) do
+      nil -> nil
+      user_uuid -> resolve_role(project, user_uuid, scope)
+    end
+  end
+
+  def effective_role(project, user_uuid) when is_binary(user_uuid),
+    do: resolve_role(project, user_uuid, user_uuid)
+
+  def effective_role(_project, _user_uuid), do: nil
+
+  defp resolve_role(project, user_uuid, reach) do
     direct = PhoenixKitProjects.Members.role_of(project, user_uuid)
     group = PhoenixKitProjects.Grants.group_role_of(project, user_uuid)
 
-    # An "everyone" project hands every module-reacher a viewer seat. It is
-    # the weakest possible role, so it can only ever ADD access — someone
-    # who is also a manager through their team stays a manager.
-    open = if visibility_of(project) == "everyone", do: :viewer
+    # An "everyone" project hands every MODULE-REACHER a viewer seat — what
+    # the access panel promises ("anyone with access to the Projects
+    # module"). Not every account: the user dashboard is membership-gated
+    # with no module key, so without this check a shop customer could open
+    # (and, under the open default floors, edit) such a project. It is the
+    # weakest possible role, so it can only ever ADD access — someone who
+    # is also a manager through their team stays a manager. Asked last and
+    # only for an open project: the uuid form costs a scope build.
+    open =
+      if visibility_of(project) == "everyone" and module_reacher?(reach), do: :viewer
 
     # The two sources disagree on representation — memberships resolve to
     # atoms, grant rows are strings straight off the column — and
@@ -473,7 +498,37 @@ defmodule PhoenixKitProjects.Authz do
     :exit, _ -> nil
   end
 
-  def effective_role(_project, _user_uuid), do: nil
+  @doc """
+  May this subject enter the Projects module — the base `projects` key, or
+  the superadmin `"*"`, which `Scope` folds in? Takes a `%Scope{}` (answered
+  from its cached permissions) or a user uuid (an active account whose
+  scope holds the key; one scope build). Fail-closed.
+
+  This is the condition on an "everyone" project's open viewer seat. It is
+  not asked of members: a member reaches their projects on the user
+  dashboard without the module key, by design.
+  """
+  @spec module_reacher?(Scope.t() | binary() | nil) :: boolean()
+  def module_reacher?(%Scope{} = scope), do: Scope.has_module_access?(scope, "projects")
+
+  def module_reacher?(user_uuid) when is_binary(user_uuid) do
+    case Auth.get_user(user_uuid) do
+      %{is_active: true} = user ->
+        user |> Scope.for_user() |> module_reacher?()
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
+
+  def module_reacher?(_), do: false
+
+  defp reach_subject(%Scope{} = scope, _user_uuid), do: scope
+  defp reach_subject(_subject, user_uuid), do: user_uuid
 
   defp to_role_atom(role) when is_atom(role) do
     if role in @roles, do: role

@@ -25,15 +25,6 @@ defmodule PhoenixKitProjects.Integration.ExpectedSchemaTest do
   @prerequisites [PhoenixKitEntities.Migrations, PhoenixKitStaff.Migrations]
   @migrations PhoenixKitProjects.Migrations.Schema
   @modules %{@app => %{manifest: ExpectedSchema, migrations: @migrations}}
-  # Projects' chain looks these two constraints up by name alone, not by schema
-  # (migrations/schema.ex, `WHERE conname = ...`), so in a scratch schema beside a
-  # database that already has them in `public` it skips creating them. Harmless
-  # in `public`; listed so the rest of the comparison stays strict.
-  @known_gaps [
-    "constraint:phoenix_kit_project_assignments.phoenix_kit_project_assignments_dates_check",
-    "constraint:phoenix_kit_project_portals.phoenix_kit_project_portals_access_mode_check"
-  ]
-
   setup do
     # Core's chain reads the repo from config while it builds.
     previous_repo = Application.get_env(:phoenix_kit, :repo)
@@ -60,7 +51,7 @@ defmodule PhoenixKitProjects.Integration.ExpectedSchemaTest do
   defp module_findings(report) do
     report
     |> Repair.Report.findings()
-    |> Enum.filter(&(&1[:module] && &1.object_id not in @known_gaps))
+    |> Enum.filter(& &1[:module])
   end
 
   defp verify(schema) do

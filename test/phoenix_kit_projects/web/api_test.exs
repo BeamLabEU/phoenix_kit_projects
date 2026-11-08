@@ -51,6 +51,46 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
   defp idem, do: [{"idempotency-key", Ecto.UUID.generate()}]
 
+  describe "the Idempotency-Key header" do
+    test "one it cannot keep is refused, never run without it", %{
+      conn: conn,
+      token: token,
+      assignment: a
+    } do
+      c = api(conn, token)
+
+      assert %{"error" => %{"code" => "idempotency_key_invalid"}} =
+               c
+               |> post_json("#{@base}/tasks/#{a.uuid}/time", %{"minutes" => 30}, [
+                 {"idempotency-key", String.duplicate("k", 129)}
+               ])
+               |> json_response(422)
+
+      assert PhoenixKitProjects.Ledger.list_entries(a.project_uuid) == []
+    end
+  end
+
+  describe "the module switched off" do
+    test "every call answers 503 module_disabled, and a write writes nothing", %{
+      conn: conn,
+      token: token,
+      assignment: a
+    } do
+      {:ok, _} = PhoenixKit.Settings.update_boolean_setting("projects_enabled", false)
+      c = api(conn, token)
+
+      assert %{"error" => %{"code" => "module_disabled"}} =
+               c |> get("#{@base}/tasks") |> json_response(503)
+
+      assert %{"error" => %{"code" => "module_disabled"}} =
+               c
+               |> post_json("#{@base}/tasks/#{a.uuid}/time", %{"minutes" => 30}, idem())
+               |> json_response(503)
+
+      assert PhoenixKitProjects.Ledger.list_entries(a.project_uuid) == []
+    end
+  end
+
   # ── Sub-projects: the key's reach ───────────────────────────────
 
   describe "sub-projects" do

@@ -83,6 +83,7 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
       gettext("Project Members"),
       gettext("Project Modules"),
       gettext("Your API key"),
+      gettext("API keys"),
 
       # Hidden subtabs (used for routing + page-header crumbs).
       gettext("New Task"),
@@ -94,7 +95,6 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
       gettext("Edit Template"),
       gettext("Template"),
       gettext("Add Task"),
-      gettext("Edit Assignment"),
       gettext("Task")
     ]
   end

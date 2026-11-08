@@ -27,7 +27,7 @@ mount focuses the title when the sheet opens.
 
 **The write** is `Projects.quick_add_assignment/3` →
 `create_task_with_assignment/3`: one transaction that locks the project row
-(`FOR UPDATE`, so concurrent adds never share a bottom `position`), inserts
+(`FOR NO KEY UPDATE`, so concurrent adds never share a bottom `position`), inserts
 the library `Task`, inserts the `Assignment`. NOTHING else inside —
 broadcasts (`:task_created`, `:assignment_created`) fire after commit and
 the activity log stays with the LiveView (it knows the actor). The full

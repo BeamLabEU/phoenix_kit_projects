@@ -35,7 +35,8 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLiveTest do
 
     assert html =~ mine.name
     refute html =~ other.name
-    assert html =~ "member"
+    # The badge itself (a bare "member" also matched element ids).
+    assert html =~ ~r{<span class="badge badge-ghost badge-sm shrink-0">\s*member\s*</span>}
   end
 
   test "templates never list", %{conn: conn, user: user} do

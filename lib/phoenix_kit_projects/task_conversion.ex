@@ -104,11 +104,11 @@ defmodule PhoenixKitProjects.TaskConversion do
     end
   end
 
-  # A sub-project one level below the parent must still fit the tree.
+  # A sub-project one level below the parent must still fit the tree — the
+  # limit `parent_chain/1` walks (8), not the tree builders' 32, against
+  # which this check could never refuse.
   defp room_below(%Project{} = parent) do
-    if length(Projects.parent_chain(parent.uuid)) + 1 >= Projects.max_subproject_depth(),
-      do: {:error, :too_deep},
-      else: :ok
+    if Projects.room_for_subproject?(parent), do: :ok, else: {:error, :too_deep}
   end
 
   # The child: named and described as the task, the task's assignee, the

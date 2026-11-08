@@ -37,6 +37,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Members
+  alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.PopupHostLive
 
   @impl true
@@ -78,7 +79,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
        open: open,
        page_title:
          case open do
-           {p, _} -> p.name
+           {p, _} -> Project.localized_name(p, L10n.current_content_lang()) || p.name
            _ -> gettext("My Projects")
          end
      )}
@@ -129,11 +130,11 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
             >
               <div class="card-body gap-2 py-4">
                 <div class="flex items-start justify-between gap-2">
-                  <h2 class="card-title text-base">{project.name}</h2>
+                  <h2 class="card-title text-base">{Project.localized_name(project, L10n.current_content_lang()) || project.name}</h2>
                   <span class="badge badge-ghost badge-sm shrink-0">{role_label(role)}</span>
                 </div>
                 <p :if={project.description} class="line-clamp-2 text-sm opacity-60">
-                  {project.description}
+                  {Project.localized_description(project, L10n.current_content_lang()) || project.description}
                 </p>
               </div>
             </.link>

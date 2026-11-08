@@ -16,8 +16,12 @@ defmodule PhoenixKitProjects.IdempotencyLivenessTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias PhoenixKitProjects.{ApiKeys, DataCase}
-  alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Schemas.{ApiKey, Project}
   alias PhoenixKitProjects.Test.Repo
+
+  # A real database, like every DataCase module: excluded with them when
+  # there is none, instead of failing in `setup`.
+  @moduletag :integration
 
   setup do
     Sandbox.mode(Repo, :auto)
@@ -26,12 +30,14 @@ defmodule PhoenixKitProjects.IdempotencyLivenessTest do
     project = DataCase.fixture_project()
     {:ok, key, _token} = ApiKeys.create(project, %{"name" => "liveness"})
 
-    # runs before the mode is restored (on_exit is last in, first out); the
-    # key and its idempotency rows go with the project
-    # — except its key: the registry keeps a deleted project's key retired
-    # (chain V22), and these rows are really committed, so it is removed by
-    # hand or every run would leave one behind for a later fixture to hit
+    # runs before the mode is restored (on_exit is last in, first out). These
+    # rows are really committed, so each is removed by hand: the API key
+    # first (since V24 its project link is ON DELETE SET NULL, so it outlived
+    # its project; its idempotency rows go with it), then the project, then
+    # its key in the registry, which keeps a deleted project's key retired
+    # (chain V22) — or every run would leave them behind.
     on_exit(fn ->
+      Repo.delete_all(from(k in ApiKey, where: k.uuid == ^key.uuid))
       Repo.delete_all(from(p in Project, where: p.uuid == ^project.uuid))
       Repo.delete_all(from(k in "phoenix_kit_project_keys", where: k.key == ^project.key))
     end)
@@ -69,8 +75,7 @@ defmodule PhoenixKitProjects.IdempotencyLivenessTest do
 
     assert :counters.get(counter, 1) == 1
 
-    send(first, :finish)
-    Process.sleep(300)
+    finish(first)
 
     assert {:replay, 201, %{"owner" => "first"}} =
              ApiKeys.idempotent(key, "live", fn -> raise "must replay" end)
@@ -117,6 +122,15 @@ defmodule PhoenixKitProjects.IdempotencyLivenessTest do
     Process.sleep(16_000)
     assert {:ok, 409, _} = ApiKeys.idempotent(key, "slow", fn -> raise "still alive" end)
 
-    send(first, :finish)
+    # Waited for, so its answer is stored before the rows are cleaned up.
+    finish(first)
+  end
+
+  # Lets the first request answer and waits until it has: a fixed sleep
+  # raced the store under load (a replay then read 409 `in_progress`).
+  defp finish(pid) do
+    ref = Process.monitor(pid)
+    send(pid, :finish)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
   end
 end

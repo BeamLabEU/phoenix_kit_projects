@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.People.Department do
   @moduledoc """
-  READ-ONLY shadow schema over the core-owned
+  READ-ONLY shadow schema over the staff-owned
   `phoenix_kit_staff_departments` table (core V100). See
   `PhoenixKitProjects.People.Person` for the seam's rules.
   """

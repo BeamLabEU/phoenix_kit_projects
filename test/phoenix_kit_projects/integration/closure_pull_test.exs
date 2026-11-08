@@ -152,6 +152,25 @@ defmodule PhoenixKitProjects.Integration.ClosurePullTest do
       assert depends_on?(project.uuid, c.uuid, d.uuid)
     end
 
+    test "diamond with a tail: the shared edge below the join is wired once" do
+      # A → B → D, A → C → D, D → E: the walk reaches D under B and under C,
+      # so D → E came up twice — its unique violation aborted the
+      # transaction and the next statement crashed the form.
+      project = fixture_project()
+      [a, _b, _c, d] = diamond()
+      e = fixture_task()
+      {:ok, _} = Projects.add_task_dependency(d.uuid, e.uuid)
+
+      assert {:ok, %{root: root, extras: extras}} =
+               Projects.create_assignments_with_closure(a.uuid, project.uuid, %{
+                 "status" => "todo"
+               })
+
+      assert root.task_uuid == a.uuid
+      assert length(extras) == 4
+      assert depends_on?(project.uuid, d.uuid, e.uuid)
+    end
+
     test "diamond: excluding one parent doesn't drop the shared descendant" do
       project = fixture_project()
       [a, b, c, d] = diamond()

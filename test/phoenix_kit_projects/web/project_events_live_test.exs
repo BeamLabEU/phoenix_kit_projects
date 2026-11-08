@@ -7,13 +7,29 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Extensions, ProjectEvents}
+  alias PhoenixKitProjects.Test.Access
   alias PhoenixKitProjects.Web.ProjectEventsLive
 
   setup %{conn: conn} do
     PhoenixKitProjects.Extensions.Registry.refresh()
     conn = put_test_scope(conn, fake_scope())
     {:ok, conn: conn, project: fixture_project()}
+  end
+
+  # A writer re-asked at every write (`WebHelpers.tab_write?/5`): a real
+  # account that may add events here, on a project with the tab on.
+  defp writer!(project) do
+    {:ok, user} =
+      Auth.register_user(%{
+        email: "events-#{System.unique_integer([:positive])}@example.com",
+        password: "ValidPassword123!"
+      })
+
+    Access.grant_projects!(user)
+    {:ok, _} = Extensions.enable(project, "events")
+    user.uuid
   end
 
   defp mount_tab(conn, project) do
@@ -23,7 +39,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
         "ext_key" => "events",
         "instance_key" => "default",
         "config" => %{},
-        "current_user_uuid" => Ecto.UUID.generate(),
+        "current_user_uuid" => writer!(project),
         "can_write" => true,
         "locale" => "en"
       }
@@ -42,6 +58,38 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
         "locale" => "en"
       }
     )
+  end
+
+  test "a writer whose rights were taken away meanwhile writes nothing",
+       %{conn: conn, project: project} do
+    # The hub hands `can_write` once, at the tab's first mount, and keeps the
+    # tab mounted: the write itself asks again.
+    user_uuid = writer!(project)
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectEventsLive,
+        session: %{
+          "project_uuid" => project.uuid,
+          "ext_key" => "events",
+          "instance_key" => "default",
+          "config" => %{},
+          "current_user_uuid" => user_uuid,
+          "can_write" => true,
+          "locale" => "en"
+        }
+      )
+
+    user_uuid |> Auth.get_user() |> Access.revoke_all!()
+
+    html =
+      render_submit(view, "create_event", %{
+        "title" => "Sprint review",
+        "date" => "2026-08-20",
+        "all_day" => "true"
+      })
+
+    assert html =~ "You don&#39;t have permission to change events."
+    assert ProjectEvents.list_for_project(project.uuid) == []
   end
 
   test "the tab appears only when the events extension is enabled",

@@ -49,6 +49,22 @@ defmodule PhoenixKitProjects.Integration.InvoicingTest do
     assert Ledger.totals_for_project(project.uuid).time_minutes == 90.0
   end
 
+  test "an invoiced entry is never amended or removed, by any path", %{project: project} do
+    # The Hours page checked this; the API's PATCH/DELETE /entries did not.
+    # The guard is the ledger's own now.
+    {:ok, entry} = Ledger.log_time(project, 60, billable: true)
+    insert_refs(project.uuid, [entry], Ecto.UUID.generate())
+
+    assert Invoicing.invoiced?(entry.uuid)
+    assert {:error, :invoiced} = Ledger.update_time(entry, 90)
+    assert {:error, :invoiced} = Ledger.delete_entry(entry)
+    assert Decimal.to_integer(Ledger.get_entry(entry.uuid).amount) == 60
+
+    {:ok, free} = Ledger.log_time(project, 30)
+    refute Invoicing.invoiced?(free.uuid)
+    assert {:ok, _} = Ledger.update_time(free, 45)
+  end
+
   test "entry-level idempotency: an entry can be on exactly one invoice", %{project: project} do
     {:ok, entry} = Ledger.log_time(project, 45, billable: true)
     insert_refs(project.uuid, [entry], Ecto.UUID.generate())

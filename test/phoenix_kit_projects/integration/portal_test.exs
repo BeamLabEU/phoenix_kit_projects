@@ -86,6 +86,11 @@ defmodule PhoenixKitProjects.Integration.PortalTest do
       {:ok, _} = Extensions.disable(project, "portal")
       assert Portal.resolve(portal.slug) == :error
     end
+
+    test "the module switched off closes every portal", %{portal: portal} do
+      {:ok, _} = PhoenixKit.Settings.update_boolean_setting("projects_enabled", false)
+      assert Portal.resolve(portal.slug) == :error
+    end
   end
 
   describe "public_view/1 — the whitelist" do

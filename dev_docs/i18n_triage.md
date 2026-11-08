@@ -1,5 +1,7 @@
 # Gettext i18n triage — phoenix_kit_projects
 
+> **2026-11-08:** `web/components/sortable_table.ex` no longer exists; the only file left on core's `PhoenixKitWeb.Gettext` backend is `l10n.ex` (month names and date templates). The rows below that name the table component are historical.
+
 Source-of-truth for the bucket assignments made during the
 "Translate UI text in projects module" effort (initiated 2026-05-13).
 Each `gettext(...)` call site in `lib/` falls into one of three buckets:

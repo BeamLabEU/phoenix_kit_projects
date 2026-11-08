@@ -881,6 +881,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
         )
 
+      PhoenixKitProjects.PubSub.subscribe(topic)
+
       # render_hook bypasses the smart_link's whitelist on the client
       # side; this exercises the server-side fail-closed branch.
       render_hook(view, "open_embed", %{
@@ -889,6 +891,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       })
 
       assert Process.alive?(view.pid)
+      # Dropped, not passed on: nothing opened on the host's topic.
+      refute_receive {:projects, :opened, _}, 100
     end
 
     test "malformed session JSON — logged and dropped without crash", %{conn: conn} do

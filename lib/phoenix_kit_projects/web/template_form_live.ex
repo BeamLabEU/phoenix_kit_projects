@@ -31,6 +31,10 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col mx-auto max-w-xl px-4 py-6 gap-4"
 
+  @server_owned ~w(is_template started_at completed_at archived_at position external_id
+                   current_status_slug assignees assigned_person_uuid assigned_team_uuid
+                   assigned_department_uuid)
+
   @impl true
   def mount(params, session, socket) do
     WebHelpers.maybe_put_locale(session)
@@ -257,9 +261,16 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     if socket.assigns.ai_in_flight == [] do
       attrs =
         attrs
+        # Server-owned, and this form draws no assignee picker: a post of
+        # either is dropped (a forged assignee naming nobody failed on a
+        # foreign key inside the save).
+        |> Map.drop(@server_owned)
         |> Map.merge(%{"is_template" => "true", "start_mode" => "immediate"})
         |> merge_attrs(socket)
-        |> apply_mode(params, socket.assigns.project)
+        # Settings folded onto the template as stored NOW: the mount-time
+        # copy reverted a feature, access or cover change made meanwhile —
+        # what every project cloned from it inherits.
+        |> apply_mode(params, current_record(socket))
 
       save(socket, socket.assigns.live_action, attrs)
     else
@@ -373,6 +384,12 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     in_flight = WebHelpers.in_flight_record(socket, :form, :project)
     WebHelpers.merge_translations_attrs(attrs, in_flight, Project.translatable_fields())
   end
+
+  defp current_record(%{assigns: %{live_action: :edit, project: %{uuid: uuid} = held}})
+       when is_binary(uuid),
+       do: Projects.get_project(uuid) || held
+
+  defp current_record(socket), do: socket.assigns.project
 
   defp save(socket, :new, attrs) do
     case Projects.create_project(attrs) do

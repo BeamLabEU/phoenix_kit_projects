@@ -32,14 +32,16 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
        )
        |> assign(:total, length(projects))
        |> assign(:lifecycle, lifecycle)
-       |> assign(:tasks, task_counts())}
+       |> assign(:tasks, task_counts(assigns[:scope]))}
     else
       {:ok, assign(socket, :available, false)}
     end
   end
 
-  defp task_counts do
-    Projects.assignment_status_counts()
+  # The viewer's projects' tasks only, like the projects band above it — a
+  # dashboard reader never sees the site's workload.
+  defp task_counts(scope) do
+    Projects.assignment_status_counts(viewer: viewer_for(scope))
   rescue
     e ->
       Logger.warning("[WorkloadWidget] task_counts failed: #{Exception.message(e)}")

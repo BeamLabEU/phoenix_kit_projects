@@ -527,7 +527,13 @@ defmodule PhoenixKitProjects.Outline do
     result =
       try do
         repo().transaction(fn ->
-          case repo().one(from(p in Project, where: p.uuid == ^project_uuid, lock: "FOR UPDATE")) do
+          # `FOR NO KEY UPDATE`: excludes the other lockers, never an insert's
+          # foreign-key check (`FOR KEY SHARE`) — with `FOR UPDATE`, a plain
+          # insert holding the task counter and waiting on this row deadlocked
+          # against a locked writer reaching for that counter.
+          case repo().one(
+                 from(p in Project, where: p.uuid == ^project_uuid, lock: "FOR NO KEY UPDATE")
+               ) do
             nil -> repo().rollback(:not_found)
             project -> fun.(project)
           end
@@ -1092,7 +1098,11 @@ defmodule PhoenixKitProjects.Outline do
 
   defp filled?(text), do: is_binary(text) and String.trim(text) != ""
 
-  @doc "Among `uuids`: the tasks with logged entries, comments, notes or dependencies."
+  @doc """
+  Among `uuids`: the tasks with logged entries, comments, notes,
+  dependencies or files of their own (V27 — deleting the task would take
+  the links to its files with it, leaving the files nowhere).
+  """
   @spec carrying([binary()]) :: %{optional(binary()) => true}
   def carrying([]), do: %{}
 
@@ -1113,9 +1123,17 @@ defmodule PhoenixKitProjects.Outline do
       |> repo().all()
       |> List.flatten()
 
+    files =
+      from(f in PhoenixKitProjects.Schemas.AssignmentFile,
+        where: f.assignment_uuid in ^uuids,
+        distinct: true,
+        select: f.assignment_uuid
+      )
+      |> repo().all()
+
     asked = Map.new(uuids, &{&1, true})
 
-    for uuid <- logged ++ comments ++ notes ++ deps,
+    for uuid <- logged ++ comments ++ notes ++ deps ++ files,
         Map.has_key?(asked, uuid),
         into: %{},
         do: {uuid, true}

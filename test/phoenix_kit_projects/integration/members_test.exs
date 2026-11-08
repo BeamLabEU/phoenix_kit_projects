@@ -4,6 +4,7 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
   import PhoenixKitProjects.ActivityLogAssertions
 
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.{Authz, Features, Grants, Members, Projects}
   alias PhoenixKitStaff.{Departments, Staff, Teams}
 
@@ -378,6 +379,8 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
 
     test "agrees with accessible_projects/1 across every access path, uuids only" do
       %{user: u, team: team} = staffed_user()
+      # The open seat is for people who can enter the module.
+      PhoenixKitProjects.Test.Access.grant_projects!(u)
 
       direct = fixture_project()
       {:ok, _} = Members.add_member(direct, u.uuid, role: "member")
@@ -412,6 +415,32 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       assert actual == expected
       assert Enum.sort([direct.uuid, granted.uuid, both.uuid, open.uuid]) == expected
       refute template.uuid in actual
+    end
+
+    test "an \"everyone\" project's open seat needs the Projects module" do
+      # A shop customer: an active account with no module key, no membership
+      # and no grant. "Visible to everyone" means everyone who can enter
+      # Projects (the access panel's promise), never every account on the
+      # site — the user dashboard admits members without the key, so a seat
+      # handed to anyone would let any customer open and edit the project.
+      customer = user_fixture()
+      open = fixture_project(%{"settings" => %{"visibility" => "everyone"}})
+
+      assert Authz.effective_role(open, customer.uuid) == nil
+      refute Authz.can?(customer.uuid, open, :view)
+      refute open.uuid in Members.accessible_project_uuids(customer.uuid)
+
+      refute Enum.any?(Members.accessible_projects(customer.uuid), fn {p, _} ->
+               p.uuid == open.uuid
+             end)
+
+      PhoenixKitProjects.Test.Access.grant_projects!(customer)
+
+      assert Authz.effective_role(open, customer.uuid) == :viewer
+      assert Authz.can?(customer.uuid, open, :view)
+      assert open.uuid in Members.accessible_project_uuids(customer.uuid)
+      # A scope answers from its cached permissions.
+      assert Authz.effective_role(open, Scope.for_user(customer)) == :viewer
     end
 
     test "a user with no access of any kind gets an empty list from both forms" do

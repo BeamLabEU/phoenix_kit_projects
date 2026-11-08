@@ -222,8 +222,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # Whose time the log line records: the viewer's unless a person was
   # picked — and a picked one must be among those the form offered.
+  # The right to log for others is asked again at the write, of the live
+  # scope (the list was built at mount): a manager made a member since then
+  # logs only their own time.
   defp log_actor(%{assigns: %{log_person: %{key: key}}} = socket) do
-    if Enum.any?(socket.assigns[:log_people] || [], fn {_name, k} -> k == key end) do
+    if Enum.any?(socket.assigns[:log_people] || [], fn {_name, k} -> k == key end) and
+         log_for_others?(socket, key) do
       [kind, uuid] = String.split(key, ":", parts: 2)
       {:ok, [actor_kind: kind, actor_uuid: uuid]}
     else
@@ -236,6 +240,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       uuid when is_binary(uuid) -> {:ok, [actor_kind: "user", actor_uuid: uuid]}
       _ -> false
     end
+  end
+
+  defp log_for_others?(socket, key) do
+    key == "user:" <> (Activity.actor_uuid(socket) || "") or
+      PhoenixKitProjects.Authz.can?(
+        socket.assigns[:phoenix_kit_current_scope],
+        socket.assigns.project,
+        :log_time_for_others
+      )
   end
 
   defp log_note(note) when is_binary(note) do
@@ -1385,7 +1398,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {_, nil} ->
         socket
         |> assign_not_found_placeholders()
-        |> put_flash(:error, gettext("Assignment not found."))
+        |> put_flash(:error, gettext("Task not found."))
         |> WebHelpers.close_or_navigate(Paths.project(project_id))
 
       {project, %Assignment{child_project_uuid: child_uuid} = assignment}
@@ -1953,7 +1966,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("delete_task", _params, socket) do
     with %Assignment{} = a <- socket.assigns[:assignment],
          %Assignment{} = fresh <- Projects.get_assignment(a.uuid),
-         true <- can_delete?(socket, fresh) do
+         true <- can_delete?(socket, fresh),
+         false <- is_nil(fresh.child_project_uuid) and Projects.subproject_below?(fresh) do
       socket = cancel_autosave(socket)
 
       case PhoenixKitProjects.Notices.removing(fresh, Activity.actor_uuid(socket), fn ->
@@ -1976,13 +1990,29 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           {:noreply, put_flash(socket, :error, gettext("Could not remove task."))}
       end
     else
-      _ -> {:noreply, socket}
+      # Deleting the task would take a whole project along behind a question
+      # that counts it as a subtask: its own row says what deleting it does.
+      true ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext(
+             "A sub-project sits under this task. Move it out or delete it on its own first."
+           )
+         )}
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
+  # A sub-project row under the task is left to its own project: ticking it
+  # would write a status onto the rollup row while the project stays open.
   def handle_event("subtask_toggle", %{"uuid" => uuid}, socket) do
     with %Assignment{} = parent <- socket.assigns[:assignment],
-         %Assignment{parent_uuid: p} = sub when p == parent.uuid <- Projects.get_assignment(uuid),
+         %Assignment{parent_uuid: p, child_project_uuid: nil} = sub when p == parent.uuid <-
+           Projects.get_assignment(uuid),
          true <- may?(socket, :update_status) do
       {action, result} =
         if sub.status == "done",
@@ -1997,8 +2027,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       # here completes it, as it would from the list.
       Projects.recompute_project_completion(socket.assigns.project.uuid)
 
-      fresh = Projects.get_assignment(parent.uuid)
-      {:noreply, socket |> assign(assignment: fresh || parent) |> assign_outline(%{})}
+      # Held in the form's own shape (`hold_saved/2`: its own description,
+      # refs collapsed) — the raw row made the next Save read the words as
+      # changed and take them from whoever wrote them last.
+      {:noreply, socket |> hold_saved(parent) |> assign_outline(%{})}
     else
       _ -> {:noreply, socket}
     end
@@ -2072,6 +2104,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         _ -> socket
       end
 
+    raw = attrs
     attrs = form_attrs(attrs, socket)
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
     task_mode = Map.get(params, "task_mode", socket.assigns.task_mode)
@@ -2086,17 +2119,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       if task_mode == "existing" && socket.assigns.live_action == :new do
         task_uuid = attrs["task_uuid"]
 
-        if task_uuid != "" && task_uuid != socket.assigns.selected_task_uuid do
+        # Only a task the picker offered: the posted value is the browser's,
+        # and prefilling from any task uuid would show a private project's
+        # one-off task (its words, its people) to whoever typed it.
+        if task_uuid != "" && task_uuid != socket.assigns.selected_task_uuid &&
+             offered_library_task?(socket, task_uuid) do
           prefill_from_template(socket, task_uuid, attrs)
         else
           cs =
             socket.assigns.assignment
             |> Projects.change_assignment(merge_attrs(attrs, socket))
+            |> DurationInput.keep_typed(raw)
 
           assign_form(socket, cs) |> assign(selected_task_uuid: task_uuid)
         end
       else
-        cs = Projects.change_assignment(socket.assigns.assignment, merge_attrs(attrs, socket))
+        cs =
+          socket.assigns.assignment
+          |> Projects.change_assignment(merge_attrs(attrs, socket))
+          |> DurationInput.keep_typed(raw)
+
         assign_form(socket, cs)
       end
 
@@ -2171,7 +2213,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     assign_type = Map.get(params, "assign_type", "")
 
     # Save-time gate re-resolution (panel R3-4): the submit binds to the
-    # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled.
+    # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled —
+    # read from the project as stored now, since the flags live in its
+    # settings (and the floors the rights below are judged by, too).
+    socket = refresh_project(socket)
     fx = Features.gates(socket.assigns.project)
     # "Add & next" (Shift+Enter, or the button — the submitter carries
     # `then=next`): after a successful create the form resets for the next
@@ -2338,7 +2383,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
       {:noreply,
        socket
-       |> assign(assignment: Projects.get_assignment(assignment.uuid))
+       |> hold_saved(assignment)
        |> put_flash(
          :info,
          if(publish?,
@@ -2365,7 +2410,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
            PhoenixKitProjects.Portal.set_public(assignment, assignment.public != true,
              actor_uuid: Activity.actor_uuid(socket)
            ) do
-      {:noreply, assign(socket, assignment: updated)}
+      {:noreply, hold_saved(socket, updated)}
     else
       _ -> {:noreply, socket}
     end
@@ -2414,8 +2459,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # A sub-project is a project, so it gets the same "Generate default" action
   # ProjectFormLive has (V125). Operates on `@sp_form`. Feature-gated on
   # `statuses` (panel R3-5): with the flag off this provisions nothing.
+  #
+  # It mints a SITE-WIDE status list, so it asks what the project form asks
+  # for the same button (module access, `Authz.can_use_templates?/1`), and
+  # only from the sub-project form — never on a task's rights alone.
   def handle_event("generate_default_statuses", _params, socket) do
-    if Features.gates(socket.assigns.project).statuses do
+    if socket.assigns[:kind] == "subproject" and
+         Authz.can_use_templates?(socket.assigns[:phoenix_kit_current_scope]) and
+         Features.gates(socket.assigns.project).statuses do
       do_generate_default_statuses(socket)
     else
       {:noreply,
@@ -2429,6 +2480,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # forged save_subproject would still create/link a child — refuse it, and
   # strip gated attrs the same way the task save does.
   def handle_event("save_subproject", %{"link_child_uuid" => child_uuid}, socket) do
+    socket = refresh_project(socket)
     fx = Features.gates(socket.assigns.project)
 
     if fx.subprojects do
@@ -2442,6 +2494,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("save_subproject", %{"subproject" => attrs} = params, socket) do
     # Re-resolve at save time (panel R3-4): a mid-edit toggle in another
     # session must bind the SUBMIT, not the stale mount-time map.
+    socket = refresh_project(socket)
     fx = Features.gates(socket.assigns.project)
 
     if fx.subprojects do
@@ -2572,6 +2625,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     do: gettext("That project is archived — restore it before nesting it.")
 
   defp link_error_message(:not_found), do: gettext("That project no longer exists.")
+
+  defp link_error_message(:too_deep),
+    do: gettext("There is no room for another level of sub-projects.")
+
   defp link_error_message(_), do: gettext("Could not nest that project.")
 
   # ── Tasks under tasks ──────────────────────────────────────────────
@@ -2807,8 +2864,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # `completion` from the form into the project's settings, keeping every
   # other key the project already holds.
+  # Onto the settings the folds before it built (`WSF.apply_mode/3` wrote
+  # the status-title choice there), else the record's: starting again from
+  # the record dropped that choice on every save.
   defp fold_completion(attrs, %{"completion" => mode}, source) when mode in ["auto", "manual"] do
-    base = (source && source.settings) || %{}
+    base = attrs["settings"] || (source && source.settings) || %{}
     Map.put(attrs, "settings", Map.put(base, "completion", mode))
   end
 
@@ -2935,8 +2995,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp save_edit_subproject(socket, attrs) do
     # A sub-project is a project: a started one's status source is frozen, so
-    # strip it from the attrs (the picker is also locked in the form).
-    attrs = Statuses.lock_status_source(attrs, sp_source(socket))
+    # strip it from the attrs (the picker is also locked in the form). Judged
+    # by the project as stored NOW: one started since this form opened is
+    # frozen too. The changeset still diffs against the held record, which
+    # keeps concurrent edits of other fields.
+    attrs = Statuses.lock_status_source(attrs, fresh_sp_source(socket))
 
     case Projects.update_project(sp_source(socket), attrs) do
       {:ok, updated} ->
@@ -3020,7 +3083,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       add_to_library: to_library,
       dirty?: false,
       form_seq: socket.assigns.form_seq + 1,
-      form_pane: "task"
+      form_pane: "task",
+      # The next task starts clean: the repeat choice the hidden Planning
+      # pane would post again (every task after the first came out
+      # repeating) and the last title's suggestions go with the rest.
+      repeat_choice: nil,
+      title_suggestions: []
     )
     |> WebHelpers.notify_dirty(false)
     |> WebHelpers.keep_host_title()
@@ -3291,8 +3359,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         msg =
           case length(extras) do
-            0 -> gettext("Task added to project.")
-            n -> gettext("Task added with %{count} dependent task(s).", count: n)
+            0 ->
+              gettext("Task added to project.")
+
+            n ->
+              ngettext(
+                "Task added with 1 dependent task.",
+                "Task added with %{count} dependent tasks.",
+                n
+              )
           end
 
         {:noreply, socket |> put_flash(:info, msg) |> after_create(root)}
@@ -3433,7 +3508,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # When the words live on the task, the assignment's save leaves them out
   # and `save_task_words/2` writes them to the task instead.
-  defp put_save_flash(socket, :ok), do: put_flash(socket, :info, gettext("Assignment updated."))
+  defp put_save_flash(socket, :ok), do: put_flash(socket, :info, gettext("Task updated."))
 
   defp put_save_flash(socket, :error),
     do:
@@ -3635,6 +3710,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # the checklist folded), and stays where it is.
   defp autosave_now(%{assigns: %{pending_params: %{"assignment" => attrs} = params}} = socket) do
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
+    socket = refresh_project(socket)
     fx = Features.gates(socket.assigns.project)
 
     # The right to hand the task out is asked again too, like the gates: a
@@ -3981,24 +4057,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> put_flash(:error, first_error_message(cs))
   end
 
-  defp first_error_message(%Ecto.Changeset{errors: [{field, {msg, _opts}} | _]}) do
-    gettext("%{field}: %{message}", field: humanize(field), message: msg)
-  end
-
-  defp first_error_message(_), do: gettext("Could not save the assignment.")
-
-  # The fields this form added with V26 are named as their boxes are, in
-  # the viewer's language; older fields keep the generic spelling.
-  defp humanize(:deadline), do: gettext("Deadline")
-  defp humanize(:started_at), do: gettext("Started at")
-  defp humanize(:completed_at), do: gettext("Finished at")
-  defp humanize(:start_time), do: gettext("Start time")
-  defp humanize(:end_time), do: gettext("End time")
-  defp humanize(:repeat_rule), do: gettext("Repeats")
-
-  defp humanize(field) do
-    field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
-  end
+  # The field named by its label and the message translated
+  # (`WebHelpers.changeset_error_text/3`) — never a raw `%{count}`.
+  defp first_error_message(cs),
+    do: WebHelpers.changeset_error_text(cs, gettext("Could not save the task."))
 
   defp do_generate_default_statuses(socket) do
     case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
@@ -4387,16 +4449,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           metadata: %{"project" => project.name, "project_uuid" => project.uuid}
         )
 
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           ngettext(
-             "Could not add every task: 1 was added.",
-             "Could not add every task: %{count} were added.",
-             length(done)
-           )
-         )}
+        message =
+          case length(done) do
+            0 ->
+              gettext("Could not add the tasks.")
+
+            n ->
+              ngettext(
+                "Could not add every task: 1 was added.",
+                "Could not add every task: %{count} were added.",
+                n
+              )
+          end
+
+        {:noreply, put_flash(socket, :error, message)}
 
       [last | earlier] ->
         earlier |> Enum.reverse() |> Enum.each(&place_under_parent(socket, &1))
@@ -4429,6 +4495,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       "assignees" => PhoenixKitProjects.AssigneeSet.keys(task),
       "status" => "waiting"
     }
+  end
+
+  # The project as stored now (its flags and floors live in its settings);
+  # the struct the form mounted with stays when it is gone.
+  defp refresh_project(socket) do
+    case Projects.get_project(socket.assigns.project.uuid) do
+      %Project{} = project -> assign(socket, project: project)
+      nil -> socket
+    end
+  end
+
+  defp offered_library_task?(socket, task_uuid) do
+    socket.assigns.fx.library == true and
+      Enum.any?(socket.assigns[:library_tasks] || [], &(&1.uuid == task_uuid))
   end
 
   defp prefill_from_template(socket, task_uuid, attrs) do
@@ -4573,6 +4653,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         phx-change="validate_subproject"
         phx-submit="save_subproject"
         phx-debounce="300"
+        novalidate
         class="flex flex-col gap-3"
       >
         <%!-- On :new a sub-project can either be created fresh or an existing
@@ -4865,7 +4946,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         </:context>
       </.form_header>
 
-      <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
+      <%!-- `novalidate`: the server checks every field, and the browser's own
+           check (a repeat's "Every" off its min/max, a negative estimate)
+           blocked Save in silence when the bad value sat on a hidden tab. --%>
+      <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" novalidate class="flex flex-col gap-3">
         <%!-- The tabs. Every tab's fields stay in this one form and are only
              hidden, so switching loses nothing typed and a save posts them
              all; a tab holding an error the form shows carries a dot. --%>
@@ -5243,20 +5327,36 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </legend>
               <ul class="flex flex-col gap-1 mb-2">
                 <li :for={sub <- @subtasks} class="flex items-center gap-2 text-sm">
+                  <%!-- A sub-project row is its own project's to finish: no
+                       tick, its status as the badge shows it. The tick posts
+                       to the subtask form, not this one — a click is not an
+                       edit of the task (no "Unsaved changes"). --%>
                   <input
+                    :if={is_nil(sub.child_project_uuid)}
                     type="checkbox"
+                    form={"assignment-subtask-form-#{@dom}"}
                     class="checkbox checkbox-sm checkbox-success"
                     checked={sub.status == "done"}
                     phx-click="subtask_toggle"
                     phx-value-uuid={sub.uuid}
                     aria-label={AssignmentStatusBadge.label("done")}
                   />
-                  <.link
+                  <.assignment_status_badge
+                    :if={not is_nil(sub.child_project_uuid)}
+                    status={sub.status}
+                    subproject={true}
+                  />
+                  <%!-- Opened over this form in a drawer (its edits stay
+                       below), never a navigation of the host page. --%>
+                  <.smart_link
                     navigate={Paths.edit_assignment(@project.uuid, sub.uuid)}
-                    class={["link link-hover truncate flex-1", sub.status == "done" && "line-through text-base-content/50"]}
+                    emit={{PhoenixKitProjects.Web.AssignmentFormLive,
+                      %{"live_action" => "edit", "project_id" => @project.uuid, "id" => sub.uuid}}}
+                    embed_mode={@embed_mode}
+                    class={["link link-hover truncate flex-1 text-left", sub.status == "done" && "line-through text-base-content/50"]}
                   >
                     {Assignment.label(sub, @current_lang)}
-                  </.link>
+                  </.smart_link>
                   <span :if={Map.get(@subtask_counts, sub.uuid)} class="text-xs text-base-content/50">
                     {Map.get(@subtask_counts, sub.uuid).done}/{Map.get(@subtask_counts, sub.uuid).total}
                   </span>

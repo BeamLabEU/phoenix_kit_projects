@@ -295,6 +295,53 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     assert Enum.map(moved, & &1["uuid"]) == [first["uuid"]]
   end
 
+  test "a note's minutes are time: they need time:write, and project time on a project note",
+       %{conn: conn, project: project} do
+    {:ok, minter} =
+      Auth.register_user(%{
+        email: "agent-minter-#{System.unique_integer([:positive])}@example.com",
+        password: "ValidPassword123!"
+      })
+
+    # Usage, notes and tasks — but time "none".
+    {:ok, _key, narrow} =
+      ApiKeys.create(
+        project,
+        %{
+          "name" => "No time",
+          "role" => "member",
+          "scopes" => ["tasks:read", "tasks:write", "notes:write", "usage:write"]
+        },
+        actor_uuid: minter.uuid
+      )
+
+    c = api(conn, narrow)
+
+    %{"task" => t} =
+      c |> post_json("#{@base}/tasks", %{"title" => "Measure"}, idem()) |> json_response(201)
+
+    assert %{"error" => %{"code" => "scope_missing"}} =
+             c
+             |> post_json(
+               "#{@base}/tasks/#{t["uuid"]}/notes",
+               %{"summary" => "Measured", "usage" => %{"minutes" => 600}},
+               idem()
+             )
+             |> json_response(403)
+
+    assert Ledger.totals_for_project(project.uuid).ai_minutes in [0, 0.0]
+
+    # Tokens alone stay a usage report.
+    assert %{"note" => _} =
+             c
+             |> post_json(
+               "#{@base}/tasks/#{t["uuid"]}/notes",
+               %{"summary" => "Measured", "usage" => %{"tokens" => 50}},
+               idem()
+             )
+             |> json_response(201)
+  end
+
   test "project notes and the briefing", %{conn: conn, project: project, token: token} do
     c = api(conn, token)
 

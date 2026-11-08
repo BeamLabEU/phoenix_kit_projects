@@ -740,6 +740,38 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       assert frame.session["current_user_uuid"] == uuid
     end
 
+    test "another viewer's click on a shared host topic opens nothing here", %{conn: conn} do
+      # A host topic is often per record — everyone viewing order 123 shares
+      # it. The module's emitters name whose click it was.
+      topic = unique_topic()
+      mine = Ecto.UUID.generate()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic, "current_user_uuid" => mine}
+        )
+
+      ProjectsPubSub.broadcast_embed(topic, :opened, %{
+        lv: PhoenixKitProjects.Web.OverviewLive,
+        session: %{},
+        frame_ref: nil,
+        user_uuid: Ecto.UUID.generate()
+      })
+
+      _ = render(view)
+      assert :sys.get_state(view.pid).socket.assigns.modal_stack == []
+
+      ProjectsPubSub.broadcast_embed(topic, :opened, %{
+        lv: PhoenixKitProjects.Web.OverviewLive,
+        session: %{},
+        frame_ref: nil,
+        user_uuid: mine
+      })
+
+      _ = render(view)
+      assert [_frame] = :sys.get_state(view.pid).socket.assigns.modal_stack
+    end
+
     test "an :opened session cannot name the user or re-route the frame", %{conn: conn} do
       topic = unique_topic()
       host_uuid = Ecto.UUID.generate()

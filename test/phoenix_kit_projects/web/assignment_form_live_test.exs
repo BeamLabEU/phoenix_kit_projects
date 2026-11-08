@@ -268,7 +268,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
         )
 
       assert redirect_to =~ "/projects/#{project.uuid}"
-      assert flash["error"] =~ "Assignment not found"
+      assert flash["error"] =~ "Task not found"
     end
 
     test "save updates assignment and logs activity",

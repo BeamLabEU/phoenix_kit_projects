@@ -973,7 +973,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "object",
             required: false,
             doc:
-              "{tokens, cost_cents, minutes, model, occurred_at}: whole non-negative figures (cents, not dollars; whole minutes); needs the usage:write scope, the ledger feature and the log_time floor"
+              "{tokens, cost_cents, minutes, model, occurred_at}: whole non-negative figures (cents, not dollars; whole minutes); needs the usage:write scope (and time:write when it carries minutes), the ledger feature and the log_time floor"
           }
         ],
         example:
@@ -1092,7 +1092,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             in: :body,
             type: "object",
             required: false,
-            doc: "{tokens, cost_cents, minutes, model, occurred_at} - needs usage:write"
+            doc:
+              "{tokens, cost_cents, minutes, model, occurred_at} - needs usage:write, and time:write when it carries minutes; minutes on a project note need project_time on (else 422 task_required)"
           },
           %{
             name: "project",
@@ -1416,13 +1417,30 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
      "The task cannot move from its current status to the one asked; `details.allowed_transitions` lists what it can do. Reload the task, then pick one of those."},
     {409, "library_task",
      "Title and description of a shared library task are edited in the library, not here."},
+    {409, "in_progress",
+     "A request with the same Idempotency-Key is still running. Wait a moment, then retry the SAME request; it is replayed once the first finishes."},
+    {409, "has_subtasks",
+     "The task has tasks under it (`details.subtasks`); pass `cascade=true` to delete them with it."},
+    {409, "subproject",
+     "A sub-project's row, or a sub-project under the task, is not changed this way; work in the sub-project itself."},
+    {409, "cycle", "The move would put a task under itself or one of its own subtasks."},
+    {409, "invoiced_entry",
+     "The entry is on an invoice and is no longer changed or removed. Ask a person to correct the invoice."},
+    {409, "conflict",
+     "The record changed or could not take the write as it is now. Reload it, then decide again."},
     {422, "validation_failed",
      "A field is missing or has the wrong shape; `details` names the fields and, for closed sets, the allowed values. Fix the request; do not retry it unchanged."},
     {422, "idempotency_key_required", "This POST needs an Idempotency-Key header."},
+    {422, "idempotency_key_invalid",
+     "The Idempotency-Key header must be sent once, 1 to 128 bytes. Nothing was done; fix the header and send it again."},
     {422, "task_required",
      "This project keeps time on its tasks only (`project_time` off): log the time on the task it went on with POST /tasks/{id}/time."},
     {429, "rate_limited",
      "The key has used its calls for the current window. Wait the `Retry-After` seconds, then retry the same request (same Idempotency-Key). Nothing was done."},
+    {500, "provider_failed",
+     "An extension's record (`/ext/…`) could not be read or written by its module. Retry later; tell your operator if it persists."},
+    {503, "module_disabled",
+     "The Projects module is switched off on this site. Every call answers this until it is switched on again; retry later."},
     {500, "(any)",
      "Retry with backoff and the SAME Idempotency-Key; the response will be replayed if the first attempt did land."}
   ]

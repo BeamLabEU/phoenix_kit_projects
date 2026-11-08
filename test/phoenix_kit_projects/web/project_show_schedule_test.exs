@@ -67,7 +67,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # Schedule blocks render only when started_at != nil + total_hours > 0.
       # New schedule shape: "Remaining:" + "ETA:" (active) or "Finished:" (done).
-      assert html =~ "Remaining:" or html =~ "ETA:" or html =~ "Finished:" or html =~ "/"
+      # (A bare "/" was an alternative here, which every page holds.)
+      assert html =~ "Remaining:" or html =~ "ETA:" or html =~ "Finished:"
     end
 
     test "renders for counts_weekends=true project (calendar mode)", %{conn: conn} do
@@ -254,6 +255,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
 
       reread = Projects.get_assignment(a.uuid)
       assert reread.progress_pct == 100
+    end
+
+    test "the slider never releases a waiting task", %{conn: conn, project: p, assignment: a} do
+      {:ok, a} = Projects.update_assignment_status(a, %{status: "waiting"})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "0"})
+      _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "40"})
+
+      reread = Projects.get_assignment(a.uuid)
+      # "Ready to start" is the way out of waiting — it asks who to tell.
+      assert reread.status == "waiting"
+      assert reread.progress_pct == 40
+    end
+
+    test "without the in-progress step the slider moves progress only",
+         %{conn: conn, project: p, assignment: a} do
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(p, %{"in_progress" => false})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "40"})
+
+      reread = Projects.get_assignment(a.uuid)
+      assert reread.status == "todo"
+      assert reread.progress_pct == 40
     end
   end
 end

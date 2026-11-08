@@ -91,7 +91,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame title={@project.name} href={Paths.project(@project.uuid)}>
+      <.frame title={project_name(@project)} href={Paths.project(@project.uuid)}>
       <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-1">
           <.project_status_badge project={@project} />

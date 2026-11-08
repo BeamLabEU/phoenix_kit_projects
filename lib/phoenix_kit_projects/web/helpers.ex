@@ -31,9 +31,15 @@ defmodule PhoenixKitProjects.Web.Helpers do
   See `dev_docs/embedding_emit.md` for the full contract.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   alias PhoenixKit.Modules.Languages
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.RecipientLocale
+  alias PhoenixKitProjects.{Authz, Extensions, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitWeb.Components.Core.Input
 
   require Logger
 
@@ -122,6 +128,105 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   def translate_catalog(s) when is_binary(s),
     do: Gettext.gettext(PhoenixKitProjects.Gettext, s)
+
+  @doc """
+  A changeset's errors as one line for a flash, in the viewer's language:
+  each field by its label (`field_label/1`, or the caller's `labels` for a
+  field of its own) and core's translation of the message
+  (`PhoenixKitWeb.Components.Core.Input.translate_error/1`), its bindings
+  filled in — never a raw `%{count}` or an English column name. `fallback`
+  when there is nothing to say. `:all` joins every error; the default is
+  the first.
+  """
+  @spec changeset_error_text(term(), String.t(), keyword()) :: String.t()
+  def changeset_error_text(changeset, fallback, opts \\ [])
+
+  def changeset_error_text(%Ecto.Changeset{errors: [_ | _] = errors}, _fallback, opts) do
+    labels = Keyword.get(opts, :labels, %{})
+    errors = if Keyword.get(opts, :all, false), do: errors, else: Enum.take(errors, 1)
+
+    Enum.map_join(errors, "; ", fn {field, error} ->
+      gettext("%{field}: %{message}",
+        field: Map.get(labels, field) || field_label(field),
+        message: Input.translate_error(error)
+      )
+    end)
+  end
+
+  def changeset_error_text(_changeset, fallback, _opts), do: fallback
+
+  @doc """
+  The label of a field this module's forms save, in the viewer's language.
+  A field without one is named from its column (`"estimated_duration"` →
+  "Estimated duration"), the last resort.
+  """
+  @spec field_label(atom()) :: String.t()
+  def field_label(:name), do: gettext("Name")
+  def field_label(:title), do: gettext("Title")
+  def field_label(:description), do: gettext("Description")
+  def field_label(:key), do: gettext("Key")
+  def field_label(:estimated_duration), do: gettext("Estimate")
+  def field_label(:estimated_duration_unit), do: gettext("Estimate")
+  def field_label(:deadline), do: gettext("Deadline")
+  def field_label(:started_at), do: gettext("Started at")
+  def field_label(:completed_at), do: gettext("Finished at")
+  def field_label(:start_time), do: gettext("Start time")
+  def field_label(:end_time), do: gettext("End time")
+  def field_label(:start_date), do: gettext("Start date")
+  def field_label(:end_date), do: gettext("End date")
+  def field_label(:repeat_rule), do: gettext("Repeats")
+  def field_label(:external_url), do: gettext("Address")
+  def field_label(:external_label), do: gettext("Button text")
+  def field_label(:scheduled_start_date), do: gettext("Start date")
+  def field_label(:task_uuid), do: gettext("Task")
+  def field_label(:status), do: gettext("Status")
+  def field_label(:progress_pct), do: gettext("Progress")
+  def field_label(:priority), do: gettext("Priority")
+  def field_label(:waiting_on), do: gettext("Waiting on")
+  def field_label(:translations), do: gettext("Translations")
+  def field_label(:role), do: gettext("Role")
+  def field_label(:scopes), do: gettext("Access")
+  def field_label(:expires_at), do: gettext("Expires")
+
+  def field_label(field)
+      when field in [
+             :assigned_person_uuid,
+             :assigned_team_uuid,
+             :assigned_department_uuid,
+             :assignees
+           ],
+      do: gettext("Assignees")
+
+  def field_label(field),
+    do: field |> to_string() |> String.replace("_", " ") |> String.capitalize()
+
+  @doc """
+  A contributed tab's write right, asked again at the write. The hub hands
+  the tab `can_write` once, at the tab's first mount, and keeps it mounted;
+  a viewer demoted or removed meanwhile would go on writing. So a tab whose
+  session names its viewer (`current_user_uuid`) re-asks `action` of that
+  viewer's live scope on the project as stored now, with the extension
+  still on. A session that names nobody is a host's own embed: its
+  `can_write` is the host's decision (the documented trust model).
+  """
+  @spec tab_write?(boolean(), String.t() | nil, String.t() | nil, atom(), String.t()) ::
+          boolean()
+  def tab_write?(false, _user_uuid, _project_uuid, _action, _ext_key), do: false
+  def tab_write?(true, nil, _project_uuid, _action, _ext_key), do: true
+
+  def tab_write?(true, user_uuid, project_uuid, action, ext_key)
+      when is_binary(user_uuid) and is_binary(project_uuid) do
+    with %{is_active: true} = user <- Auth.get_user(user_uuid),
+         %{} = project <- Projects.get_project(project_uuid) do
+      Extensions.enabled?(project, ext_key) and Authz.can?(Scope.for_user(user), project, action)
+    else
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  def tab_write?(_can_write, _user_uuid, _project_uuid, _action, _ext_key), do: false
 
   @doc "The canonical list of LVs eligible for embed-mode mounting."
   @spec embeddable_lvs() :: [module()]
@@ -1023,10 +1128,14 @@ defmodule PhoenixKitProjects.Web.Helpers do
   defp emit_opened(socket, lv, session_overrides)
        when is_atom(lv) and is_map(session_overrides) do
     if embeddable_lv?(lv) do
+      # `user_uuid` names whose click it was: a host topic is often per
+      # RECORD (every viewer of an order shares it), and `PopupHostLive`
+      # opens only its own viewer's — as `emit_intent/3` does for steps.
       payload = %{
         lv: lv,
         session: session_overrides,
-        frame_ref: socket.assigns[:embed_frame_ref]
+        frame_ref: socket.assigns[:embed_frame_ref],
+        user_uuid: PhoenixKitProjects.Activity.actor_uuid(socket)
       }
 
       do_broadcast(socket, :opened, payload)

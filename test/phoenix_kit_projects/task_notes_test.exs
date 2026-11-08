@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.TaskNotesTest do
 
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.{Ledger, Projects, TaskNotes}
 
   setup do
@@ -180,7 +181,10 @@ defmodule PhoenixKitProjects.TaskNotesTest do
 
     assert note.metadata["kind"] == "note"
     refute Map.has_key?(note.metadata, "usage")
-    assert TaskNotes.to_json(note).author == user.email
+    # By name, never by email address (core's display name: an account with
+    # no name shows the part before the @).
+    assert TaskNotes.to_json(note).author == User.display_name(user)
+    refute TaskNotes.to_json(note).author =~ "@"
   end
 
   test "an unknown kind and comments switched off are refused", %{user: user, assignment: a} do

@@ -172,6 +172,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
 
       case amend(entry, figure, actor, TasksController.api_metadata(key, %{})) do
         {:ok, e} -> json(conn, %{entry: Json.entry(e)})
+        {:error, :invoiced} -> invoiced(conn)
         {:error, _} -> Json.error(conn, :conflict, "conflict", "The entry could not be amended.")
       end
     else
@@ -232,11 +233,22 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
              metadata: TasksController.api_metadata(key, %{})
            ) do
         {:ok, _} -> json(conn, %{deleted: entry.uuid})
+        {:error, :invoiced} -> invoiced(conn)
         {:error, _} -> Json.error(conn, :conflict, "conflict", "The entry could not be removed.")
       end
     else
       {:halt, conn} -> conn
     end
+  end
+
+  # On an invoice: the invoice states that figure, so it stays as it is.
+  defp invoiced(conn) do
+    Json.error(
+      conn,
+      :conflict,
+      "invoiced_entry",
+      "The entry is on an invoice and is no longer changed or removed."
+    )
   end
 
   # A correction needs the scope its row was written under: `time:write`

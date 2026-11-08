@@ -186,6 +186,23 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       assert html =~ "Reorder all"
     end
 
+    test "the site's order is an administrator's: a member is refused", %{conn: conn} do
+      # One `position` per project, seen by everyone: a member's "Reorder
+      # all" used to rewrite projects they cannot even see.
+      a = fixture_project(%{"name" => "A-#{System.unique_integer([:positive])}"})
+      b = fixture_project(%{"name" => "B-#{System.unique_integer([:positive])}"})
+      before = Enum.map([a, b], &Projects.get_project(&1.uuid).position)
+
+      member = fake_scope(user_uuid: Ecto.UUID.generate(), permissions: ["projects"])
+      {:ok, view, _} = live(put_test_scope(conn, member), "/en/admin/projects")
+
+      html = render_click(view, "apply_reorder", %{"strategy" => "reverse"})
+      assert html =~ "Only an administrator can change the order of projects."
+
+      render_click(view, "reorder_projects", %{"ordered_ids" => [b.uuid, a.uuid]})
+      assert Enum.map([a, b], &Projects.get_project(&1.uuid).position) == before
+    end
+
     test "close_reorder_modal clears state", %{conn: conn} do
       fixture_project()
       {:ok, view, _html} = live(conn, "/en/admin/projects")

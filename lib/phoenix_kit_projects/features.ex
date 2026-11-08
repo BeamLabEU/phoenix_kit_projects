@@ -84,6 +84,17 @@ defmodule PhoenixKitProjects.Features do
     end)
   end
 
+  @doc """
+  The flags' catalog labels, untranslated (render them through
+  `Web.Helpers.translate_catalog/1`), in the order given; a key the
+  catalog does not know keeps its key.
+  """
+  @spec flag_labels([String.t()]) :: [String.t()]
+  def flag_labels(keys) when is_list(keys) do
+    cat = catalog()
+    Enum.map(keys, fn key -> get_in(cat, [key, :label]) || key end)
+  end
+
   @doc "Flags grouped per extension, for the Modules panel: `[{%Extension{}, [flag]}]`."
   @spec catalog_by_extension() :: [{Extensions.Extension.t(), [map()]}]
   def catalog_by_extension do

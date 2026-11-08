@@ -103,5 +103,28 @@ defmodule PhoenixKitProjects.Web.DurationInputTest do
       a = Projects.get_assignment(ctx.a.uuid)
       assert {a.estimated_duration, a.estimated_duration_unit} == {90, "minutes"}
     end
+
+    test "while typing, the estimate shows what was typed", ctx do
+      # The unit select is redrawn on every change (it is not focused); were
+      # it redrawn as the converted "minutes", the next Save would post
+      # "1.5" minutes under the "1.5" the browser keeps in the focused box.
+      {:ok, view, _html} = edit(ctx)
+
+      view
+      |> form("#assignment-form",
+        assignment: %{estimated_duration: "1.5", estimated_duration_unit: "hours"}
+      )
+      |> render_change()
+
+      assert has_element?(
+               view,
+               ~s(#assignment-form input[name="assignment[estimated_duration]"][value="1.5"])
+             )
+
+      assert has_element?(
+               view,
+               ~s(#assignment-form select[name="assignment[estimated_duration_unit]"] option[value="hours"][selected])
+             )
+    end
   end
 end

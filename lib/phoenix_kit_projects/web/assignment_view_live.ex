@@ -178,7 +178,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
       history: history(project, a),
       activity_tab: socket.assigns[:activity_tab] || if(threads, do: "comments", else: "history"),
       can_edit?: Authz.can?(scope, project, :edit_tasks) and not project.is_template,
-      can_step?: may_step?(fx, project, scope, a)
+      can_step?: may_step?(fx, project, scope, a),
+      # The project's "who may comment" floor: below it the threads are
+      # read-only (the comments component takes a nil user as a reader).
+      may_comment?: Authz.can?(scope, project, :comment)
     )
   end
 
@@ -629,7 +632,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               id={"task-view-comments-#{@assignment.uuid}"}
               resource_type="assignment"
               resource_uuid={@assignment.uuid}
-              current_user={assigns[:phoenix_kit_current_user]}
+              current_user={if @may_comment?, do: assigns[:phoenix_kit_current_user]}
               title=""
               show_likes={false}
             />
@@ -646,7 +649,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               id={"task-view-notes-#{@assignment.uuid}"}
               resource_type={PhoenixKitProjects.TaskNotes.resource_type()}
               resource_uuid={@assignment.uuid}
-              current_user={assigns[:phoenix_kit_current_user]}
+              current_user={if @may_comment?, do: assigns[:phoenix_kit_current_user]}
               title=""
               show_likes={false}
               decoration_keys={PhoenixKitProjects.TaskNotes.decoration_keys()}

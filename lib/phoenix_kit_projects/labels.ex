@@ -167,7 +167,13 @@ defmodule PhoenixKitProjects.Labels do
       actor_uuid: Keyword.get(opts, :actor_uuid),
       resource_type: "project",
       resource_uuid: project_uuid,
-      metadata: %{"name" => label.name, "label_uuid" => label.uuid}
+      # The caller's metadata kept (the API's `via`/`api_key`: every entry
+      # the API writes names it), the label's own on top.
+      metadata:
+        Map.merge(Keyword.get(opts, :metadata) || %{}, %{
+          "name" => label.name,
+          "label_uuid" => label.uuid
+        })
     )
 
     PubSub.broadcast_project(:project_labels_changed, %{uuid: project_uuid})

@@ -135,7 +135,53 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
   renders with — so a tag in a code span or a fenced block is left alone.
   """
   @spec safe_content(String.t() | nil) :: String.t() | nil
-  def safe_content(text) when is_binary(text) do
+  def safe_content(text) when is_binary(text), do: text |> safe_links() |> safe_html()
+
+  def safe_content(other), do: other
+
+  # A link or picture address with a scheme a reader's click must never run
+  # (`javascript:`, `data:`, `vbscript:` …) is replaced by `#`: Leaf renders
+  # the markdown unsanitised and its link popover opens the address. Anything
+  # left that still parses as such a link (an entity-spelled scheme) has its
+  # brackets escaped, so it reads as text.
+  @safe_schemes ~w(http https mailto tel pkfile)
+
+  defp safe_links(text) do
+    case unsafe_urls(text) do
+      [] ->
+        text
+
+      urls ->
+        replaced = Enum.reduce(urls, text, &String.replace(&2, &1, "#"))
+        if unsafe_urls(replaced) == [], do: replaced, else: String.replace(replaced, "[", "\\[")
+    end
+  end
+
+  defp unsafe_urls(text) do
+    case MDEx.parse_document(text) do
+      {:ok, doc} ->
+        doc
+        |> Enum.flat_map(fn
+          %MDEx.Link{url: url} -> [url]
+          %MDEx.Image{url: url} -> [url]
+          _ -> []
+        end)
+        |> Enum.reject(&safe_url?/1)
+        |> Enum.uniq()
+
+      _ ->
+        []
+    end
+  end
+
+  defp safe_url?(url) do
+    case Regex.run(~r/\A\s*([a-zA-Z][a-zA-Z0-9+.\-]*):/, url) do
+      nil -> true
+      [_, scheme] -> String.downcase(scheme) in @safe_schemes
+    end
+  end
+
+  defp safe_html(text) do
     if raw_html?(text) do
       escaped =
         Regex.replace(@tag_open, text, fn
@@ -148,8 +194,6 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
       text
     end
   end
-
-  def safe_content(other), do: other
 
   defp raw_html?(text) do
     case MDEx.parse_document(text) do
