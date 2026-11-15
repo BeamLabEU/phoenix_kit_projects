@@ -11,10 +11,9 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 3.3.0 and < 4.0.0` (Hex — the release this
-  package is built and tested against, and the first on Hex since 3.0.0, which
-  stopped creating the module tables; the compound form keeps the ceiling open
-  across later 3.x minors and `core_pin_conformance_test.exs` guards it),
+- **Depends on:** `phoenix_kit` `>= 3.5.0 and < 4.0.0` (Hex — floor 3.5.0;
+  the compound form keeps the ceiling open across later 3.x minors and
+  `core_pin_conformance_test.exs` guards it),
   `phoenix_kit_ai` `~> 0.28` (hard — the AI-translation pipeline),
   `phoenix_kit_comments` `~> 0.5` (hard — `ProjectShowLive` does
   `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `>= 0.11.1 and < 1.0.0` (hard since the module-table-ownership

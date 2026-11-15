@@ -5,23 +5,21 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
   Guards the `:phoenix_kit` requirement against being re-narrowed to a single
   core MINOR, and against a local path override reaching a commit.
 
-  The trap is the three-segment form: `~> 3.3.0` expands to
-  `>= 3.3.0 and < 3.4.0`, so no 3.4 or later core satisfies it. The breakage
+  The trap is the three-segment form: `~> 3.5.0` expands to
+  `>= 3.5.0 and < 3.6.0`, so no 3.6 or later core satisfies it. The breakage
   lands on CONSUMERS, never here — a host depending on both this module and a
   newer core minor gets an unsolvable dependency set and `mix deps.get` fails
   outright, with no degraded mode. Nothing else in this repo's own test run
   would notice, which is why the check is a test rather than a convention.
 
-  The floor is `>= 3.3.0 and < 4.0.0`: 3.3.0 is the release this package is
-  built and tested against, and the first on Hex since 3.0.0. Before that it was
-  2.65.0, the first core with the `file_references/0` and `expected_schema/0`
-  callbacks.
+  The requirement is `>= 3.5.0 and < 4.0.0`: 3.5.0 is the minimum core every
+  module requires, and the ceiling is open through every core 3.x.
   """
 
-  @must_admit ["3.3.0", "3.3.1", "3.4.0", "3.99.4"]
-  @must_reject ["1.7.236", "2.0.0", "2.64.9", "2.65.0", "2.99.4", "3.0.0", "3.2.9", "4.0.0"]
+  @must_admit ["3.5.0", "3.5.1", "3.6.0", "3.9.9"]
+  @must_reject ["1.7.236", "2.0.0", "2.65.0", "2.99.4", "3.0.0", "3.4.0", "3.4.9", "4.0.0"]
 
-  test "the :phoenix_kit requirement admits every core >= 3.3.0 minor and nothing else" do
+  test "the :phoenix_kit requirement admits every core >= 3.5.0 minor and nothing else" do
     requirement = core_requirement()
 
     assert match?({:ok, _parsed}, Version.parse_requirement(requirement)),
@@ -32,7 +30,7 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
              "`:phoenix_kit` requirement #{inspect(requirement)} rejects core #{version}. " <>
                "A pin that excludes a core minor breaks `mix deps.get` for every host " <>
                "running this module alongside that core. Keep the floor patch-precise " <>
-               "and the ceiling open (`>= 3.3.0 and < 4.0.0`), never a three-segment `~>`."
+               "and the ceiling open (`>= 3.5.0 and < 4.0.0`), never a three-segment `~>`."
     end
 
     for version <- @must_reject do

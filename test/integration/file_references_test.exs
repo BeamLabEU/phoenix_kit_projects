@@ -4,8 +4,7 @@ defmodule PhoenixKitProjects.FileReferencesTest do
   (`PhoenixKitProjects.FileReferences`): the right tables, SQL that runs, and the very SQL
   core's own built-in list holds for them, so moving the check changes nothing.
 
-  Needs core's `Storage.builtin_file_references/0`, from the first core release
-  after 2.64.1; against an older core the tests are excluded.
+  Needs core's `Storage.builtin_file_references/0`.
   """
   use ExUnit.Case, async: false
 

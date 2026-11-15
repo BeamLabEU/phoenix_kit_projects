@@ -111,8 +111,7 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      # 3.3.0 is the floor: the release this package is built and tested against,
-      # and the first on Hex since 3.0.0 (3.0.1 to 3.2.6 were never published).
+      # Floor 3.5.0, ceiling open through every core 3.x.
       # `Web.Helpers.assign_embed_user/2` and the notification fan-outs call core
       # directly, with no fallback for an older one.
       #
@@ -122,7 +121,7 @@ defmodule PhoenixKitProjects.MixProject do
       # the breakage lands only on consumers. Core majors are not assumed
       # compatible. `core_pin_conformance_test.exs` guards this, and
       # `core_ui_api_conformance_test.exs` the core attrs and slots the pages use.
-      pk_dep(:phoenix_kit, ">= 3.3.0 and < 4.0.0"),
+      pk_dep(:phoenix_kit, ">= 3.5.0 and < 4.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into, and calls
       # `handle_ai_usage/1` back. 0.28 is the release this package is built and
