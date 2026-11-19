@@ -85,10 +85,18 @@ defmodule PhoenixKitProjects do
         actions: [],
         default: true,
         sub_types: [
+          # Named after what the reader sees in the app, each with one
+          # concrete case (the boss, 2026-11-18: he could not tell which
+          # line sent "can be started"). The keys stay: they hold people's
+          # saved choices.
           %{
             key: "membership",
-            label: gettext_noop("Membership"),
-            description: gettext_noop("Added to a project, role changes, removals"),
+            label: gettext_noop("Added to or removed from a project"),
+            description:
+              gettext_noop(
+                "You are added to a project (also when a task of it is given to you), your role changes, or you are removed"
+              ),
+            example: gettext_noop("You are added to ACME Manager as a member."),
             actions: [
               "projects.member_added",
               "projects.member_role_changed",
@@ -98,10 +106,14 @@ defmodule PhoenixKitProjects do
           },
           %{
             key: "tasks",
-            label: gettext_noop("Task updates"),
+            label: gettext_noop("Changes to your tasks"),
             description:
               gettext_noop(
-                "Your tasks given to you, changed, started, done, reopened, handed on or removed"
+                "A task is given to you, or one of yours is changed, started, done, reopened, handed on or removed"
+              ),
+            example:
+              gettext_noop(
+                "You are assigned “Fit the doors”; its deadline moves; someone marks it done."
               ),
             actions: [
               "projects.assignment_created",
@@ -116,10 +128,14 @@ defmodule PhoenixKitProjects do
           },
           %{
             key: "handoffs",
-            label: gettext_noop("Your turn"),
+            label: gettext_noop("A task of yours can be started"),
             description:
               gettext_noop(
-                "A task of yours can start, or is on hold because work before it was reopened"
+                "A task of yours is marked “Can be started”, or everything it waited on is done; also when work you started is put on hold because a task before it was reopened"
+              ),
+            example:
+              gettext_noop(
+                "“Fit the doors” is marked “Can be started”, with the comment “Wall A is measured.”"
               ),
             actions: ["projects.assignment_ready", "projects.assignment_on_hold"],
             default: true
@@ -129,22 +145,29 @@ defmodule PhoenixKitProjects do
             label: gettext_noop("Comments"),
             description:
               gettext_noop(
-                "Comments and notes on your tasks, on tasks you commented on, and on projects you manage"
+                "Comments and notes on your tasks, on tasks you commented on and on projects you manage, and comments that mention you"
               ),
+            example:
+              gettext_noop("Anna comments on “Fit the doors”, or mentions you in a comment."),
             actions: ["projects.comment_added"],
             default: true
           },
           %{
             key: "health",
             label: gettext_noop("Project health"),
-            description: gettext_noop("Health judgments on your projects"),
+            description: gettext_noop("Someone judges how one of your projects is going"),
+            example: gettext_noop("Someone marks ACME Manager “At risk”."),
             actions: ["projects.health_updated"],
             default: true
           },
           %{
             key: "events",
-            label: gettext_noop("Project events"),
-            description: gettext_noop("Meetings, milestones, and reviews added to your projects"),
+            label: gettext_noop("Meetings and milestones"),
+            description:
+              gettext_noop(
+                "Meetings, milestones and reviews added to, changed or removed from your projects"
+              ),
+            example: gettext_noop("A meeting “Site visit, 12 Dec” is added to ACME Manager."),
             actions: [
               "projects.event_created",
               "projects.event_updated",

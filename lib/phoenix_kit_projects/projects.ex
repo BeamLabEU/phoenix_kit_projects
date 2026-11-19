@@ -11,6 +11,7 @@ defmodule PhoenixKitProjects.Projects do
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.AssigneeSet
+  alias PhoenixKitProjects.Members
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
 
@@ -3526,6 +3527,9 @@ defmodule PhoenixKitProjects.Projects do
            |> Assignment.changeset(attrs)
            |> maybe_pending_review(Keyword.get(opts, :review, :accepted))
            |> repo().insert() do
+      # Whoever it is assigned to can open the project (Max, 2026-11-19).
+      Members.admit_assignees(a, [], opts)
+
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_created, %{
           uuid: a.uuid,
@@ -3559,11 +3563,16 @@ defmodule PhoenixKitProjects.Projects do
   `{:error, :task | :assignment, changeset}` on validation failure, or
   `{:error, :project, :not_found}`.
   """
-  @spec create_task_with_assignment(uuid(), map(), map()) ::
+  @spec create_task_with_assignment(uuid(), map(), map(), keyword()) ::
           {:ok, %{task: Task.t(), assignment: Assignment.t()}}
           | {:error, :task | :assignment, Ecto.Changeset.t()}
           | {:error, :project, :not_found}
-  def create_task_with_assignment(project_uuid, task_attrs, assignment_attrs \\ %{})
+  def create_task_with_assignment(
+        project_uuid,
+        task_attrs,
+        assignment_attrs \\ %{},
+        opts \\ []
+      )
       when is_binary(project_uuid) and is_map(task_attrs) and is_map(assignment_attrs) do
     result =
       repo().transaction(fn ->
@@ -3589,6 +3598,8 @@ defmodule PhoenixKitProjects.Projects do
 
     case result do
       {:ok, %{task: task, assignment: assignment} = created} ->
+        # Whoever it is assigned to can open the project (Max, 2026-11-19).
+        Members.admit_assignees(assignment, [], opts)
         ProjectsPubSub.broadcast_task(:task_created, %{uuid: task.uuid, title: task.title})
 
         ProjectsPubSub.broadcast_assignment(:assignment_created, %{
@@ -4595,9 +4606,15 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp do_update_assignment_form(a, attrs, opts) do
+    was_keys = AssigneeSet.keys(a)
+
     with {:ok, {updated, was}} <- a |> Assignment.changeset(attrs) |> update_tracking_status(a) do
       updated =
         if updated.status != was, do: status_changed(updated, %{a | status: was}), else: updated
+
+      # Whoever it is now assigned to can open the project (Max, 2026-11-19).
+      # Only the keys added by this write are looked at.
+      Members.admit_assignees(updated, was_keys, opts)
 
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_updated, %{

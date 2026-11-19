@@ -161,7 +161,7 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert notice.actor_uuid == alice.user
       assert notice.resource_uuid == model.uuid
       assert notice.metadata["after"] == "Measure the room"
-      assert notice.metadata["notification_text"] =~ "Your turn"
+      assert notice.metadata["notification_text"] =~ "can be started"
       assert notice.metadata["notification_text"] =~ "3D model"
       assert notice.metadata["notification_link"] =~ "task="
     end
@@ -181,7 +181,10 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       Gettext.with_locale("en", fn -> set_status!(measure, "done", alice.user) end)
 
       assert [notice] = notices("projects.assignment_ready", bob.user)
-      assert notice.metadata["notification_text"] =~ "Sinu kord"
+      # Bob's Estonian, not the sender's English (the line was renamed to
+      # the status's own words on 2026-11-19, so no fixed Estonian here).
+      refute notice.metadata["notification_text"] =~ "can be started"
+      assert notice.metadata["notification_text"] =~ "3D model"
       # The sender's own process keeps its language.
       assert Gettext.get_locale() == "en"
     end
@@ -337,7 +340,7 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       {:ok, _} = Projects.update_assignment_status(first, %{status: "todo"})
 
       assert [notice] = notices("projects.assignment_ready", bob.user)
-      assert notice.metadata["notification_text"] =~ "can start"
+      assert notice.metadata["notification_text"] =~ "can be started"
     end
 
     test "putting a released task back to idle tells nobody", ctx do
@@ -417,11 +420,49 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
           }
         )
 
+      # Giving the task to the team made Olga a member (the boss's list,
+      # 2026-11-18: whoever is assigned can open the project); taken off
+      # the project again, she can no longer open it, so she is not told.
+      assert PhoenixKitProjects.Members.role_of(ctx.project, outsider.user) == :member
+      {:ok, _} = PhoenixKitProjects.Members.remove_member(ctx.project, outsider.user)
+
       {:ok, _} = Projects.add_dependency(second.uuid, first.uuid)
       set_status!(first, "done", alice.user)
 
       assert [_] = notices("projects.assignment_ready", bob.user)
       assert notices("projects.assignment_ready", outsider.user) == []
+    end
+
+    test "a team member off the project is made a member by the assignment, and told", ctx do
+      %{alice: alice} = ctx.people
+      outsider = person!(:pia)
+
+      {:ok, dept} =
+        Repo.insert(%PhoenixKitStaff.Schemas.Department{
+          name: "Dept #{System.unique_integer([:positive])}"
+        })
+
+      {:ok, team} =
+        Repo.insert(%PhoenixKitStaff.Schemas.Team{name: "Team", department_uuid: dept.uuid})
+
+      Repo.insert!(%PhoenixKitStaff.Schemas.TeamMembership{
+        team_uuid: team.uuid,
+        staff_person_uuid: outsider.person
+      })
+
+      first = task!(ctx.project, "First", alice)
+
+      {:ok, %{assignment: second}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Second", "ad_hoc" => true},
+          %{"assigned_team_uuid" => team.uuid, "status" => "todo"}
+        )
+
+      {:ok, _} = Projects.add_dependency(second.uuid, first.uuid)
+      set_status!(first, "done", alice.user)
+
+      assert [_] = notices("projects.assignment_ready", outsider.user)
     end
   end
 
