@@ -4156,7 +4156,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {attrs, task_words} = split_task_words(socket, attrs)
     title_pair = title_pair(socket)
 
-    case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
+    case Projects.update_assignment_form(socket.assigns.assignment, attrs,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
         title_saved = save_edit_title(socket, updated)
@@ -4407,7 +4409,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {attrs, task_words} = split_task_words(socket, attrs)
     title_pair = title_pair(socket)
 
-    case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
+    case Projects.update_assignment_form(socket.assigns.assignment, attrs,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
         title_saved = save_edit_title(socket, updated)

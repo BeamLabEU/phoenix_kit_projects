@@ -193,6 +193,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
       # read-only (the comments component takes a nil user as a reader).
       may_comment?: Authz.can?(scope, project, :comment),
       notes_summary_preview: notes_summary_preview(a),
+      # `@` in the comments offers the task's people first, then the
+      # project's members (item 21) — read once per load, not per render.
+      mention_people:
+        if(threads, do: PhoenixKitProjects.CommentMentions.people(project, a), else: []),
       can_rename?: can_rename?(scope, project, a)
     )
   end
@@ -842,6 +846,8 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               current_user={if @may_comment?, do: assigns[:phoenix_kit_current_user]}
               title=""
               show_likes={false}
+              mention_people={@mention_people}
+              mention_warning={PhoenixKitProjects.CommentMentions.warning(@project)}
             />
             <PhoenixKitProjects.Web.Components.HistoryFeed.history_feed
               :if={@activity_tab == "history" and @history != []}

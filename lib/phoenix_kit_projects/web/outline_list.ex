@@ -680,7 +680,9 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   end
 
   defp create_at(socket, attrs, parent, after_row) do
-    case Projects.create_task_with_assignment(socket.assigns.project.uuid, attrs, %{}) do
+    case Projects.create_task_with_assignment(socket.assigns.project.uuid, attrs, %{},
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, %{assignment: a}} ->
         placed(socket, a, parent, after_row)
 
