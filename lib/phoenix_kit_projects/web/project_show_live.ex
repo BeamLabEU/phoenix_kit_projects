@@ -1973,10 +1973,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         ) and
         match?(
           {:ok, _},
-          PhoenixKitComments.create_comment("assignment", a.uuid, actor, %{
+          "assignment"
+          |> PhoenixKitComments.create_comment(a.uuid, actor, %{
             content: note,
             metadata: %{"handoff_note" => true}
           })
+          |> notify_mentions(actor)
         )
 
     if posted?, do: {load_comment_counts(socket), 1}, else: {socket, 0}
@@ -2160,10 +2162,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           may_comment_next_up?(socket, scope, project, row),
           match?(
             {:ok, _},
-            PhoenixKitComments.create_comment("assignment", uuid, actor, %{
+            "assignment"
+            |> PhoenixKitComments.create_comment(uuid, actor, %{
               content: text,
               metadata: %{"handoff_note" => true}
             })
+            |> notify_mentions(actor)
           ),
           do: uuid
 
@@ -4919,10 +4923,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            :comment,
            a
          ) do
-      case PhoenixKitComments.create_comment("assignment", a.uuid, actor, %{
+      case "assignment"
+           |> PhoenixKitComments.create_comment(a.uuid, actor, %{
              content: reason,
              metadata: %{"reopen_reason" => true}
-           }) do
+           })
+           |> notify_mentions(actor) do
         {:ok, _} -> load_comment_counts(socket)
         _ -> socket
       end
@@ -4930,6 +4936,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       socket
     end
   end
+
+  # A dialog's comment is posted here, not through the comments box, so its
+  # `@` mentions are synced and their people told here, as the box does it
+  # (the boss, 2026-11-18: a mention notifies, never assigns). Never fails
+  # the post it follows.
+  defp notify_mentions({:ok, comment} = result, actor) do
+    with true <- Code.ensure_loaded?(PhoenixKit.Mentions),
+         {:ok, new} <-
+           PhoenixKit.Mentions.sync("comment", comment.uuid, comment.content,
+             field: "content",
+             actor_uuid: actor
+           ) do
+      PhoenixKit.Mentions.notify(new,
+        source_type: comment.resource_type,
+        source_uuid: comment.resource_uuid,
+        preview: comment.content
+      )
+    end
+
+    result
+  rescue
+    _ -> result
+  end
+
+  defp notify_mentions(result, _actor), do: result
 
   defp comments_available? do
     Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?()
