@@ -127,6 +127,29 @@ defmodule PhoenixKitProjects.Web.NextUpDoneTest do
     assert [_] = notices("projects.assignment_completed", helper.uuid)
   end
 
+  test "an account with no staff record, added, becomes a person and is assigned", ctx do
+    newcomer = user!("newcomer")
+    creator_key = {"person", People.get_person_by_user_uuid(ctx.creator.uuid).uuid}
+
+    {:ok, view, _html} = show(ctx)
+    render_click(view, "complete", %{"uuid" => ctx.task.uuid})
+
+    send(
+      view.pid,
+      {PeoplePicker, done_picker(ctx), {:changed, [creator_key, {"user", newcomer.uuid}]}}
+    )
+
+    _ = render(view)
+    person = People.get_person_by_user_uuid(newcomer.uuid)
+    assert person
+
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.task.uuid})
+
+    assert status(ctx.task) == "done"
+    assert {"person", person.uuid} in AssigneeSet.keys(Projects.get_assignment(ctx.task.uuid))
+    assert [_] = notices("projects.assignment_completed", newcomer.uuid)
+  end
+
   test "a creator taken off the list is not told", ctx do
     {:ok, view, _html} = show(ctx)
     render_click(view, "complete", %{"uuid" => ctx.task.uuid})

@@ -83,6 +83,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   }
 
   alias PhoenixKitProjects.AssigneeSet
+  alias PhoenixKitProjects.Web.Components.AssigneeField
   alias PhoenixKitWeb.Components.PeoplePicker
 
   import PhoenixKitProjects.Web.Components.DescriptionEditor, only: [description_editor: 1]
@@ -813,10 +814,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:noreply, socket}
 
       {defaults, put} ->
-        if keys -- defaults != [] and not may_assign_now?(socket, next_up) do
+        added = keys -- defaults
+
+        if added != [] and not may_assign_now?(socket, next_up) do
+          # The refused chips go back out: nothing refused stays shown.
+          Phoenix.LiveView.send_update(PeoplePicker, id: id, selected: keys -- added)
           {:noreply, put_flash(socket, :error, gettext("You may not assign people here."))}
         else
-          next_up = put.(next_up, keys)
+          {resolved, socket} = resolve_added_accounts(keys, defaults, socket)
+
+          if resolved != keys,
+            do: Phoenix.LiveView.send_update(PeoplePicker, id: id, selected: resolved)
+
+          next_up = put.(next_up, resolved)
           {:noreply, assign(socket, next_up: retag(socket, next_up))}
         end
     end
@@ -834,6 +844,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   def handle_info(msg, socket) do
     Logger.debug("[ProjectShowLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}
+  end
+
+  # A picked account (`{"user", uuid}`) becomes its staff person here, once
+  # the right to assign is asked (`AssigneeField.resolve_accounts/2`), so
+  # the confirm can assign it like anyone else. The defaults stay as they
+  # are: telling the creator's own account makes no staff record. An
+  # account that cannot be made one drops out, with the flash it gives.
+  defp resolve_added_accounts(keys, defaults, socket) do
+    socket = assign(socket, :assignee_source, "next_up_dialog")
+
+    {resolved, socket} =
+      Enum.reduce(keys, {[], socket}, fn
+        {"user", _} = key, {acc, sock} ->
+          if key in defaults do
+            {[key | acc], sock}
+          else
+            {people, sock} = AssigneeField.resolve_accounts([key], sock)
+            {Enum.reverse(people, acc), sock}
+          end
+
+        key, {acc, sock} ->
+          {[key | acc], sock}
+      end)
+
+    {resolved |> Enum.reverse() |> Enum.uniq(), socket}
   end
 
   # Does a row on this page (its own, or an expanded sub-project's inset
@@ -1808,14 +1843,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     rows = next_up_rows_from(socket, next_up)
     may? = &may_release_next_up?(scope, project, &1)
 
+    write = fn ->
+      with :ok <- apply_next_up_people(socket, project, a, rows, next_up) do
+        run_next_up(socket, a, rows, next_up, may?)
+      end
+    end
+
     Handoffs.with_overrides(next_up_overrides(next_up, notes), fn ->
-      Handoffs.batch(fn ->
-        in_one_write(socket, fn ->
-          with :ok <- apply_next_up_people(socket, project, a, rows, next_up) do
-            run_next_up(socket, a, rows, next_up, may?)
-          end
-        end)
-      end)
+      Handoffs.batch(fn -> in_one_write(socket, write) end)
     end)
   end
 
