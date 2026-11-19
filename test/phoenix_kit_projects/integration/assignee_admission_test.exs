@@ -310,6 +310,29 @@ defmodule PhoenixKitProjects.Integration.AssigneeAdmissionTest do
       assert member_added(project.uuid, anna.user) == []
     end
 
+    test "accepting a task that waited for review admits its people then" do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      task = fixture_task()
+      anna = person!("Anna")
+
+      {:ok, pending} =
+        Projects.create_assignment(
+          %{
+            "project_uuid" => project.uuid,
+            "task_uuid" => task.uuid,
+            "status" => "todo",
+            "assigned_person_uuid" => anna.person
+          },
+          review: :pending
+        )
+
+      assert Members.role_of(project, anna.user) == nil
+
+      {:ok, _} = Projects.review_assignment(pending.uuid, :accepted)
+      assert Members.role_of(project, anna.user) == :member
+      assert [_] = member_added(project.uuid, anna.user)
+    end
+
     test "a quote is held to 16 KB however few characters it is" do
       # One grapheme carrying 100,000 combining marks.
       huge = "a" <> String.duplicate("\u0301", 100_000)
@@ -319,6 +342,62 @@ defmodule PhoenixKitProjects.Integration.AssigneeAdmissionTest do
         assert byte_size(quote["text"]) <= 16_384
         assert String.valid?(quote["text"])
       end
+    end
+  end
+
+  describe "review of the merge, 2026-11-19" do
+    test "a project cloned from a template admits the template's assignees after its commit" do
+      template = fixture_template(%{})
+      anna = person!("Anna")
+
+      {:ok, _} =
+        Projects.create_task_with_assignment(
+          template.uuid,
+          %{"title" => "Measure", "ad_hoc" => true},
+          %{"assigned_person_uuid" => anna.person}
+        )
+
+      {:ok, project} =
+        Projects.create_project_from_template(template.uuid, %{
+          "name" => "From the template #{System.unique_integer([:positive])}",
+          "key" => PhoenixKitProjects.DataCase.unique_key()
+        })
+
+      assert Members.role_of(project, anna.user) == :member
+      assert [_] = member_added(project.uuid, anna.user)
+    end
+
+    test "an admission never changes a seat someone already holds" do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      mia = person!("Mia")
+      {:ok, _} = Members.add_member(project, mia.user, role: "manager")
+
+      assert {:error, :already_member} =
+               Members.add_member(project, mia.user, role: "member", only_new: true)
+
+      assert Members.admit_users(project, [mia.user]) == []
+      assert Members.role_of(project, mia.user) == :manager
+    end
+
+    test "a deactivated account is never admitted by the dialogs' rule, and the reach says so" do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      gone = person!("Gone")
+
+      Repo.update_all(from(u in PhoenixKit.Users.Auth.User, where: u.uuid == ^gone.user),
+        set: [is_active: false]
+      )
+
+      assert Members.admit_users(project, [gone.user]) == []
+      assert Members.role_of(project, gone.user) == nil
+      assert [%{status: :inactive}] = Members.assignee_reach([{"person", gone.person}], project)
+    end
+
+    test "a template admits nobody through the dialogs' rule either" do
+      template = fixture_template(%{})
+      anna = person!("Anna")
+
+      assert Members.admit_users(template, [anna.user]) == []
+      assert Members.role_of(template, anna.user) == nil
     end
   end
 end

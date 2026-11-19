@@ -633,6 +633,40 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
     end
   end
 
+  describe "held changes and a feature switched off before Save (review, 2026-11-19)" do
+    test "with Subtasks off by Save, a held parent and held subtasks are dropped; a tick stays",
+         %{conn: conn} do
+      p = simple()
+
+      {:ok, _} =
+        Outline.sync(
+          p.uuid,
+          [%{"text" => "Holder"}, %{"text" => "Sub", "depth" => 1}, %{"text" => "Other"}],
+          []
+        )
+
+      [holder, sub, other] = Projects.list_assignments(p.uuid)
+
+      {:ok, view, _} =
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{holder.uuid}/edit")
+
+      render_submit(element(view, "[id^='assignment-subtask-form-']"), %{"title" => "Held one"})
+
+      view
+      |> element("input[phx-click='subtask_toggle'][phx-value-uuid='#{sub.uuid}']")
+      |> render_click()
+
+      view |> form("#assignment-form") |> render_change(%{"parent_task" => other.uuid})
+
+      {:ok, _} = Features.set_flags(Projects.get_project!(p.uuid), %{"subtasks" => false})
+      view |> form("#assignment-form") |> render_submit()
+
+      refute "Held one" in titles(p)
+      assert Projects.get_assignment(holder.uuid).parent_uuid == nil
+      assert Projects.get_assignment(sub.uuid).status == "done"
+    end
+  end
+
   describe "a plain to-do, as Max tried it" do
     test "its task form is a title, a status and a description — and has Delete", %{conn: conn} do
       p = simple()

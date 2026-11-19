@@ -79,7 +79,8 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
        truncated: false,
        filter: "all",
        shown: 0,
-       wrapper_class: ""
+       wrapper_class: "",
+       dom_scope: ""
      )}
   end
 
@@ -134,7 +135,7 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
     ~H"""
     <div class={@wrapper_class}>
       <%= if @project do %>
-        <div class="flex flex-wrap items-center gap-2 mb-3" id={"history-filters-#{@project.uuid}"}>
+        <div class="flex flex-wrap items-center gap-2 mb-3" id={"history-filters-#{@dom_scope}#{@project.uuid}"}>
           <button
             :for={{key, label} <- [{"all", gettext("Everything")}, {"changes", gettext("Changes")}, {"comments", gettext("Comments")}, {"time", gettext("Time")}]}
             type="button"
@@ -153,7 +154,7 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
           <.empty_state icon="hero-clock" title={gettext("Nothing has happened here yet.")} />
         <% else %>
           <.history_feed
-            id={"project-history-#{@project.uuid}"}
+            id={"project-history-#{@dom_scope}#{@project.uuid}"}
             entries={Enum.take(@entries, @shown)}
             project={@project}
             links={@embed_mode != :emit}

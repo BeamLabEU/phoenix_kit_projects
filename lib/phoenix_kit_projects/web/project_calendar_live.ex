@@ -817,9 +817,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                Filters button in toolbar_start) must escape the calendar's
                top edge; the calendar clips its own grid. --%>
           <div
-            id={"project-calendar-day-trigger-#{@project.uuid}"}
+            id={"project-calendar-day-trigger-#{@dom_scope}#{@project.uuid}"}
             phx-hook="PkDialogTrigger"
-            data-dialog={"project-day-modal-#{@project.uuid}"}
+            data-dialog={"project-day-modal-#{@dom_scope}#{@project.uuid}"}
             data-trigger=".cal-day-cell, .cal-more-link"
             class="border border-base-200 rounded-lg"
           >
@@ -833,12 +833,12 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             {Phoenix.HTML.raw(
               if(@overdue_anim, do: CalendarDisplay.animation_style(@overdue_anim), else: "")
             )}
-            <div id={"project-calendar-sync-#{@project.uuid}"} phx-hook="SyncAnimations">
+            <div id={"project-calendar-sync-#{@dom_scope}#{@project.uuid}"} phx-hook="SyncAnimations">
             <%!-- Week and Day open at the start of the work day, not at
                  midnight (`PkpCalendarWorkday`): their time grid scrolls
                  inside its own box, so the toolbar stays in sight. --%>
             <div
-              id={"project-calendar-workday-#{@project.uuid}"}
+              id={"project-calendar-workday-#{@dom_scope}#{@project.uuid}"}
               phx-hook="PkpCalendarWorkday"
               data-start={@workday_start}
             >
@@ -846,7 +846,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
               module={PhoenixLiveCalendar.CalendarComponent}
               class={CalendarDisplay.time_grid_class()}
               translations={CalendarDisplay.translations()}
-              id={"project-calendar-#{@project.uuid}"}
+              id={"project-calendar-#{@dom_scope}#{@project.uuid}"}
               events={@events}
               views={[:month, :week, :day]}
               time_format={CalendarDisplay.time_format()}
@@ -876,7 +876,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                    enclosing CalendarComponent back to this LiveView. --%>
               <:toolbar_start>
                 <.assignee_filter_panel
-                  id={"project-cal-filter-#{@project.uuid}"}
+                  id={"project-cal-filter-#{@dom_scope}#{@project.uuid}"}
                   assignee_selected={@assignee_selected}
                   include_unassigned?={@include_unassigned?}
                   unassigned_count={@unassigned_count}
@@ -884,7 +884,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                   overdue_only?={@overdue_only?}
                   overdue_count={@overdue_count}
                   me_scope={@me_scope}
-                  picker_target={"#project-calendar-day-trigger-#{@project.uuid}"}
+                  picker_target={"#project-calendar-day-trigger-#{@dom_scope}#{@project.uuid}"}
                 />
               </:toolbar_start>
               <:info>
@@ -913,7 +913,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
           </div>
 
           <.day_popup_modal
-            id={"project-day-modal-#{@project.uuid}"}
+            id={"project-day-modal-#{@dom_scope}#{@project.uuid}"}
             day_popup={@day_popup}
             row_click="day_popup_item_click"
           />

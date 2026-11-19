@@ -663,7 +663,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
                (/admin/settings/projects → Timeline labels), read into
                @gantt_display at mount. --%>
           <PhoenixLiveGantt.gantt
-            id={"project-gantt-#{@project.uuid}"}
+            id={"project-gantt-#{@dom_scope}#{@project.uuid}"}
             events={@events}
             connectors={@connectors}
             date_range={@date_range}
@@ -704,7 +704,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
                 class="btn btn-xs btn-ghost"
                 phx-click={
                   Phoenix.LiveView.JS.push("fit_project")
-                  |> PhoenixLiveGantt.scroll_to_start("project-gantt-#{@project.uuid}")
+                  |> PhoenixLiveGantt.scroll_to_start("project-gantt-#{@dom_scope}#{@project.uuid}")
                 }
                 title={gettext("Fit the project's tasks")}
               >

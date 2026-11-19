@@ -206,6 +206,31 @@ defmodule PhoenixKitProjects.Web.BossList1118Test do
     end
   end
 
+  describe "9 — the side panel, review of the merge (2026-11-19)" do
+    test "offers the project's Discussion only while its general comments are on", ctx do
+      :ok = PhoenixKitProjects.DataCase.with_comments_module()
+      {:ok, _} = PhoenixKitProjects.Extensions.enable(ctx.project, "discussions")
+      {:ok, view, _} = show(ctx)
+      html = render_click(view, "side_panel_toggle", %{})
+      assert html =~ ~s(phx-value-view="discussion")
+
+      {:ok, _} =
+        PhoenixKitProjects.Features.set_flags(ctx.project, %{"project_comments" => false})
+
+      {:ok, _view, html} = show(ctx)
+      refute html =~ ~s(phx-value-view="discussion")
+    end
+
+    test "a second copy of a view gets ids of its own", ctx do
+      {:ok, view, _} = show(ctx)
+      render_click(view, "side_panel_toggle", %{})
+      render_click(view, "side_panel_view", %{"view" => "activity"})
+
+      html = view |> find_live_child("side-panel-history-#{ctx.project.uuid}") |> render()
+      assert html =~ ~s(id="history-filters-side-#{ctx.project.uuid}")
+    end
+  end
+
   describe "16 — card menus in the top layer" do
     test "the status chip's menu is a native popover with its placing hook", ctx do
       {:ok, _view, html} = show(ctx)

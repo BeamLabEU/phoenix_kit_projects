@@ -2572,6 +2572,7 @@ defmodule PhoenixKitProjects.Projects do
         # the whole tree has committed, so a rollback leaks nothing and
         # subscribers still learn the new project exists.
         carry_template_extensions(template, project, opts)
+        admit_project_assignees(project.uuid, opts)
 
         # After the carry, so a preset's "off" wins over the template's "on".
         if preset = Keyword.get(opts, :preset) do
@@ -2586,6 +2587,17 @@ defmodule PhoenixKitProjects.Projects do
       {:error, _reason} = err ->
         err
     end
+  end
+
+  # A clone's rows were written with `admit: false` inside its transaction;
+  # their people are admitted once it has committed. A clone is rare, so
+  # one pass per row with assignees.
+  defp admit_project_assignees(project_uuid, opts) do
+    for a <- list_assignments(project_uuid), AssigneeSet.keys(a) != [] do
+      Members.admit_assignees(a, [], opts)
+    end
+
+    :ok
   end
 
   # Capability carry, extension half: the template's ENABLED extensions
@@ -2671,7 +2683,8 @@ defmodule PhoenixKitProjects.Projects do
              "counts_weekends" => a.counts_weekends,
              "assignees" => AssigneeSet.keys(a)
            },
-           broadcast: false
+           broadcast: false,
+           admit: false
          ) do
       {:ok, new_a} ->
         # Never cast (a place is the outline's to write): set here, the
@@ -3415,6 +3428,10 @@ defmodule PhoenixKitProjects.Projects do
               metadata: %{"project_uuid" => updated.project_uuid}
             })
 
+            # Held back while it waited for review: its people are admitted
+            # now that it is a task.
+            if decision == :accepted, do: Members.admit_assignees(updated, [], opts)
+
             ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
               uuid: updated.uuid,
               project_uuid: updated.project_uuid
@@ -3499,7 +3516,10 @@ defmodule PhoenixKitProjects.Projects do
 
   Pass `broadcast: false` to skip the broadcast — used by callers inserting
   inside a larger transaction (template clone, closure-pull) that emit their
-  own event after the transaction commits.
+  own event after the transaction commits. Those callers pass `admit: false`
+  too and call `Members.admit_assignees/3` after the commit: admission
+  writes, logs and notifies, none of which belongs inside their
+  transaction. `:actor_uuid` names who the admission is logged for.
   """
   @spec create_assignment(map(), keyword()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
@@ -3528,7 +3548,9 @@ defmodule PhoenixKitProjects.Projects do
            |> maybe_pending_review(Keyword.get(opts, :review, :accepted))
            |> repo().insert() do
       # Whoever it is assigned to can open the project (Max, 2026-11-19).
-      Members.admit_assignees(a, [], opts)
+      # A caller inside a transaction passes `admit: false` and admits after
+      # its commit (`Members.admit_users/3`).
+      if Keyword.get(opts, :admit, true), do: Members.admit_assignees(a, [], opts)
 
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_created, %{
@@ -4299,6 +4321,8 @@ defmodule PhoenixKitProjects.Projects do
           # `:assignment_created` events now the batch has committed, so a
           # rollback leaks nothing.
           for a <- [root | extras], not is_nil(a) do
+            Members.admit_assignees(a, [], opts)
+
             ProjectsPubSub.broadcast_assignment(:assignment_created, %{
               uuid: a.uuid,
               project_uuid: a.project_uuid
@@ -4353,7 +4377,7 @@ defmodule PhoenixKitProjects.Projects do
             # `broadcast: false` — created inside the serializable closure
             # transaction; `create_assignments_with_closure/4` emits the
             # `:assignment_created` events after commit.
-            case create_assignment(full_attrs, broadcast: false) do
+            case create_assignment(full_attrs, broadcast: false, admit: false) do
               {:ok, a} -> {a, extras_acc, Map.put(map, task_uuid, a.uuid)}
               {:error, reason} -> repo().rollback(reason)
             end
@@ -4363,7 +4387,8 @@ defmodule PhoenixKitProjects.Projects do
             case create_assignment_from_template(
                    task_uuid,
                    %{"project_uuid" => project_uuid, "status" => "waiting"},
-                   broadcast: false
+                   broadcast: false,
+                   admit: false
                  ) do
               {:ok, a} -> {root_acc, [a | extras_acc], Map.put(map, task_uuid, a.uuid)}
               {:error, reason} -> repo().rollback(reason)
@@ -4614,7 +4639,8 @@ defmodule PhoenixKitProjects.Projects do
 
       # Whoever it is now assigned to can open the project (Max, 2026-11-19).
       # Only the keys added by this write are looked at.
-      Members.admit_assignees(updated, was_keys, opts)
+      if Keyword.get(opts, :admit, true),
+        do: Members.admit_assignees(updated, was_keys, opts)
 
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_updated, %{

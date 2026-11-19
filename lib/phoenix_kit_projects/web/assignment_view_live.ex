@@ -435,8 +435,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     with true <- may_edit_now?(socket),
          # The same rule as the button: only while the task has no
          # description of its own (codex, 2026-11-19).
+         # A one-off task's description lives on its task.
+         description = a.description || (match?(%Task{}, a.task) && a.task.description) || nil,
          %{text: text, source: source} when is_binary(text) and source != :description <-
-           TaskNotes.display_summary(a.description, TaskNotes.latest(a.uuid)),
+           TaskNotes.display_summary(description, TaskNotes.latest(a.uuid)),
          {:ok, _} <- Projects.update_assignment_form(a, %{"description" => text}) do
       Activity.log("projects.assignment_updated",
         actor_uuid: Activity.actor_uuid(socket),

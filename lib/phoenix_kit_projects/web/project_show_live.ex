@@ -1522,7 +1522,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> Handoffs.would_ready(a.uuid)
       |> Enum.flat_map(&List.wrap(Map.get(shown, &1.uuid)))
 
-    build_next_up(socket, :complete, a, rows, params["force"] == "1")
+    # A task inside an expanded sub-project is judged in ITS project: who may
+    # assign there, whose seat a kept recipient gets, the tags. The page's
+    # project would hand its rights to a project that may restrict them.
+    project = next_up_project(socket, a.project_uuid)
+
+    build_next_up(socket, :complete, a, rows, params["force"] == "1", project)
   end
 
   # `project` is the rows' project: this page's, or — for a sub-project
@@ -1655,7 +1660,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             key not in defaults && %{label: gettext("Added by you"), tone: :success},
             status == :cannot_open &&
               %{label: gettext("Not on this project — added when you confirm"), tone: :warning},
-            status == :no_login && %{label: gettext("No login yet"), tone: :warning}
+            status == :no_login && %{label: gettext("No login yet"), tone: :warning},
+            status == :inactive && %{label: gettext("Account deactivated"), tone: :warning}
           ],
           & &1
         )
@@ -1673,8 +1679,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  defp key_reach({"user", user}, _reach, project),
-    do: {user, if(Notices.may_view?(user, project), do: :ok, else: :cannot_open)}
+  defp key_reach({"user", user}, _reach, project) do
+    status =
+      cond do
+        not People.assignable_user?(Auth.get_user(user)) -> :inactive
+        Notices.may_view?(user, project) -> :ok
+        true -> :cannot_open
+      end
+
+    {user, status}
+  end
 
   defp key_reach(_key, _reach, _project), do: {nil, :ok}
 
@@ -1774,8 +1788,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp may_release_next_up?(scope, project, row),
     do: Authz.can?(scope, project, :update_status, row)
 
-  defp may_comment_next_up?(socket, scope, project, row),
-    do: socket.assigns.comments_enabled and Authz.can?(scope, project, :comment, row)
+  # The page's discussions switch is its own project's; a row of another
+  # project (a task inside an expanded sub-project) asks that project's.
+  defp may_comment_next_up?(socket, scope, project, row) do
+    discussions? =
+      if project.uuid == socket.assigns.project.uuid,
+        do: socket.assigns.comments_enabled,
+        else: comments_available?() and Extensions.enabled?(project, "discussions")
+
+    discussions? and Authz.can?(scope, project, :comment, row)
+  end
 
   # Whose a row is: a task's own fields, a sub-project's project's.
   defp assignee_holder(%Assignment{child_project: %Project{} = child}), do: child
@@ -1907,8 +1929,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          current = AssigneeSet.keys(fresh),
          wanted when wanted != current <- Enum.uniq(current ++ added) do
       case Projects.update_assignment_form(fresh, %{"assignees" => wanted}, actor_uuid: actor) do
-        {:ok, _} -> :ok
-        _ -> :error
+        {:ok, updated} ->
+          # The change in the task's history, as the form's save records it.
+          Activity.log("projects.assignment_updated",
+            actor_uuid: actor,
+            resource_type: "assignment",
+            resource_uuid: updated.uuid,
+            tell: false,
+            metadata: %{"changes" => PhoenixKitProjects.Changes.assignment(fresh, updated)}
+          )
+
+          :ok
+
+        _ ->
+          :error
       end
     else
       _ -> :ok
@@ -1917,24 +1951,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp assign_added(_task, _added, _actor), do: :ok
 
+  # The assignees' own admission rule (`Members.admit_users/3`): never a
+  # template, a deactivated or API-only account, or an existing seat.
   defp admit_kept(project, keys, actor, task) do
-    for user <- keys_users(keys),
-        is_binary(user),
-        not Notices.may_view?(user, project) do
-      Members.add_member(project, user,
-        role: "member",
-        actor_uuid: actor,
-        log_metadata: %{
-          "via" => "assignment",
-          "task" => Assignment.label(task),
-          "task_uuid" => task.uuid
-        }
-      )
-    end
+    Members.admit_users(project, keys_users(keys),
+      actor_uuid: actor,
+      log_metadata: %{
+        "via" => "assignment",
+        "task" => Assignment.label(task),
+        "task_uuid" => task.uuid
+      }
+    )
 
     :ok
-  rescue
-    _ -> :ok
   end
 
   # A crafted confirm (or a picker change that slipped past the check)
@@ -1985,7 +2014,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         may_comment_next_up?(
           socket,
           socket.assigns[:phoenix_kit_current_scope],
-          socket.assigns.project,
+          next_up_project(socket, next_up.project_uuid),
           fresh
         ) and
         match?(
@@ -3069,7 +3098,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp side_panel(assigns) do
     views =
       [
-        assigns.comments_enabled &&
+        (assigns.comments_enabled and assigns.fx[:project_comments] == true) &&
           {"discussion", gettext("Discussion"), "hero-chat-bubble-left-right"},
         {"activity", gettext("Activity"), "hero-clock"},
         assigns.fx.view_timeline && {"timeline", gettext("Timeline"), "hero-chart-bar-square"},
@@ -3116,17 +3145,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <% "activity" -> %>
             {live_render(@socket, PhoenixKitProjects.Web.ProjectHistoryLive,
               id: "side-panel-history-#{@project.uuid}",
-              session: side_embed_session(assigns, %{"compact" => true})
+              session: side_embed_session(assigns, %{"dom_scope" => "side"})
             )}
           <% "timeline" -> %>
             {live_render(@socket, PhoenixKitProjects.Web.ProjectGanttLive,
               id: "side-panel-gantt-#{@project.uuid}",
-              session: side_embed_session(assigns, %{"headless" => true, "wrapper_class" => ""})
+              session:
+                side_embed_session(assigns, %{
+                  "headless" => true,
+                  "wrapper_class" => "",
+                  "dom_scope" => "side"
+                })
             )}
           <% "calendar" -> %>
             {live_render(@socket, PhoenixKitProjects.Web.ProjectCalendarLive,
               id: "side-panel-calendar-#{@project.uuid}",
-              session: side_embed_session(assigns, %{"headless" => true, "wrapper_class" => ""})
+              session:
+                side_embed_session(assigns, %{
+                  "headless" => true,
+                  "wrapper_class" => "",
+                  "dom_scope" => "side",
+                  "step_intents" => "1"
+                })
             )}
           <% _ -> %>
         <% end %>
@@ -8010,14 +8050,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 id={done_picker_id(@next_up.task_uuid)}
                 selected={@next_up.done_keys}
                 source={PhoenixKitProjects.PeopleSource}
-                source_opts={%{project_uuid: @project.uuid, source: "next_up"}}
+                source_opts={%{project_uuid: @next_up.project_uuid, source: "next_up"}}
                 viewer_uuid={viewer}
-                can_edit={@next_up.can_assign}
+                can_edit={@next_up.can_assign and not @next_up.subproject?}
                 tags={Map.get(@next_up.tags, done_picker_id(@next_up.task_uuid), %{})}
                 placeholder={gettext("Add a person, team or department")}
                 me_label={nil}
               />
-              <p :if={@next_up.can_assign} class="text-xs text-base-content/60">
+              <p
+                :if={@next_up.can_assign and not @next_up.subproject?}
+                class="text-xs text-base-content/60"
+              >
                 {gettext("Anyone you add is assigned to the task as well and told.")}
               </p>
             </div>
@@ -8063,7 +8106,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 id={row_picker_id(a.uuid)}
                 selected={Map.get(@next_up.row_keys, a.uuid, [])}
                 source={PhoenixKitProjects.PeopleSource}
-                source_opts={%{project_uuid: @project.uuid, source: "next_up"}}
+                source_opts={%{project_uuid: @next_up.project_uuid, source: "next_up"}}
                 viewer_uuid={viewer}
                 can_edit={@next_up.can_assign and is_nil(a.child_project_uuid)}
                 tags={Map.get(@next_up.tags, row_picker_id(a.uuid), %{})}

@@ -627,8 +627,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   @doc false
   # `AssigneeField` callback: asked of the project as it is now.
+  # Picking can make a staff record, so it also needs the form's own write
+  # right, as the project form's picker does.
   def picker_allowed?(socket) do
-    with %Project{uuid: uuid} <- socket.assigns[:project],
+    with true <- write_allowed?(socket),
+         %Project{uuid: uuid} <- socket.assigns[:project],
          %Project{} = project <- Projects.get_project(uuid) do
       Features.on?(project, "assignees") and
         Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :assign_tasks)
@@ -1953,8 +1956,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         "subtask_add",
         %{"title" => title},
         %{assigns: %{live_action: :edit, assignment: %Assignment{}}} = socket
-      ) do
-    title = title |> to_string() |> String.replace(~r/\s+/u, " ") |> String.trim()
+      )
+      when is_binary(title) do
+    title = title |> String.replace(~r/\s+/u, " ") |> String.trim()
 
     if title != "" and may?(socket, :create_tasks) do
       key = "held-#{System.unique_integer([:positive])}"
@@ -1969,8 +1973,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  def handle_event("subtask_add", %{"title" => title}, socket) do
-    title = title |> to_string() |> String.trim()
+  def handle_event("subtask_add", %{"title" => title}, socket) when is_binary(title) do
+    title = String.trim(title)
 
     with %Assignment{} = parent <- socket.assigns[:assignment],
          true <- title != "",
@@ -1993,6 +1997,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       _ -> {:noreply, socket}
     end
   end
+
+  # A crafted title that is not text: nothing to add.
+  def handle_event("subtask_add", _params, socket), do: {:noreply, socket}
 
   def handle_event("delete_task", _params, socket) do
     with %Assignment{} = a <- socket.assigns[:assignment],
@@ -2885,6 +2892,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         do: socket,
         else: assign(socket, held_dep_adds: [], held_dep_removes: [], held_dep_items: %{})
 
+    # Likewise subtasks: a held "Sits under" and held new subtasks are
+    # dropped; held ticks are plain status changes and stay.
+    socket =
+      if fx.subtasks,
+        do: socket,
+        else: assign(socket, held_parent: :keep, held_subtasks: [])
+
     socket
     |> apply_held_parent()
     |> apply_held_deps()
@@ -3028,6 +3042,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp write_tick(_socket, _sub, _done?), do: :ok
+
+  # Closed some other way than the form's own Close / Cancel — the drawer's
+  # ✕, the browser's Back, navigating away: a file uploaded in this sitting
+  # and never saved goes too, best effort (a crash skips this). Save empties
+  # `session_files`, so nothing saved is touched.
+  @impl true
+  def terminate(_reason, socket) do
+    if socket.assigns[:session_files] not in [nil, []] and
+         match?(%Assignment{}, socket.assigns[:assignment]) do
+      Enum.each(socket.assigns.session_files, &discard_session_file(socket, &1))
+    end
+
+    :ok
+  end
 
   # Close / Cancel: nothing held is written, and a file uploaded in this
   # sitting goes again (it would otherwise stay on the task unsaved).

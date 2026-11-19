@@ -1614,6 +1614,7 @@ The three tables a host app depends on. Full prose in
 | `"locale"` | all | The page's language, a dialect (`L10n.current_content_lang/0`) or a base code: `maybe_put_locale/1` gives both Gettext backends the catalogue's code and keeps the full one for content reads. Absent is a no-op |
 | `"current_user_uuid"` | all | The viewer's UUID **as a string, never a `%User{}`**. Absent/unknown/inactive degrades to anonymous, never crashes |
 | `"redirect_to"` | form LVs | Path `push_navigate`d on save / mount-error instead of the admin default |
+| `"dom_scope"` | `ProjectGanttLive`, `ProjectCalendarLive`, `ProjectHistoryLive` | A short lowercase word prefixed to the view's DOM ids, for a second copy of it on one page (the project page's side panel passes `"side"`); anything else is ignored |
 | `"tab_url_sync"` | `ProjectShowLive` | Real boolean; **defaults `false`** in embeds — an embed must not rewrite the host's address bar |
 | `"mode"` | all | `"navigate"` (default) \| `"emit"` \| `"popup"` |
 | `"pubsub_topic"` | all | **Required** when `mode` is `"emit"` or `"popup"` |
@@ -1947,13 +1948,23 @@ reference:
 - **The task form writes nothing before Save** (item 8): waits-on,
   sits-under, the subtasks box and file removals are held (shown as they
   will be, marked "not saved"); a file stored in an unsaved edit is removed
-  again on Close. Logging time and the portal switches stay immediate.
+  again on Close, or by `terminate/2` when the host closes the frame (✕,
+  Back). A held "Sits under", held dependencies and held new subtasks are
+  dropped at Save when their feature was switched off meanwhile. Logging
+  time and the portal switches stay immediate.
 - **Assigning someone admits them** (`Members.admit_assignees/3`, from
-  `create_assignment/2`, `create_task_with_assignment/4` and
-  `update_assignment_form/3`): a person (or a team's / department's people)
-  who cannot open the project becomes a `member`, told "you were added";
-  `Members.assignee_reach/2` labels people `:ok | :cannot_open | :no_login`
-  for the dialogs. The notification types read plainly, each with an
+  `create_assignment/2`, `create_task_with_assignment/4`,
+  `update_assignment_form/3` and an accepted portal request's
+  `review_assignment/3`): a person (or a team's / department's people)
+  who cannot open the project becomes a `member`, told "you were added".
+  The one rule is `Members.admit_users/3` (never a template, a deactivated
+  or API-only account, or an existing seat — `add_member(only_new: true)`),
+  which the Done / next-up dialogs use too. **Admission writes, logs and
+  notifies, so it never runs inside a transaction:** a caller inside one
+  (template clone, closure pull) passes `admit: false` and admits after
+  the commit. `Members.assignee_reach/2` labels people
+  `:ok | :cannot_open | :no_login | :inactive` for the dialogs. A
+  sub-project's own assignees (`Projects.update_project/2`) admit nobody. The notification types read plainly, each with an
   `example`; a dialog's comment and a reopen reason ride as the core
   notification quote (`Notices.with_quote/4`).
 - **`PhoenixKitProjects.PeopleSource`** is the module's source for core's

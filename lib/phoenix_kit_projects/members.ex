@@ -245,8 +245,9 @@ defmodule PhoenixKitProjects.Members do
   @doc """
   Adds a member. Options: `:role` (default `"member"`), `:actor_uuid`,
   `:log_metadata` (merged under the history entry's own, e.g. the task an
-  assignment added them through). Adding an existing member updates their
-  role through the same guards.
+  assignment added them through), `:only_new` (an existing member is left
+  as they are: `{:error, :already_member}`). Otherwise adding an existing
+  member updates their role through the same guards.
   """
   @spec add_member(map() | binary(), binary(), keyword()) ::
           {:ok, ProjectMember.t()} | {:error, term()}
@@ -258,6 +259,7 @@ defmodule PhoenixKitProjects.Members do
       when is_binary(project_uuid) and is_binary(user_uuid) do
     role = opts |> Keyword.get(:role, "member") |> to_string()
     actor_uuid = Keyword.get(opts, :actor_uuid)
+    only_new? = Keyword.get(opts, :only_new, false)
 
     case get_member(project_uuid, user_uuid) do
       nil ->
@@ -280,6 +282,12 @@ defmodule PhoenixKitProjects.Members do
 
           PubSub.broadcast_project(:project_members_changed, %{uuid: project_uuid})
         end)
+
+      # An admission (`admit_users/3`) never touches a seat someone gave in
+      # the meantime: a manager added between its check and this write would
+      # otherwise be demoted to member.
+      _existing when only_new? ->
+        {:error, :already_member}
 
       existing ->
         change_role(project_uuid, existing, role, actor_uuid)
@@ -310,25 +318,14 @@ defmodule PhoenixKitProjects.Members do
     added = AssigneeSet.keys(a) -- List.wrap(was_keys)
 
     # A task still waiting for review (a portal request) admits nobody until
-    # it is accepted (codex, 2026-11-19).
+    # it is accepted (codex, 2026-11-19) — `Projects.review_assignment/3`
+    # admits then.
     with false <- Map.get(a, :review_status) == "pending",
          [_ | _] <- added,
          [_ | _] = users <- People.user_uuids_for(added),
-         %Project{is_template: false} = project <-
-           PhoenixKitProjects.Projects.get_project(a.project_uuid) do
+         %Project{} = project <- PhoenixKitProjects.Projects.get_project(a.project_uuid) do
       meta = %{"via" => "assignment", "task" => task_label(a), "task_uuid" => a.uuid}
-
-      for user <- users,
-          admissible?(user, project),
-          match?(
-            {:ok, _},
-            add_member(project, user,
-              role: "member",
-              actor_uuid: Keyword.get(opts, :actor_uuid),
-              log_metadata: meta
-            )
-          ),
-          do: user
+      admit_users(project, users, Keyword.put(opts, :log_metadata, meta))
     else
       _ -> []
     end
@@ -339,6 +336,53 @@ defmodule PhoenixKitProjects.Members do
   catch
     :exit, _ -> []
   end
+
+  @doc """
+  Makes each of `user_uuids` who has an active login and cannot open
+  `project` a **member** of it (`projects.member_added`, with
+  `opts[:log_metadata]` and `opts[:actor_uuid]`). The one admission rule,
+  shared by `admit_assignees/3` and the Done / next-up dialogs: never a
+  template, never a deactivated or API-only account, and an existing
+  member's seat is never changed. The accounts and the seats are read once
+  for the whole list. Never raises; answers the users added.
+
+  Writes outside any transaction only: a failed insert would abort the
+  caller's, and the notice and broadcast would go out before its commit.
+  A caller inside one passes `admit: false` to the context write and
+  admits after the commit.
+  """
+  @spec admit_users(Project.t(), [binary()], keyword()) :: [binary()]
+  def admit_users(project, user_uuids, opts \\ [])
+
+  def admit_users(%Project{is_template: false} = project, user_uuids, opts)
+      when is_list(user_uuids) do
+    users = user_uuids |> Enum.filter(&is_binary/1) |> Enum.uniq()
+    active = assignable_users(users)
+    seated = seated_users(project.uuid, users)
+
+    for user <- users,
+        Map.has_key?(active, user),
+        not Map.has_key?(seated, user),
+        not Notices.may_view?(user, project),
+        match?(
+          {:ok, _},
+          add_member(project, user,
+            role: "member",
+            only_new: true,
+            actor_uuid: Keyword.get(opts, :actor_uuid),
+            log_metadata: Keyword.get(opts, :log_metadata, %{})
+          )
+        ),
+        do: user
+  rescue
+    error ->
+      Logger.warning("[Projects] admitting users failed: #{inspect(error.__struct__)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  def admit_users(_project, _user_uuids, _opts), do: []
 
   # The task's name as audit rows keep it. A row just written has no task
   # loaded, so it is read once.
@@ -351,15 +395,27 @@ defmodule PhoenixKitProjects.Members do
     _ -> nil
   end
 
-  defp admissible?(user_uuid, project) do
-    case Auth.get_user(user_uuid) do
-      %User{} = user ->
-        People.assignable_user?(user) and get_member(project.uuid, user_uuid) == nil and
-          not Notices.may_view?(user_uuid, project)
+  # The accounts of `users` that may be given a seat: active, not API-only.
+  # Plain maps rather than MapSets: dialyzer reads MapSet's opaque type
+  # wrongly through `for` filters.
+  defp assignable_users([]), do: %{}
 
-      _ ->
-        false
-    end
+  defp assignable_users(users) do
+    from(u in User, where: u.uuid in ^users)
+    |> RepoHelper.repo().all()
+    |> Enum.filter(&People.assignable_user?/1)
+    |> Map.new(&{&1.uuid, true})
+  end
+
+  defp seated_users(_project_uuid, []), do: %{}
+
+  defp seated_users(project_uuid, users) do
+    from(m in ProjectMember,
+      where: m.project_uuid == ^project_uuid and m.user_uuid in ^users,
+      select: m.user_uuid
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new(&{&1, true})
   end
 
   @doc """
@@ -371,7 +427,9 @@ defmodule PhoenixKitProjects.Members do
     * `:cannot_open` — has a login but cannot open it (assigning makes
       them a member; until then nothing reaches them);
     * `:no_login` — a staff record no account is linked to: nothing can
-      reach them ("No login yet").
+      reach them ("No login yet");
+    * `:inactive` — the linked account is deactivated (or API-only): it is
+      neither told nor admitted.
 
   A team or a department is expanded into its people. Never raises.
   """
@@ -380,16 +438,18 @@ defmodule PhoenixKitProjects.Members do
             uuid: binary(),
             name: String.t(),
             user_uuid: binary() | nil,
-            status: :ok | :cannot_open | :no_login
+            status: :ok | :cannot_open | :no_login | :inactive
           }
         ]
   def assignee_reach(keys, %Project{} = project) when is_list(keys) do
-    keys
-    |> People.people_for()
-    |> Enum.map(fn person ->
+    people = People.people_for(keys)
+    active = people |> Enum.map(& &1.user_uuid) |> Enum.filter(&is_binary/1) |> assignable_users()
+
+    Enum.map(people, fn person ->
       status =
         cond do
           is_nil(person.user_uuid) -> :no_login
+          not Map.has_key?(active, person.user_uuid) -> :inactive
           Notices.may_view?(person.user_uuid, project) -> :ok
           true -> :cannot_open
         end

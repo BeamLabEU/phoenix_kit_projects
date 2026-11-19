@@ -688,9 +688,20 @@ defmodule PhoenixKitProjects.Web.Helpers do
     Phoenix.Component.assign(socket,
       embed_mode: mode,
       embed_pubsub_topic: topic,
-      embed_frame_ref: frame_ref
+      embed_frame_ref: frame_ref,
+      dom_scope: decode_dom_scope(Map.get(session, "dom_scope"))
     )
   end
+
+  # A second copy of a view on one page (the project page's side panel
+  # beside the same view's own tab) passes `"dom_scope"`, a short lowercase
+  # word, and its DOM ids are prefixed with it, so neither copy's hooks,
+  # dialogs or labels land on the other's elements. Anything else is "".
+  defp decode_dom_scope(scope) when is_binary(scope) do
+    if Regex.match?(~r/\A[a-z]{1,16}\z/, scope), do: scope <> "-", else: ""
+  end
+
+  defp decode_dom_scope(_), do: ""
 
   defp decode_mode("emit"), do: :emit
   defp decode_mode(:emit), do: :emit
