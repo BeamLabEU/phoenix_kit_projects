@@ -12,8 +12,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.{People, Projects}
   alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitProjects.Web.ProjectShowLive
   alias PhoenixKitStaff.Schemas.{Department, Person}
 
   setup %{conn: conn} do
@@ -302,9 +303,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
     end
 
     defp person_key(user_uuid),
-      do: {"person", PhoenixKitProjects.People.get_person_by_user_uuid(user_uuid).uuid}
+      do: {"person", People.get_person_by_user_uuid(user_uuid).uuid}
 
-    defp row_picker(a), do: PhoenixKitProjects.Web.ProjectShowLive.row_picker_id(a.uuid)
+    defp row_picker(a), do: ProjectShowLive.row_picker_id(a.uuid)
 
     test "the dialog lists everyone the notice would reach, tagged with why", ctx do
       {:ok, view, _html} = show(ctx)

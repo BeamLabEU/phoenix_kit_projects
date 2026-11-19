@@ -1651,7 +1651,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             role_tag(user && roles[user]),
             user && user == Map.get(task, :created_by_uuid) && gettext("Created this task"),
             assigned_tag(key, direct, via, opts[:assigned]),
-            user && MapSet.member?(commenters, user) && gettext("Commented here"),
+            user && Map.has_key?(commenters, user) && gettext("Commented here"),
             key not in defaults && %{label: gettext("Added by you"), tone: :success},
             status == :cannot_open &&
               %{label: gettext("Not on this project — added when you confirm"), tone: :warning},
@@ -1717,15 +1717,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       "assignment"
       |> PhoenixKitComments.list_comments(uuid)
       |> Enum.flat_map(&List.wrap(Map.get(&1, :user_uuid)))
-      |> MapSet.new()
+      |> Map.new(&{&1, true})
     else
-      MapSet.new()
+      %{}
     end
   rescue
-    _ -> MapSet.new()
+    _ -> %{}
   end
 
-  defp commenter_uuids(_), do: MapSet.new()
+  # A plain map, not a MapSet: dialyzer reads a MapSet passed on as opaque.
+  defp commenter_uuids(_), do: %{}
 
   @doc false
   def done_picker_id(task_uuid), do: "next-up-done-#{task_uuid}"
@@ -6967,7 +6968,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           id={"project-quick-top-#{@project.uuid}"}
           phx-hook="PkpQuickTop"
           phx-update="ignore"
-          data-added={gettext("Added: %{title} · %{count} added")}
+          data-added={
+            # Filled in by the hook: each placeholder bound to itself, so
+            # the translation keeps them for the browser to replace.
+            gettext("Added: %{title} · %{count} added", title: "%{title}", count: "%{count}")
+          }
           class="mb-2"
         >
           <button
