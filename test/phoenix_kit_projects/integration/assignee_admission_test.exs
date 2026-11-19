@@ -288,4 +288,37 @@ defmodule PhoenixKitProjects.Integration.AssigneeAdmissionTest do
       assert check.(outside.user) =~ "can't open this project"
     end
   end
+
+  describe "panel review, 2026-11-19" do
+    test "a task waiting for review admits nobody until it is accepted" do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      task = fixture_task()
+      anna = person!("Anna")
+
+      {:ok, _pending} =
+        Projects.create_assignment(
+          %{
+            "project_uuid" => project.uuid,
+            "task_uuid" => task.uuid,
+            "status" => "todo",
+            "assigned_person_uuid" => anna.person
+          },
+          review: :pending
+        )
+
+      assert Members.role_of(project, anna.user) == nil
+      assert member_added(project.uuid, anna.user) == []
+    end
+
+    test "a quote is held to 16 KB however few characters it is" do
+      # One grapheme carrying 100,000 combining marks.
+      huge = "a" <> String.duplicate("\u0301", 100_000)
+      meta = Notices.with_quote("projects.comment_added", %{}, "a", huge)
+
+      if quote = meta["quote"] do
+        assert byte_size(quote["text"]) <= 16_384
+        assert String.valid?(quote["text"])
+      end
+    end
+  end
 end

@@ -35,8 +35,10 @@ defmodule PhoenixKitProjects.Web.OptionalReasonAndCueTest do
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
 
     html = render_click(view, "ask_reopen", %{"uuid" => ctx.a.uuid})
-    [textarea] = Regex.run(~r/<textarea[^>]*name="reason"[^>]*>/, html)
-    refute textarea =~ "required"
+    # The reason is a Leaf editor now (the boss, 2026-11-18): its field is
+    # a hidden input, never required.
+    assert html =~ ~s(id="pkp-dialog-reopen-)
+    refute html =~ ~r/<(textarea|input)[^>]*name="reason"[^>]*required/
 
     render_submit(view, "reopen", %{"uuid" => ctx.a.uuid, "reason" => ""})
     assert Projects.get_assignment(ctx.a.uuid).status == "todo"

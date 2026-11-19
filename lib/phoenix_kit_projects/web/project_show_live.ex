@@ -1869,8 +1869,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         else: []
       ) ++
         Enum.map(rows, fn row ->
-          {row, Map.get(next_up.row_keys, row.uuid, []),
-           Map.get(next_up.row_defaults, row.uuid, [])}
+          # A row kept idle, or one this viewer may not release, is not
+          # handed to anyone: its picker's additions are not applied
+          # (codex, 2026-11-19).
+          if next_up_release?(next_up, row) do
+            {row, Map.get(next_up.row_keys, row.uuid, []),
+             Map.get(next_up.row_defaults, row.uuid, [])}
+          else
+            {row, [], []}
+          end
         end)
 
     Enum.reduce_while(pickers, :ok, fn {task, keys, defaults}, :ok ->
@@ -1884,7 +1891,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp assign_added(%Assignment{child_project_uuid: nil} = task, added, actor) do
-    added = Enum.filter(added, &match?({kind, _} when kind in ~w(person team department), &1))
+    # Only someone who can still be picked (the picker vets its picks; this
+    # is the write's own check).
+    added =
+      Enum.filter(added, fn
+        {kind, uuid} when kind in ~w(person team department) ->
+          Assignees.describe_pick(kind, uuid) != nil
+
+        _ ->
+          false
+      end)
 
     with [_ | _] <- added,
          %Assignment{} = fresh <- Projects.get_assignment(task.uuid),
@@ -2762,7 +2778,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <.icon name="hero-user" class="w-3 h-3" /> {format_minutes(logged)}
             </button>
             <.smart_link
-              :if={@fx.ledger and not @is_template and ai_logged > 0}
+              :if={@fx.ledger and not @is_template and ai_logged > 0 and @comments_enabled}
               navigate={Paths.view_assignment(@a.project_uuid, @a.uuid) <> "?tab=notes"}
               emit={{PhoenixKitProjects.Web.AssignmentViewLive, Map.put(view_session(@a), "tab", "notes")}}
               embed_mode={@embed_mode}
@@ -2771,6 +2787,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             >
               <.icon name="hero-cpu-chip" class="w-3 h-3" /> {gettext("AI %{amount}", amount: format_minutes(ai_logged))}
             </.smart_link>
+            <%!-- Without discussions there are no notes to open: the time alone. --%>
+            <span
+              :if={@fx.ledger and not @is_template and ai_logged > 0 and not @comments_enabled}
+              class="badge badge-sm gap-1 badge-outline"
+              title={gettext("Time the AI reported")}
+            >
+              <.icon name="hero-cpu-chip" class="w-3 h-3" /> {gettext("AI %{amount}", amount: format_minutes(ai_logged))}
+            </span>
 
 
             </span>

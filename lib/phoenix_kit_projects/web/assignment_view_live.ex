@@ -433,8 +433,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     a = socket.assigns.assignment
 
     with true <- may_edit_now?(socket),
-         %{text: text, source: source} when is_binary(text) <-
-           TaskNotes.display_summary(nil, TaskNotes.latest(a.uuid)),
+         # The same rule as the button: only while the task has no
+         # description of its own (codex, 2026-11-19).
+         %{text: text, source: source} when is_binary(text) and source != :description <-
+           TaskNotes.display_summary(a.description, TaskNotes.latest(a.uuid)),
          {:ok, _} <- Projects.update_assignment_form(a, %{"description" => text}) do
       Activity.log("projects.assignment_updated",
         actor_uuid: Activity.actor_uuid(socket),
@@ -458,8 +460,8 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   def handle_event("rename_cancel", _params, socket),
     do: {:noreply, assign(socket, renaming?: false)}
 
-  def handle_event("rename_save", %{"title" => title}, socket) do
-    title = title |> to_string() |> String.replace(~r/\s+/u, " ") |> String.trim()
+  def handle_event("rename_save", %{"title" => title}, socket) when is_binary(title) do
+    title = title |> String.replace(~r/\s+/u, " ") |> String.trim()
     a = socket.assigns.assignment
     scope = socket.assigns[:phoenix_kit_current_scope]
 
@@ -490,6 +492,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
          |> put_flash(:error, gettext("Could not rename the task."))}
     end
   end
+
+  # A crafted save with no title, or not a string: nothing to rename (zai,
+  # 2026-11-19).
+  def handle_event("rename_save", _params, socket), do: {:noreply, socket}
 
   def handle_event("toggle_desc", _params, socket),
     do: {:noreply, assign(socket, desc_open?: not socket.assigns.desc_open?)}

@@ -1977,9 +1977,11 @@
         self.pushEvent("outline_quick_add", payload, function (reply) {
           if (!reply || !reply.added) return;
           self.total += reply.added;
+          // Count first, then the title by split/join: a title holding
+          // "%{count}" or "$&" stays as typed (codex, 2026-11-19).
           note.textContent = (root.dataset.added || "Added: %{title} · %{count} added")
-            .replace("%{title}", reply.last || "")
-            .replace("%{count}", String(self.total));
+            .split("%{count}").join(String(self.total))
+            .split("%{title}").join(reply.last || "");
         });
       }
 

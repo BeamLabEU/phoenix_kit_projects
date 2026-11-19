@@ -309,7 +309,10 @@ defmodule PhoenixKitProjects.Members do
   def admit_assignees(%Assignment{} = a, was_keys, opts \\ []) do
     added = AssigneeSet.keys(a) -- List.wrap(was_keys)
 
-    with [_ | _] <- added,
+    # A task still waiting for review (a portal request) admits nobody until
+    # it is accepted (codex, 2026-11-19).
+    with false <- Map.get(a, :review_status) == "pending",
+         [_ | _] <- added,
          [_ | _] = users <- People.user_uuids_for(added),
          %Project{is_template: false} = project <-
            PhoenixKitProjects.Projects.get_project(a.project_uuid) do

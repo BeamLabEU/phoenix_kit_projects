@@ -159,13 +159,27 @@ defmodule PhoenixKitProjects.Notices do
 
     if is_binary(text) and String.trim(text) != "" and quotes?() do
       block =
-        %{"text" => text |> String.trim() |> String.slice(0, @quote_max)}
+        %{"text" => text |> String.trim() |> String.slice(0, @quote_max) |> cap_bytes()}
         |> then(&if(is_binary(actor_uuid), do: Map.put(&1, "author_uuid", actor_uuid), else: &1))
 
       Map.put(meta, "quote", block)
     else
       meta
     end
+  end
+
+  # The grapheme cap alone lets one "character" carry any number of
+  # combining marks (codex, 2026-11-19): the quote is held to 16 KB too,
+  # cut at a valid UTF-8 boundary.
+  @quote_max_bytes 16_384
+  defp cap_bytes(text) when byte_size(text) <= @quote_max_bytes, do: text
+
+  defp cap_bytes(text) do
+    text
+    |> binary_part(0, @quote_max_bytes)
+    |> String.chunk(:valid)
+    |> Enum.take_while(&String.valid?/1)
+    |> Enum.join()
   end
 
   @doc false

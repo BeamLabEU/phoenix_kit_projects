@@ -2874,6 +2874,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # Save: what was held, written, each with the log a direct change had.
   defp apply_held(socket) do
+    # The project as stored now: a feature turned off while the form held a
+    # change is not written at Save (codex, 2026-11-19). The rights to edit
+    # were asked by the Save itself.
+    socket = refresh_project(socket)
+    fx = Features.gates(socket.assigns.project)
+
+    socket =
+      if fx.dependencies,
+        do: socket,
+        else: assign(socket, held_dep_adds: [], held_dep_removes: [], held_dep_items: %{})
+
     socket
     |> apply_held_parent()
     |> apply_held_deps()

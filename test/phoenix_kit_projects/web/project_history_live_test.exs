@@ -45,8 +45,9 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLiveTest do
 
     html =
       view
-      |> form("#reopen-form-#{ctx.project.uuid}", %{"reason" => "Wall B has no socket heights."})
-      |> render_submit()
+      |> form("#reopen-form-#{ctx.project.uuid}")
+      # The reason is Leaf's hidden field, filled by the editor in a browser.
+      |> render_submit(%{"reason" => "Wall B has no socket heights."})
 
     assert html =~ "On hold — waiting for"
     refute html =~ "What is wrong or missing?"
@@ -115,8 +116,9 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLiveTest do
     render_click(view, "ask_reopen", %{"uuid" => ctx.measure.uuid})
 
     view
-    |> form("#reopen-form-#{ctx.project.uuid}", %{"reason" => "Measure wall A again."})
-    |> render_submit()
+    |> form("#reopen-form-#{ctx.project.uuid}")
+    # The reason is Leaf's hidden field, filled by the editor in a browser.
+    |> render_submit(%{"reason" => "Measure wall A again."})
 
     render_click(view, "switch_tab", %{"tab" => "history"})
     history = find_live_child(view, "project-history-live-#{ctx.project.uuid}")
