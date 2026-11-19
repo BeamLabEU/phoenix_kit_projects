@@ -595,6 +595,46 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # Ctrl+Enter in a card title opens the task the way a click on it does:
   # the drawer on a drawer page, the host's popup in an embed (never a
   # navigation of the host away), the task's own page otherwise.
+  # The quick-add line at the top of the list (the boss, 2026-11-18): each
+  # title (one, or one per pasted line) becomes a task at the end of the top
+  # level, so it lands where the list's order puts it; the line keeps the
+  # cursor for the next. The reply says what was added, for the line's own
+  # "Added: …" note.
+  def handle_event("outline_quick_add", params, socket, reload) do
+    titles =
+      (List.wrap(params["lines"]) ++ List.wrap(params["text"]))
+      |> Enum.filter(&is_binary/1)
+      |> Enum.map(&clean_title/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.take(200)
+
+    if socket.assigns.outline_can.edit and titles != [] do
+      created =
+        Enum.reduce_while(titles, [], fn title, acc ->
+          case create_at(socket, %{"title" => title, "ad_hoc" => true}, nil, :last) do
+            {:ok, a} -> {:cont, [{a, title} | acc]}
+            _ -> {:halt, acc}
+          end
+        end)
+        |> Enum.reverse()
+
+      socket = remember_created(socket, Enum.map(created, &elem(&1, 0).uuid))
+      last = created |> List.last() |> then(&(&1 && elem(&1, 1)))
+
+      {:reply, %{added: length(created), last: last}, reload.(socket)}
+    else
+      {:reply, %{added: 0}, socket}
+    end
+  end
+
+  # The typed title lost the cursor: the row is a link again (the boss,
+  # 2026-11-18). Only the row that held it.
+  def handle_event("outline_blur", %{"id" => uuid}, socket, _reload) do
+    if socket.assigns[:outline_focus] == uuid,
+      do: {:noreply, assign(socket, outline_focus: nil)},
+      else: {:noreply, socket}
+  end
+
   def handle_event("outline_open", %{"id" => uuid}, socket, _reload) do
     case own(socket, uuid) do
       %Assignment{} = a ->

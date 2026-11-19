@@ -18,6 +18,10 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   # A destructive action that asks through core's confirm modal.
   import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
   import PhoenixKitProjects.Web.Components.TimeInput, only: [clock_input: 1]
+  import PhoenixKitProjects.Web.Components.DescriptionEditor, only: [description_editor: 1]
+  import PhoenixKitProjects.Web.Components.RichText, only: [rich_text: 1]
+
+  alias PhoenixKitProjects.Web.Components.DescriptionEditor
 
   alias PhoenixKitProjects.{CalendarDisplay, Extensions, L10n, Paths, ProjectEvents, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -102,6 +106,13 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
       do: {:noreply, assign(socket, modal_open: true, modal_date: date)},
       else: {:noreply, socket}
   end
+
+  def handle_info({:leaf_suggest, %{editor_id: "pkp-dialog-" <> _}} = msg, socket),
+    do:
+      {:noreply,
+       DescriptionEditor.suggest(socket, msg, %{
+         "project" => socket.assigns.project.uuid
+       })}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -595,9 +606,12 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               <.icon name="hero-map-pin" class="w-4 h-4 opacity-60" />
               <span>{@selected.location}</span>
             </div>
-            <p :if={@selected.description} class="text-base-content/70 whitespace-pre-wrap">
-              {@selected.description}
-            </p>
+            <.rich_text
+              :if={@selected.description}
+              text={@selected.description}
+              scope={assigns[:phoenix_kit_current_scope]}
+              class="text-base-content/70"
+            />
           </div>
           <:actions>
             <.button
@@ -731,13 +745,13 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               maxlength="200"
               class="input-sm"
             />
-            <.textarea
-              id={"event-description-#{@project.uuid}"}
+            <%!-- Leaf, like the other boxes people write in (the boss,
+                 2026-11-18). --%>
+            <.description_editor
+              id={"pkp-dialog-event-#{@project.uuid}"}
               name="description"
-              value=""
               label={gettext("Description")}
-              rows="2"
-              class="textarea-sm"
+              height="120px"
             />
             <%!-- Inside the form (not the modal's :actions slot) so Enter
                  and the submit button reach phx-submit. --%>
