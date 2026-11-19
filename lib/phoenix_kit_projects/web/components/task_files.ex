@@ -27,6 +27,11 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
   attr(:remove_event, :string, default: nil)
   attr(:empty_text, :string, default: nil)
 
+  attr(:removing, :list,
+    default: [],
+    doc: "file uuids a form removes on Save: shown struck through, no ×"
+  )
+
   attr(:remove_title, :string,
     default: nil,
     doc: "the remove question (default: the task's)"
@@ -46,7 +51,13 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
     <div id={@id} class="flex flex-col gap-2">
       <p :if={@files == [] and @empty_text} class="text-sm text-base-content/50">{@empty_text}</p>
       <div :if={@images != []} class="flex flex-wrap gap-2">
-        <div :for={%{file: f} <- @images} id={"#{@id}-#{f.uuid}"} class="relative group">
+        <div
+          :for={%{file: f} <- @images}
+          id={"#{@id}-#{f.uuid}"}
+          class={["relative group", removing?(@removing, f) && "opacity-40"]}
+          data-removing={removing?(@removing, f) && "1"}
+          title={removing?(@removing, f) && gettext("Removed when you press Save")}
+        >
           <a
             href={@urls[f.uuid]}
             target="_blank"
@@ -69,7 +80,7 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
             </span>
           </a>
           <button
-            :if={@remove_event}
+            :if={@remove_event && not removing?(@removing, f)}
             type="button"
             {ConfirmAction.ask(@remove_event,
               uuid: f.uuid,
@@ -84,7 +95,12 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
         </div>
       </div>
       <ul :if={@others != []} class="flex flex-col divide-y divide-base-200 rounded-box border border-base-200">
-        <li :for={%{file: f} <- @others} id={"#{@id}-#{f.uuid}"} class="flex items-center gap-2 px-2.5 py-1.5 text-sm">
+        <li
+          :for={%{file: f} <- @others}
+          id={"#{@id}-#{f.uuid}"}
+          class={["flex items-center gap-2 px-2.5 py-1.5 text-sm", removing?(@removing, f) && "line-through opacity-50"]}
+          data-removing={removing?(@removing, f) && "1"}
+        >
           <.icon name={Attachments.file_icon(f)} class="w-5 h-5 opacity-60 shrink-0" />
           <a
             :if={@urls[f.uuid]}
@@ -96,8 +112,11 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
             {f.original_file_name || f.file_name}
           </a>
           <span :if={is_nil(@urls[f.uuid])} class="truncate flex-1">{f.original_file_name || f.file_name}</span>
+          <span :if={removing?(@removing, f)} class="text-xs no-underline text-warning">
+            {gettext("removed on Save")}
+          </span>
           <button
-            :if={@remove_event}
+            :if={@remove_event && not removing?(@removing, f)}
             type="button"
             {ConfirmAction.ask(@remove_event,
               uuid: f.uuid,
@@ -114,6 +133,8 @@ defmodule PhoenixKitProjects.Web.Components.TaskFiles do
     </div>
     """
   end
+
+  defp removing?(removing, f), do: to_string(f.uuid) in removing
 
   defp image?(%{mime_type: "image/" <> _}), do: true
   defp image?(%{file_type: "image"}), do: true

@@ -213,16 +213,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       assert Projects.list_dependencies(a1.uuid) == []
     end
 
-    test "add_assignment_dep with a valid uuid adds the edge + logs activity",
+    test "add_assignment_dep is held until Save, then adds the edge + logs activity",
          %{conn: conn, project: p, a1: a1, a2: a2, actor_uuid: actor_uuid} do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
-      _ =
+      html =
         render_submit(view, "add_assignment_dep", %{
           "depends_on_uuid" => a2.uuid
         })
 
+      # shown as it will be, written by nothing yet (the boss, 2026-11-18)
+      assert html =~ ~s(data-held="adding")
+      assert Projects.list_dependencies(a1.uuid) == []
+
+      view |> form("#assignment-form") |> render_submit()
       assert [_dep] = Projects.list_dependencies(a1.uuid)
 
       assert_activity_logged("projects.dependency_added",
@@ -237,14 +242,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
         live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
       # `Dependency.changeset/2` rejects assignment_uuid == depends_on_uuid;
-      # the LV catches the {:error, _} return and flashes a generic
-      # "Could not add dependency" message.
-      html =
+      # the pick is held (the select never offers it), and Save says which
+      # wait could not be made.
+      _ =
         render_submit(view, "add_assignment_dep", %{
           "depends_on_uuid" => a1.uuid
         })
 
-      assert html =~ "Could not add dependency"
+      _ = view |> form("#assignment-form") |> render_submit()
+      assert Projects.list_dependencies(a1.uuid) == []
     end
 
     test "remove_assignment_dep removes existing edge + logs activity",
@@ -254,8 +260,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
-      _ = render_click(view, "remove_assignment_dep", %{"uuid" => a2.uuid})
+      html = render_click(view, "remove_assignment_dep", %{"uuid" => a2.uuid})
 
+      # struck through until Save; Save removes it
+      assert html =~ ~s(data-held="removing")
+      assert [_] = Projects.list_dependencies(a1.uuid)
+
+      view |> form("#assignment-form") |> render_submit()
       assert Projects.list_dependencies(a1.uuid) == []
 
       assert_activity_logged("projects.dependency_removed",
@@ -264,13 +275,54 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       )
     end
 
-    test "remove_assignment_dep on missing edge flashes",
+    test "remove_assignment_dep on a missing edge holds nothing",
          %{conn: conn, project: p, a1: a1, a2: a2} do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
       html = render_click(view, "remove_assignment_dep", %{"uuid" => a2.uuid})
-      assert html =~ "Could not remove dependency"
+      refute html =~ ~s(data-held=)
+      assert :sys.get_state(view.pid).socket.assigns.held_dep_removes == []
+    end
+
+    test "a held change is dropped by Close, and the form says it is unsaved",
+         %{conn: conn, project: p, a1: a1, a2: a2} do
+      {:ok, _} = Projects.add_dependency(a1.uuid, a2.uuid)
+      third = fixture_task()
+
+      {:ok, a3} =
+        Projects.create_assignment(%{
+          "project_uuid" => p.uuid,
+          "task_uuid" => third.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, view, _html} =
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
+
+      render_click(view, "remove_assignment_dep", %{"uuid" => a2.uuid})
+      render_click(view, "add_assignment_dep", %{"depends_on_uuid" => a3.uuid})
+      assert :sys.get_state(view.pid).socket.assigns.dirty?
+
+      render_click(view, "close_form", %{})
+
+      assert [dep] = Projects.list_dependencies(a1.uuid)
+      assert dep.depends_on_uuid == a2.uuid
+    end
+
+    test "picking a held removal back undoes it; removing a held add drops it",
+         %{conn: conn, project: p, a1: a1, a2: a2} do
+      {:ok, _} = Projects.add_dependency(a1.uuid, a2.uuid)
+
+      {:ok, view, _html} =
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
+
+      render_click(view, "remove_assignment_dep", %{"uuid" => a2.uuid})
+      render_click(view, "add_assignment_dep", %{"depends_on_uuid" => a2.uuid})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.held_dep_removes == []
+      assert assigns.held_dep_adds == []
     end
   end
 

@@ -145,6 +145,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         autosave_timer: nil,
         pending_file_removals: []
       )
+      |> assign_held()
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_logged_minutes()
@@ -784,8 +785,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     )
   end
 
+  # A file stored while the task is edited belongs to it only once Save
+  # is pressed: Close / Cancel removes it again (`discard_held/1`).
+  defp remember_session_file(%{assigns: %{live_action: :edit}} = socket, file) do
+    socket
+    |> update(:session_files, &Enum.uniq(&1 ++ [to_string(file.uuid)]))
+    |> WebHelpers.mark_dirty()
+  end
+
+  defp remember_session_file(socket, _file), do: socket
+
   defp after_upload(socket, {:ok, file}, inline?) do
     log_task_file(socket, "projects.task_file_added", file.uuid, file.original_file_name)
+    socket = remember_session_file(socket, file)
 
     if inline? do
       DescriptionEditor.insert_image(
@@ -840,7 +852,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:ok, file} ->
           log_task_file(socket, "projects.task_file_added", file.uuid, file.original_file_name)
           DescriptionEditor.insert_image(editor_id, inline_src(socket, file), "")
-          load_task_files(socket)
+          socket |> remember_session_file(file) |> load_task_files()
 
         _ ->
           log_task_file_failed(socket, "projects.task_file_added", nil)
@@ -1791,7 +1803,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         _ -> Paths.projects()
       end
 
-    {:noreply, socket |> cancel_autosave() |> leave_form(fallback)}
+    {:noreply, socket |> cancel_autosave() |> discard_held() |> leave_form(fallback)}
   end
 
   def handle_event("cancel", _params, socket) do
@@ -1801,7 +1813,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         _ -> Paths.projects()
       end
 
-    {:noreply, leave_form(socket, fallback)}
+    {:noreply, socket |> discard_held() |> leave_form(fallback)}
   end
 
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
@@ -1938,6 +1950,28 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # Editing, a typed subtask is held until Save (`apply_held/1`); the line
+  # empties and keeps the cursor for the next, as before.
+  def handle_event(
+        "subtask_add",
+        %{"title" => title},
+        %{assigns: %{live_action: :edit, assignment: %Assignment{}}} = socket
+      ) do
+    title = title |> to_string() |> String.replace(~r/\s+/u, " ") |> String.trim()
+
+    if title != "" and may?(socket, :create_tasks) do
+      key = "held-#{System.unique_integer([:positive])}"
+
+      {:noreply,
+       socket
+       |> update(:held_subtasks, &(&1 ++ [{key, String.slice(title, 0, 500)}]))
+       |> assign(:subtask_seq, (socket.assigns[:subtask_seq] || 0) + 1)
+       |> WebHelpers.mark_dirty()}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("subtask_add", %{"title" => title}, socket) do
     title = title |> to_string() |> String.trim()
 
@@ -2007,6 +2041,40 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # A held subtask taken back before Save.
+  def handle_event("subtask_drop_held", %{"key" => key}, socket) do
+    {:noreply, update(socket, :held_subtasks, &List.keydelete(&1, key, 0))}
+  end
+
+  # A tick in the edit form: held until Save (`apply_held/1`), shown as it
+  # will be. Ticking back to what is stored drops it. A sub-project row
+  # under the task is left to its own project.
+  def handle_event(
+        "subtask_toggle",
+        %{"uuid" => uuid},
+        %{assigns: %{live_action: :edit, assignment: %Assignment{} = parent}} = socket
+      ) do
+    with %Assignment{child_project_uuid: nil} = sub <-
+           Enum.find(
+             socket.assigns[:subtasks] || [],
+             &(&1.uuid == uuid and &1.parent_uuid == parent.uuid)
+           ),
+         true <- may?(socket, :update_status) do
+      stored = sub.status == "done"
+      shown = Map.get(socket.assigns.held_ticks, uuid, stored)
+      wanted = not shown
+
+      ticks =
+        if wanted == stored,
+          do: Map.delete(socket.assigns.held_ticks, uuid),
+          else: Map.put(socket.assigns.held_ticks, uuid, wanted)
+
+      {:noreply, socket |> assign(held_ticks: ticks) |> WebHelpers.mark_dirty()}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   # A sub-project row under the task is left to its own project: ticking it
   # would write a status onto the rollup row while the project stays open.
   def handle_event("subtask_toggle", %{"uuid" => uuid}, socket) do
@@ -2051,16 +2119,32 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
       inline? = match?(%{inline: true}, shown)
 
-      if inline? and socket.assigns.live_action == :edit do
-        # A picture of the description goes with the text it is in: out of
-        # the text now, and the file itself only on Save — Close keeps both
-        # (the panel, 2026-11-02: no saved text naming a removed file).
-        {:noreply,
-         socket
-         |> strip_inline_image(file_uuid)
-         |> update(:pending_file_removals, &Enum.uniq(&1 ++ [{file_uuid, shown}]))}
-      else
-        {:noreply, remove_file_now(socket, file_uuid, shown, inline?)}
+      cond do
+        # Not one of the task's files: tried at once, so the attempt is
+        # refused and recorded as it always was.
+        is_nil(shown) ->
+          {:noreply, remove_file_now(socket, file_uuid, shown, inline?)}
+
+        inline? and socket.assigns.live_action == :edit ->
+          # A picture of the description goes with the text it is in: out of
+          # the text now, and the file itself only on Save — Close keeps both
+          # (the panel, 2026-11-02: no saved text naming a removed file).
+          {:noreply,
+           socket
+           |> strip_inline_image(file_uuid)
+           |> update(:pending_file_removals, &Enum.uniq(&1 ++ [{file_uuid, shown}]))
+           |> WebHelpers.mark_dirty()}
+
+        socket.assigns.live_action == :edit ->
+          # Any other file too, since the boss's 2026-11-18 list: shown
+          # struck through, removed by Save, kept by Close.
+          {:noreply,
+           socket
+           |> update(:pending_file_removals, &Enum.uniq(&1 ++ [{file_uuid, shown}]))
+           |> WebHelpers.mark_dirty()}
+
+        true ->
+          {:noreply, remove_file_now(socket, file_uuid, shown, inline?)}
       end
     else
       {:noreply,
@@ -2158,7 +2242,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("add_assignment_dep", %{"depends_on_uuid" => dep_uuid}, socket)
       when dep_uuid != "" do
     if socket.assigns.fx.dependencies do
-      do_add_assignment_dep(dep_uuid, socket)
+      {:noreply, hold_dep(socket, :add, dep_uuid)}
     else
       {:noreply,
        put_flash(socket, :error, gettext("This feature is turned off for this project."))}
@@ -2169,7 +2253,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   def handle_event("remove_assignment_dep", %{"uuid" => dep_uuid}, socket) do
     if socket.assigns.fx.dependencies do
-      do_remove_assignment_dep(dep_uuid, socket)
+      {:noreply, hold_dep(socket, :remove, dep_uuid)}
     else
       {:noreply,
        put_flash(socket, :error, gettext("This feature is turned off for this project."))}
@@ -2200,6 +2284,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     else
       socket =
         socket
+        |> apply_held()
         |> remove_pending_files()
         |> assign(dirty?: false)
         |> WebHelpers.notify_dirty(false)
@@ -2631,6 +2716,339 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp link_error_message(_), do: gettext("Could not nest that project.")
 
+  # ── Held until Save (the boss, 2026-11-18) ──────────────────────
+
+  attr(:rows, :list, required: true)
+  attr(:choices, :list, required: true)
+  attr(:lang, :string, default: nil)
+  attr(:prompt, :string, required: true)
+  attr(:empty, :string, required: true)
+
+  # "Waits on" in an edit form: what is saved, what Save adds (marked) and
+  # what it removes (struck through, with an undo).
+  defp held_waits_on(assigns) do
+    ~H"""
+    <ul :if={@rows != []} class="flex flex-col gap-1">
+      <li
+        :for={{uuid, a, state} <- @rows}
+        id={"waits-on-#{uuid}"}
+        class="flex items-center gap-2 text-sm"
+        data-held={if state != :saved, do: to_string(state)}
+      >
+        <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+        <span class={["truncate flex-1", state == :removing && "line-through text-base-content/50"]}>
+          {Assignment.label(a, @lang)}
+        </span>
+        <.not_saved :if={state != :saved} />
+        <button
+          :if={state != :removing}
+          type="button"
+          phx-click="remove_assignment_dep"
+          phx-value-uuid={uuid}
+          class="btn btn-ghost btn-xs btn-circle hover:text-error"
+          aria-label={gettext("Remove")}
+        >
+          <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+        </button>
+        <button
+          :if={state == :removing}
+          type="button"
+          phx-click="add_assignment_dep"
+          phx-value-depends_on_uuid={uuid}
+          class="btn btn-ghost btn-xs"
+        >
+          {gettext("Undo")}
+        </button>
+      </li>
+    </ul>
+    <.select
+      :if={@choices != []}
+      name="depends_on_uuid"
+      label={gettext("Add dependency")}
+      value=""
+      options={Enum.map(@choices, &{Assignment.label(&1, @lang), &1.uuid})}
+      prompt={@prompt}
+      phx-change="add_assignment_dep"
+    />
+    <p :if={@rows == [] and @choices == []} class="text-sm text-base-content/50">
+      {@empty}
+    </p>
+    """
+  end
+
+  # The small mark on something Save will write.
+  defp not_saved(assigns) do
+    ~H"""
+    <span class="badge badge-warning badge-outline badge-xs shrink-0" title={gettext("Saved when you press Save")}>
+      {gettext("not saved")}
+    </span>
+    """
+  end
+
+  defp subtask_done?(sub, ticks), do: Map.get(ticks, sub.uuid, sub.status == "done")
+  #
+  # In the edit form nothing is written until Save: the parts that are
+  # records of their own (what the task waits on, where it sits, its
+  # subtasks, its files) are held here, shown as they will be, written by
+  # Save (`apply_held/1`) and dropped by Close / Cancel (`discard_held/1`).
+  # A file still uploads at once, so Save stays quick, but one uploaded
+  # in this sitting is removed again if the form is left unsaved. Logging
+  # time and the portal switches stay immediate: each is its own button.
+
+  defp assign_held(socket) do
+    assign(socket,
+      held_dep_adds: [],
+      held_dep_removes: [],
+      held_dep_items: %{},
+      held_parent: :keep,
+      held_subtasks: [],
+      held_ticks: %{},
+      session_files: []
+    )
+  end
+
+  # A pick or a × on "Waits on": undoes its opposite if that is held,
+  # else is held itself.
+  defp hold_dep(socket, kind, uuid) do
+    %{held_dep_adds: adds, held_dep_removes: removes} = socket.assigns
+    saved? = Enum.any?(socket.assigns[:assignment_deps] || [], &(&1.depends_on_uuid == uuid))
+
+    # Only a task the select offers is held (the posted value is the
+    # browser's: itself, another project's task, a made-up uuid).
+    kind =
+      if kind == :add,
+        do:
+          {:add, Enum.any?(socket.assigns[:available_assignment_deps] || [], &(&1.uuid == uuid))},
+        else: kind
+
+    {adds, removes} = held_dep_lists(kind, uuid, saved?, adds, removes)
+
+    socket
+    |> assign(
+      held_dep_adds: adds,
+      held_dep_removes: removes,
+      held_dep_items: Map.merge(socket.assigns.held_dep_items, dep_items(socket, [uuid]))
+    )
+    |> WebHelpers.mark_dirty()
+  end
+
+  defp held_dep_lists({:add, offered?}, uuid, saved?, adds, removes) do
+    cond do
+      uuid in removes -> {adds, removes -- [uuid]}
+      saved? or uuid in adds or not offered? -> {adds, removes}
+      true -> {adds ++ [uuid], removes}
+    end
+  end
+
+  defp held_dep_lists(:remove, uuid, saved?, adds, removes) do
+    cond do
+      uuid in adds -> {adds -- [uuid], removes}
+      saved? and uuid not in removes -> {adds, removes ++ [uuid]}
+      true -> {adds, removes}
+    end
+  end
+
+  defp dep_items(socket, uuids) do
+    known =
+      Enum.map(socket.assigns[:assignment_deps] || [], & &1.depends_on) ++
+        (socket.assigns[:available_assignment_deps] || [])
+
+    for %Assignment{uuid: u} = a <- known, u in uuids, into: %{}, do: {u, a}
+  end
+
+  @doc false
+  # "Waits on" as it will be after Save: `{uuid, assignment, state}` with
+  # state `:saved`, `:adding` or `:removing` (shown struck through; picking
+  # it again, or its undo, takes the removal back).
+  def shown_deps(assigns) do
+    removes = assigns[:held_dep_removes] || []
+    items = assigns[:held_dep_items] || %{}
+
+    saved =
+      for dep <- assigns[:assignment_deps] || [] do
+        state = if dep.depends_on_uuid in removes, do: :removing, else: :saved
+        {dep.depends_on_uuid, dep.depends_on, state}
+      end
+
+    adds = for u <- assigns[:held_dep_adds] || [], a = items[u], a, do: {u, a, :adding}
+    saved ++ adds
+  end
+
+  @doc false
+  def dep_choices(assigns) do
+    adds = assigns[:held_dep_adds] || []
+    Enum.reject(assigns[:available_assignment_deps] || [], &(&1.uuid in adds))
+  end
+
+  # Save: what was held, written, each with the log a direct change had.
+  defp apply_held(socket) do
+    socket
+    |> apply_held_parent()
+    |> apply_held_deps()
+    |> apply_held_subtasks()
+    |> assign(session_files: [])
+  end
+
+  defp apply_held_deps(%{assigns: %{held_dep_adds: [], held_dep_removes: []}} = socket),
+    do: socket
+
+  defp apply_held_deps(socket) do
+    %{held_dep_adds: adds, held_dep_removes: removes, held_dep_items: items} = socket.assigns
+    a_uuid = socket.assigns.assignment.uuid
+
+    Enum.each(removes, fn dep_uuid ->
+      log_dep(
+        socket,
+        "projects.dependency_removed",
+        dep_uuid,
+        Projects.remove_dependency(a_uuid, dep_uuid)
+      )
+    end)
+
+    refused =
+      for dep_uuid <- adds,
+          result = Projects.add_dependency(a_uuid, dep_uuid),
+          log_dep(socket, "projects.dependency_added", dep_uuid, result) == :failed,
+          do: Assignment.label(items[dep_uuid], L10n.current_content_lang())
+
+    socket = assign(socket, held_dep_adds: [], held_dep_removes: [], held_dep_items: %{})
+
+    case refused do
+      [] ->
+        socket
+
+      names ->
+        put_flash(
+          socket,
+          :error,
+          gettext("Could not make it wait on %{tasks}.",
+            tasks: Enum.map_join(names, ", ", &"“#{&1}”")
+          )
+        )
+    end
+  end
+
+  defp log_dep(socket, action, dep_uuid, result) do
+    opts = [
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "assignment",
+      resource_uuid: socket.assigns.assignment.uuid,
+      metadata: %{"depends_on_uuid" => dep_uuid}
+    ]
+
+    case result do
+      {:ok, _} ->
+        Activity.log(action, opts)
+        :ok
+
+      _ ->
+        Activity.log_failed(action, opts)
+        :failed
+    end
+  end
+
+  defp apply_held_parent(
+         %{assigns: %{held_parent: {:set, parent}, assignment: %Assignment{} = a}} = socket
+       ) do
+    socket
+    |> assign(held_parent: :keep)
+    |> move_to(a, parent)
+  end
+
+  defp apply_held_parent(socket), do: assign(socket, held_parent: :keep)
+
+  defp apply_held_subtasks(%{assigns: %{held_subtasks: [], held_ticks: ticks}} = socket)
+       when map_size(ticks) == 0,
+       do: socket
+
+  defp apply_held_subtasks(%{assigns: %{assignment: %Assignment{} = parent}} = socket) do
+    %{held_subtasks: titles, held_ticks: ticks} = socket.assigns
+
+    if titles != [] and may?(socket, :create_tasks) do
+      Enum.each(titles, fn {_key, title} -> create_subtask(socket, parent, title) end)
+    end
+
+    if map_size(ticks) > 0 and may?(socket, :update_status) do
+      Enum.each(ticks, fn {uuid, done?} -> tick_subtask(socket, parent, uuid, done?) end)
+    end
+
+    Projects.recompute_project_completion(socket.assigns.project.uuid)
+    assign(socket, held_subtasks: [], held_ticks: %{})
+  end
+
+  defp apply_held_subtasks(socket), do: assign(socket, held_subtasks: [], held_ticks: %{})
+
+  defp create_subtask(socket, parent, title) do
+    case Projects.create_task_with_assignment(
+           socket.assigns.project.uuid,
+           %{"title" => title, "ad_hoc" => true},
+           %{}
+         ) do
+      {:ok, %{assignment: a}} ->
+        Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
+        log_subtask_act(socket, "projects.assignment_created", a.uuid, %{"parent" => parent.uuid})
+        _ = Outline.move(a, parent.uuid, :last)
+
+      _ ->
+        log_subtask_act(
+          socket,
+          "projects.assignment_created",
+          nil,
+          %{"parent" => parent.uuid},
+          :failed
+        )
+    end
+  end
+
+  # A tick as it was asked, against the row as stored now: a subtask
+  # already in that state (someone else ticked it meanwhile) is left alone.
+  defp tick_subtask(socket, parent, uuid, done?) do
+    case Projects.get_assignment(uuid) do
+      %Assignment{parent_uuid: p, child_project_uuid: nil} = sub when p == parent.uuid ->
+        write_tick(socket, sub, done?)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp write_tick(socket, %Assignment{status: status} = sub, true) when status != "done" do
+    result = Projects.complete_assignment(sub, Activity.actor_uuid(socket))
+    outcome = if match?({:ok, _}, result), do: :ok, else: :failed
+    log_subtask_act(socket, "projects.assignment_completed", sub.uuid, %{}, outcome)
+  end
+
+  defp write_tick(socket, %Assignment{status: "done"} = sub, false) do
+    result = Projects.reopen_assignment(sub)
+    outcome = if match?({:ok, _}, result), do: :ok, else: :failed
+    log_subtask_act(socket, "projects.assignment_reopened", sub.uuid, %{}, outcome)
+  end
+
+  defp write_tick(_socket, _sub, _done?), do: :ok
+
+  # Close / Cancel: nothing held is written, and a file uploaded in this
+  # sitting goes again (it would otherwise stay on the task unsaved).
+  defp discard_held(socket) do
+    Enum.each(socket.assigns[:session_files] || [], &discard_session_file(socket, &1))
+
+    socket
+    |> assign_held()
+    |> assign(pending_file_removals: [])
+  end
+
+  defp discard_session_file(socket, file_uuid) do
+    case Attachments.remove_task_file(
+           socket.assigns.assignment,
+           file_uuid,
+           Activity.actor_uuid(socket)
+         ) do
+      :ok -> log_task_file(socket, "projects.task_file_removed", file_uuid, nil)
+      _ -> log_task_file_failed(socket, "projects.task_file_removed", file_uuid)
+    end
+  rescue
+    _ -> :ok
+  end
+
   # ── Tasks under tasks ──────────────────────────────────────────────
 
   # The "Sits under" choices (every task of the project but this one and
@@ -2733,9 +3151,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     _ -> :ok
   end
 
-  # The "Sits under" select changed on a task being edited: moved at once
-  # (with its branch), not on the autosave — where a task sits is not a
-  # field of the row, it is its place in the list.
+  # The "Sits under" select changed on a task being edited: held until
+  # Save (the boss, 2026-11-18 — the task moved in the list behind the
+  # popup before Save was pressed), then moved with its branch
+  # (`apply_held/1`). Back to where it sits now, nothing is held.
   defp maybe_move(socket, %{"parent_task" => choice}) when is_binary(choice) do
     parent = if choice == "", do: nil, else: choice
 
@@ -2747,9 +3166,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         subtasks_on?: true
       }
       when current != parent ->
-        if WriteGate.allowed?(socket),
-          do: move_to(socket, a, parent),
-          else: WriteGate.refuse(socket)
+        held = if parent == a.parent_uuid, do: :keep, else: {:set, parent}
+
+        socket
+        |> assign(parent_task: parent, held_parent: held)
+        |> WebHelpers.mark_dirty()
 
       %{live_action: :new} ->
         assign(socket, parent_task: parent)
@@ -3017,6 +3438,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         {:noreply,
          socket
+         |> apply_held()
          |> put_flash(:info, gettext("Sub-project updated."))
          |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
            kind: :assignment,
@@ -4094,54 +4516,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  defp do_add_assignment_dep(dep_uuid, socket) do
-    case Projects.add_dependency(socket.assigns.assignment.uuid, dep_uuid) do
-      {:ok, _} ->
-        Activity.log("projects.dependency_added",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        reload_deps(socket)
-
-      {:error, _} ->
-        Activity.log_failed("projects.dependency_added",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        {:noreply, put_flash(socket, :error, gettext("Could not add dependency."))}
-    end
-  end
-
-  defp do_remove_assignment_dep(dep_uuid, socket) do
-    case Projects.remove_dependency(socket.assigns.assignment.uuid, dep_uuid) do
-      {:ok, _} ->
-        Activity.log("projects.dependency_removed",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        reload_deps(socket)
-
-      {:error, _} ->
-        Activity.log_failed("projects.dependency_removed",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
-    end
-  end
-
   defp do_set_sp_mode(mode, socket) do
     {:noreply, assign(socket, sp_mode: mode)}
   end
@@ -4576,19 +4950,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp unlocks(_project, _assignment), do: []
 
-  defp reload_deps(socket) do
-    {:noreply,
-     assign(socket,
-       unlocks: unlocks(socket.assigns.project, socket.assigns.assignment),
-       assignment_deps: Projects.list_dependencies(socket.assigns.assignment.uuid),
-       available_assignment_deps:
-         Projects.available_dependencies(
-           socket.assigns.project.uuid,
-           socket.assigns.assignment.uuid
-         )
-     )}
-  end
-
   @impl true
   # A sub-project being edited, by someone who may change its settings: the
   # project's own form, with everything a project has (the boss,
@@ -4795,34 +5156,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 {gettext("Items in this project that must finish before this sub-project can start.")}
               </p>
               <%= if @live_action == :edit do %>
-                <ul :if={@assignment_deps != []} class="flex flex-col gap-1">
-                  <li :for={dep <- @assignment_deps} class="flex items-center gap-2 text-sm">
-                    <.assignment_status_badge status={dep.depends_on.status} size="xs" class="shrink-0" />
-                    <span class="truncate flex-1">{Assignment.label(dep.depends_on, sp_lang)}</span>
-                    <button
-                      type="button"
-                      phx-click="remove_assignment_dep"
-                      phx-value-uuid={dep.depends_on_uuid}
-                      phx-disable-with={gettext("Removing…")}
-                      class="btn btn-ghost btn-xs btn-circle hover:text-error"
-                      aria-label={gettext("Remove")}
-                    >
-                      <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
-                    </button>
-                  </li>
-                </ul>
-                <.select
-                  :if={@available_assignment_deps != []}
-                  name="depends_on_uuid"
-                  label={gettext("Add dependency")}
-                  value=""
-                  options={Enum.map(@available_assignment_deps, &{Assignment.label(&1, sp_lang), &1.uuid})}
+                <.held_waits_on
+                  rows={shown_deps(assigns)}
+                  choices={dep_choices(assigns)}
+                  lang={sp_lang}
                   prompt={gettext("Select")}
-                  phx-change="add_assignment_dep"
+                  empty={gettext("No other items in this project to depend on.")}
                 />
-                <p :if={@assignment_deps == [] and @available_assignment_deps == []} class="text-sm text-base-content/50">
-                  {gettext("No other items in this project to depend on.")}
-                </p>
               <% else %>
                 <% by_uuid = Map.new(@pending_dep_options, &{&1.uuid, &1}) %>
                 <% pending = for u <- @pending_dep_uuids, a = Map.get(by_uuid, u), a, do: {u, a} %>
@@ -5310,6 +5650,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               label={gettext("Sits under")}
               options={[{gettext("Nothing — a top-level task"), ""} | @parent_options]}
             />
+            <p
+              :if={@live_action == :edit and @held_parent != :keep}
+              class="-mt-2 text-xs text-warning flex items-center gap-1"
+              data-held="parent"
+            >
+              <.icon name="hero-clock" class="w-3.5 h-3.5" /> {gettext("Moved when you press Save")}
+            </p>
 
             <%!-- The task's subtasks: ticked here, opened here, and added by
                  typing a line and pressing Enter (the inputs belong to a
@@ -5321,8 +5668,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             >
               <legend class="px-1 text-sm font-medium">
                 {gettext("Subtasks")}
-                <span :if={@subtasks != []} class="text-base-content/50 font-normal">
-                  {Enum.count(@subtasks, &(&1.status == "done"))}/{length(@subtasks)}
+                <span :if={@subtasks != [] or @held_subtasks != []} class="text-base-content/50 font-normal">
+                  {Enum.count(@subtasks, &subtask_done?(&1, @held_ticks))}/{length(@subtasks) + length(@held_subtasks)}
                 </span>
               </legend>
               <ul class="flex flex-col gap-1 mb-2">
@@ -5336,7 +5683,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     type="checkbox"
                     form={"assignment-subtask-form-#{@dom}"}
                     class="checkbox checkbox-sm checkbox-success"
-                    checked={sub.status == "done"}
+                    checked={subtask_done?(sub, @held_ticks)}
                     phx-click="subtask_toggle"
                     phx-value-uuid={sub.uuid}
                     aria-label={AssignmentStatusBadge.label("done")}
@@ -5353,13 +5700,34 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     emit={{PhoenixKitProjects.Web.AssignmentFormLive,
                       %{"live_action" => "edit", "project_id" => @project.uuid, "id" => sub.uuid}}}
                     embed_mode={@embed_mode}
-                    class={["link link-hover truncate flex-1 text-left", sub.status == "done" && "line-through text-base-content/50"]}
+                    class={["link link-hover truncate flex-1 text-left", subtask_done?(sub, @held_ticks) && "line-through text-base-content/50"]}
                   >
                     {Assignment.label(sub, @current_lang)}
                   </.smart_link>
+                  <.not_saved :if={Map.has_key?(@held_ticks, sub.uuid)} />
                   <span :if={Map.get(@subtask_counts, sub.uuid)} class="text-xs text-base-content/50">
                     {Map.get(@subtask_counts, sub.uuid).done}/{Map.get(@subtask_counts, sub.uuid).total}
                   </span>
+                </li>
+                <%!-- Typed here, held until Save. --%>
+                <li
+                  :for={{key, title} <- @held_subtasks}
+                  id={"assignment-subtask-#{key}"}
+                  class="flex items-center gap-2 text-sm"
+                  data-held="subtask"
+                >
+                  <input type="checkbox" class="checkbox checkbox-sm" disabled aria-hidden="true" />
+                  <span class="truncate flex-1">{title}</span>
+                  <.not_saved />
+                  <button
+                    type="button"
+                    phx-click="subtask_drop_held"
+                    phx-value-key={key}
+                    class="btn btn-ghost btn-xs btn-circle hover:text-error"
+                    aria-label={gettext("Remove")}
+                  >
+                    <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+                  </button>
                 </li>
               </ul>
               <%!-- Re-keyed after each add: a fresh, empty input that takes
@@ -5397,11 +5765,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           role="tabpanel"
           class={["flex flex-col gap-4", @pane != "connections" && "hidden"]}
         >
-          <%!-- These write as they are made (records of their own), unlike
-               the fields above, which wait for Save. --%>
+          <%!-- Held like every field of the form (the boss, 2026-11-18):
+               written by Save, dropped by Close. --%>
           <p :if={@live_action == :edit} class="text-xs text-base-content/60 flex items-center gap-1.5">
-            <.icon name="hero-bolt" class="w-3.5 h-3.5 shrink-0" />
-            {gettext("Saved as soon as you add them — Close does not undo these.")}
+            <.icon name="hero-information-circle" class="w-3.5 h-3.5 shrink-0" />
+            {gettext("Saved with the task when you press Save — Close drops these changes.")}
           </p>
           <%!-- The picker uses `phx-change` on its own `<.select>` (a form
                inside a form is not HTML); it overrides the form's
@@ -5416,34 +5784,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             </p>
 
             <%= if @live_action == :edit do %>
-              <ul :if={@assignment_deps != []} class="flex flex-col gap-1">
-                <li :for={dep <- @assignment_deps} class="flex items-center gap-2 text-sm">
-                  <.assignment_status_badge status={dep.depends_on.status} size="xs" class="shrink-0" />
-                  <span class="truncate flex-1">{Assignment.label(dep.depends_on, lang)}</span>
-                  <button
-                    type="button"
-                    phx-click="remove_assignment_dep"
-                    phx-value-uuid={dep.depends_on_uuid}
-                    phx-disable-with={gettext("Removing…")}
-                    class="btn btn-ghost btn-xs btn-circle hover:text-error"
-                    aria-label={gettext("Remove")}
-                  >
-                    <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
-                  </button>
-                </li>
-              </ul>
-              <.select
-                :if={@available_assignment_deps != []}
-                name="depends_on_uuid"
-                label={gettext("Add dependency")}
-                value=""
-                options={Enum.map(@available_assignment_deps, &{Assignment.label(&1, lang), &1.uuid})}
+              <.held_waits_on
+                rows={shown_deps(assigns)}
+                choices={dep_choices(assigns)}
+                lang={lang}
                 prompt={gettext("Select task")}
-                phx-change="add_assignment_dep"
+                empty={gettext("No other tasks in this project to depend on.")}
               />
-              <p :if={@assignment_deps == [] and @available_assignment_deps == []} class="text-sm text-base-content/50">
-                {gettext("No other tasks in this project to depend on.")}
-              </p>
             <% else %>
               <% by_uuid = Map.new(@pending_dep_options, &{&1.uuid, &1}) %>
               <% pending = for u <- @pending_dep_uuids, a = Map.get(by_uuid, u), a, do: {u, a} %>
@@ -5498,11 +5845,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           role="tabpanel"
           class={["flex flex-col gap-4", @pane != "more" && "hidden"]}
         >
-          <%!-- These write as they are made (records of their own), unlike
-               the fields above, which wait for Save. --%>
+          <%!-- Logging time is its own button and is written at once; the
+               files wait for Save like the rest of the form (the boss,
+               2026-11-18). --%>
           <p :if={@live_action == :edit} class="text-xs text-base-content/60 flex items-center gap-1.5">
-            <.icon name="hero-bolt" class="w-3.5 h-3.5 shrink-0" />
-            {gettext("Saved as soon as you add them — Close does not undo these.")}
+            <.icon name="hero-information-circle" class="w-3.5 h-3.5 shrink-0" />
+            {gettext("Logged time is saved at once. Files are saved with the task when you press Save — Close drops them.")}
           </p>
             <%!-- The task's time, in one box: what people logged, what an
                  agent reported for itself (it sends its own time and tokens
@@ -5628,6 +5976,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               files={@task_files}
               urls={@task_file_urls}
               remove_event="remove_task_file"
+              removing={Enum.map(@pending_file_removals, &elem(&1, 0))}
             />
             <label class="flex flex-col items-center justify-center gap-1 rounded-box border border-dashed border-base-300 px-3 py-4 text-sm text-base-content/60 cursor-pointer hover:bg-base-200/50">
               <.icon name="hero-arrow-up-tray" class="w-5 h-5" />

@@ -114,8 +114,18 @@ defmodule PhoenixKitProjects.Web.WriteGateTest do
           "settings" => %{"authz" => %{"edit_tasks" => "managers"}}
         })
 
-      html =
+      # The move is held in the form until Save (the boss, 2026-11-18);
+      # Save is the write, and it is refused.
+      _ =
         render_change(view, "validate", %{
+          "assignment" => %{"estimated_duration" => "2"},
+          "parent_task" => parent.uuid
+        })
+
+      assert Projects.get_assignment(a.uuid).parent_uuid == nil
+
+      html =
+        render_submit(view, "save", %{
           "assignment" => %{"estimated_duration" => "2"},
           "parent_task" => parent.uuid
         })

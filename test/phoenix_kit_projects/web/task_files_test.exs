@@ -39,6 +39,28 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
     {:ok, conn: put_test_scope(conn, fake_scope(user_uuid: me)), me: me, project: project, a: a}
   end
 
+  # A picture pasted into the edit form's description: stored at once,
+  # like an upload (the test endpoint carries no upload channel).
+  defp paste!(view, html) do
+    [id] =
+      Regex.run(~r/data-description-editor="(assignment-description--[^"]+)"/, html,
+        capture: :all_but_first
+      )
+
+    send(
+      view.pid,
+      {:leaf_paste_image,
+       %{
+         editor_id: id,
+         data_url: "data:image/png;base64," <> Base.encode64(@png),
+         name: "shot.png",
+         mime: "image/png"
+       }}
+    )
+
+    render(view)
+  end
+
   defp tmp(bytes) do
     path = Path.join(System.tmp_dir!(), "pkp-test-#{System.unique_integer([:positive])}")
     File.write!(path, bytes)
@@ -217,7 +239,12 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
     assert html =~ "Remove this file from the task?"
     assert [_] = Attachments.list_task_files(ctx.a.uuid)
 
-    render_click(view, "confirm_action_ok", %{})
+    # confirmed, it is struck through and held until Save
+    html = render_click(view, "confirm_action_ok", %{})
+    assert html =~ ~s(data-removing="1")
+    assert [_] = Attachments.list_task_files(ctx.a.uuid)
+
+    view |> form("#assignment-form") |> render_submit()
     assert Attachments.list_task_files(ctx.a.uuid) == []
 
     assert_activity_logged("projects.task_file_removed",
@@ -322,9 +349,11 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
       {:ok, view, _} =
         live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
 
-      # a file of the task (not in the text) goes at once and leaves the text alone
+      # a file of the task (not in the text) is held until Save and leaves
+      # the text alone
       render_click(view, "remove_task_file", %{"uuid" => other.uuid})
       assert Projects.get_assignment(ctx.a.uuid).description =~ "pkfile:"
+      assert [_] = Attachments.list_task_files(ctx.a.uuid, inline: false)
 
       # a picture of the text: out of the text now, the file itself and the
       # text saved together with Save (Close would keep both)
@@ -334,6 +363,24 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
 
       assert Projects.get_assignment(ctx.a.uuid).description == "Before  after"
       assert Attachments.list_task_files(ctx.a.uuid, inline: true) == []
+      assert Attachments.list_task_files(ctx.a.uuid, inline: false) == []
+    end
+
+    test "a file stored in an edit left unsaved goes again; Save keeps it", ctx do
+      path = "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit"
+
+      # stored at once (Save stays quick), but the task's only once saved
+      {:ok, view, html} = live(ctx.conn, path)
+      paste!(view, html)
+      assert [_] = Attachments.list_task_files(ctx.a.uuid)
+      assert :sys.get_state(view.pid).socket.assigns.dirty?
+      render_click(view, "close_form", %{})
+      assert Attachments.list_task_files(ctx.a.uuid) == []
+
+      {:ok, view, html} = live(ctx.conn, path)
+      paste!(view, html)
+      view |> form("#assignment-form") |> render_submit()
+      assert [_] = Attachments.list_task_files(ctx.a.uuid)
     end
 
     test "an open view of the task hears of a file added or removed", ctx do
