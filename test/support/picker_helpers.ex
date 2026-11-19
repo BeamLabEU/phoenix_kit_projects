@@ -1,0 +1,40 @@
+defmodule PhoenixKitProjects.PickerHelpers do
+  @moduledoc """
+  Drives core's people picker (`PhoenixKitWeb.Components.PeoplePicker`) in a
+  form's LiveView test: its events are the LiveComponent's own, so they are
+  sent to it with `with_target/2` on the picker's id (`"assignment-assignee"`,
+  `"project-assignee"`, `"subproject-assignee"`, `"task-default-assignee"`).
+  The change reaches the form through the parent's `handle_info/2`, as in a
+  browser; `render/1` after each call shows it.
+  """
+
+  import Phoenix.LiveViewTest
+
+  @doc "A pick, as a row of the lists: adds it (or asks first, for an account)."
+  def pick(view, id, kind, uuid),
+    do: view |> with_target("##{id}") |> render_click("toggle", %{"kind" => kind, "uuid" => uuid})
+
+  @doc "The chip's ✕."
+  def remove(view, id, kind, uuid),
+    do: view |> with_target("##{id}") |> render_click("remove", %{"kind" => kind, "uuid" => uuid})
+
+  @doc "A Recent chip."
+  def recent(view, id, kind, uuid),
+    do: view |> with_target("##{id}") |> render_click("recent", %{"kind" => kind, "uuid" => uuid})
+
+  @doc "\"Assign to me\"."
+  def me(view, id), do: view |> with_target("##{id}") |> render_click("me", %{})
+
+  @doc "The Yes of the staff-record question."
+  def confirm(view, id), do: view |> with_target("##{id}") |> render_click("confirm", %{})
+
+  @doc "The question's Cancel."
+  def cancel(view, id), do: view |> with_target("##{id}") |> render_click("cancel_confirm", %{})
+
+  @doc "Typing in the search field (the debounce is the browser's)."
+  def query(view, id, text),
+    do: view |> with_target("##{id}") |> render_keyup("query", %{"value" => text})
+
+  @doc "Focusing the search field: the opening lists."
+  def open(view, id), do: view |> with_target("##{id}") |> render_focus("open", %{})
+end

@@ -18,8 +18,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   import PhoenixKitProjects.Web.Components.TimeInput, only: [datetime_input: 1]
   import PhoenixKitProjects.Web.Components.TaskFiles, only: [task_files: 1]
 
-  import PhoenixKitProjects.Web.Components.AssigneePicker,
-    only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
+  import PhoenixKitProjects.Web.Components.AssigneeField, only: [assignee_field: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts,
     only: [form_header: 1, form_tabs: 1, form_pane: 1, words_block: 1]
@@ -45,7 +44,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.Components.AccessPanel
-  alias PhoenixKitProjects.Web.Components.{AssigneePicker, FormParts, TimeInput}
+  alias PhoenixKitProjects.Web.Components.{AssigneeField, FormParts, TimeInput}
   alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Components.DescriptionEditor
   alias PhoenixKitProjects.Web.DescriptionImages
@@ -53,7 +52,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   import PhoenixKitProjects.Web.Components.DescriptionEditor,
     only: [description_editor: 1, description_value: 4]
 
-  @picker_events AssigneePicker.events()
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.OutlineList
@@ -625,7 +623,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end)
   end
 
-  # ── The assignee picker (`Web.Components.AssigneePicker`) ──────────
+  # ── The assignee picker (`Web.Components.AssigneeField`) ──────────
 
   # A project has any number of assignees (V30), as a task: the picker
   # adds, ✕ removes (the boss, 2026-11-03).
@@ -633,7 +631,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     project = socket.assigns[:project]
 
     socket
-    |> AssigneePicker.init(project,
+    |> AssigneeField.init(project,
       can_assign?: picker_allowed?(socket),
       source: "project_form"
     )
@@ -641,12 +639,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{source: cs}}} = socket),
-    do: AssigneePicker.set_selected(socket, AssigneePicker.changeset_keys(cs))
+    do: AssigneeField.set_selected(socket, AssigneeField.changeset_keys(cs))
 
   defp refresh_assignee_chip(socket), do: socket
 
   @doc false
-  # `AssigneePicker` callback: whoever may save this form may say whose the
+  # `AssigneeField` callback: whoever may save this form may say whose the
   # project is, while the project's assignees are on.
   def picker_allowed?(socket) do
     write_allowed?(socket) and
@@ -662,12 +660,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   @doc false
-  # `AssigneePicker` callback: the whole new list into the form, as if
+  # `AssigneeField` callback: the whole new list into the form, as if
   # posted (saved with Save).
   def picker_set(socket, keys) do
     attrs =
       (socket.assigns.form.params || %{})
-      |> Map.put("assignees", AssigneePicker.posted(keys))
+      |> Map.put("assignees", AssigneeField.posted(keys))
       |> merge_attrs(socket)
 
     cs =
@@ -906,10 +904,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   def handle_event("set_form_pane", _params, socket), do: {:noreply, socket}
 
-  # The assignee picker (`Web.Components.AssigneePicker`).
-  def handle_event(event, params, socket) when event in @picker_events,
-    do: AssigneePicker.handle_event(event, params, socket, __MODULE__)
-
   # A cued section reports itself when the reader opens it. From then on
   # its baseline is what they just saw.
   def handle_event(unquote(ChangeCue.seen_event()), %{"region" => region}, socket) do
@@ -1077,7 +1071,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         # cementing, history and broadcasts).
         |> Map.drop(@server_owned)
         |> merge_attrs(socket)
-        |> AssigneePicker.vet_posted(socket.assigns.project)
+        |> AssigneeField.vet_posted(socket.assigns.project)
         |> maybe_apply_status_mode(params, project, fx)
         |> apply_project_type(params, project, socket.assigns[:can_manage_modules] == true)
         |> apply_new_completion(params, socket.assigns.live_action)
@@ -3232,24 +3226,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
             <%!-- Whose it is (V30: any number of people, teams and
                  departments, as a task's): the task popup's picker. --%>
-            <.assignee_multi_picker
+            <.assignee_field
               :if={@fx.assignees}
               id="project-assignee"
-              label={gettext("Assignees")}
-              search_form="project-assignee-form"
               name="project[assignees][]"
+              label={gettext("Assignees")}
               selected={@assignee_selected}
-              rows={@assignee_rows}
-              can_assign?={@can_assign?}
-              my_person_uuid={@my_person_uuid}
-              recent={@recent_assignees}
-              notice={@assignee_notice}
-              view={@assignee_view}
-              home={@assignee_home}
-              more?={not is_nil(@assignee_cursor)}
-              none?={@assignee_seen == %{}}
-              open?={@assignee_open?}
-              streams={@streams}
+              can_assign={@can_assign?}
+              project_uuid={@assignee_project_uuid}
+              source={@assignee_source}
+              viewer_uuid={@assignee_viewer_uuid}
             />
 
             <%!-- The project's files (item 47), as the task popup's More
@@ -3613,7 +3599,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
            phx-submit never fires and its submit button posts the OUTER
            form, which here would CREATE the project. --%>
       <.add_participant_dialog open={@add_open} role={@add_role} staged={@add_staged} />
-      <.assignee_picker_outside search_form="project-assignee-form" staff_confirm={@staff_confirm} />
 
       <%!--
         AI translate modal lives OUTSIDE the project form on purpose
@@ -3631,6 +3616,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # The description editor (Leaf): its text into the form, as if the field
   # had posted it; `@` and `#` suggestions as the textarea offered them.
   @impl true
+  # The assignee picker's new list (core's `PeoplePicker`): taken only while
+  # the viewer may assign now (`AssigneeField.handle_info/3`).
+  def handle_info({PhoenixKitWeb.Components.PeoplePicker, _id, {:changed, _}} = msg, socket),
+    do: AssigneeField.handle_info(msg, socket, __MODULE__)
+
   def handle_info({:leaf_changed, _} = msg, socket) do
     case DescriptionEditor.changed(msg) do
       {"project-description", lang, markdown} ->

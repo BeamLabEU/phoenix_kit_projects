@@ -24,8 +24,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   import PhoenixKitProjects.Web.Components.TimeInput, only: [datetime_input: 1, clock_input: 1]
   import PhoenixKitProjects.Web.Components.DurationInput, only: [duration_input: 1]
 
-  import PhoenixKitProjects.Web.Components.AssigneePicker,
-    only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
+  import PhoenixKitProjects.Web.Components.AssigneeField, only: [assignee_field: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts
   import PhoenixKitProjects.Web.Components.TaskFiles, only: [task_files: 1]
@@ -62,7 +61,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias PhoenixKitProjects.Repeats
 
   alias PhoenixKitProjects.Web.Components.{
-    AssigneePicker,
+    AssigneeField,
     AssignmentStatusBadge,
     ConfirmAction,
     DescriptionEditor,
@@ -83,8 +82,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # The form's tabs (`@form_pane`).
   @panes ~w(task planning connections more subproject schedule settings)
-
-  @picker_events PhoenixKitProjects.Web.Components.AssigneePicker.events()
 
   # What the sub-project short editor draws: the words, whose it is and
   # its workflow status list (settings are folded in from their own
@@ -529,11 +526,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # the form's own three assignee fields — posted as hidden inputs, so a
   # pick saves like any other field — and the cards above the search show it.
 
-  # The shared picker (`Web.Components.AssigneePicker`): the viewer's staff
+  # The shared picker (`Web.Components.AssigneeField`): the viewer's staff
   # person, the Recent chips (their own picks first) and the right to assign.
   defp assign_assignee_picker(socket) do
     socket
-    |> AssigneePicker.init(socket.assigns[:project],
+    |> AssigneeField.init(socket.assigns[:project],
       can_assign?: can_assign?(socket),
       source: "task_form"
     )
@@ -584,19 +581,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp refresh_assignee_chip(
          %{assigns: %{kind: "subproject", sp_form: %Phoenix.HTML.Form{source: cs}}} = socket
        ),
-       do: AssigneePicker.set_selected(socket, AssigneePicker.changeset_keys(cs))
+       do: AssigneeField.set_selected(socket, AssigneeField.changeset_keys(cs))
 
   defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{} = f}} = socket),
-    do: AssigneePicker.set_selected(socket, form_assignee_keys(f))
+    do: AssigneeField.set_selected(socket, form_assignee_keys(f))
 
   defp refresh_assignee_chip(socket), do: socket
 
   @doc false
-  # `AssigneePicker` callback: the sub-project's whole new list (V30: a
+  # `AssigneeField` callback: the sub-project's whole new list (V30: a
   # project has any number too) into its form.
   def picker_set(%{assigns: %{kind: "subproject"}} = socket, keys) do
     sp_attrs =
-      Map.put(socket.assigns.sp_form.params || %{}, "assignees", AssigneePicker.posted(keys))
+      Map.put(socket.assigns.sp_form.params || %{}, "assignees", AssigneeField.posted(keys))
 
     socket
     |> assign(
@@ -606,7 +603,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   @doc false
-  # `AssigneePicker` callback (several assignees): the whole new list into
+  # `AssigneeField` callback (several assignees): the whole new list into
   # the task's form — saved as it is changed, as any field.
   def picker_set(socket, keys) do
     values = [""] ++ Enum.map(keys, fn {kind, uuid} -> "#{kind}:#{uuid}" end)
@@ -629,7 +626,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   @doc false
-  # `AssigneePicker` callback: asked of the project as it is now.
+  # `AssigneeField` callback: asked of the project as it is now.
   def picker_allowed?(socket) do
     with %Project{uuid: uuid} <- socket.assigns[:project],
          %Project{} = project <- Projects.get_project(uuid) do
@@ -2157,11 +2154,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   def handle_event("set_form_pane", _params, socket), do: {:noreply, socket}
 
-  # The assignee picker (`Web.Components.AssigneePicker`): its search, picks,
-  # Recent, "Assign to me" and the staff-record question.
-  def handle_event(event, params, socket) when event in @picker_events,
-    do: AssigneePicker.handle_event(event, params, socket, __MODULE__)
-
   def handle_event("deadline_preset", %{"preset" => preset}, socket) do
     case {socket.assigns.fx[:dates] != false, deadline_preset(preset)} do
       {true, at} when is_binary(at) -> {:noreply, put_form_attrs(socket, %{"deadline" => at})}
@@ -3236,7 +3228,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def write_events do
     ~w(save delete_task subtask_add subtask_toggle add_assignment_dep remove_assignment_dep
        toggle_board_published toggle_portal_public generate_default_statuses save_subproject
-       staff_create_confirm remove_task_file)
+       remove_task_file)
   end
 
   @doc false
@@ -4038,6 +4030,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # The description editors (Leaf): their text into the form being shown —
   # the task's (held until Save) or the sub-project's.
   @impl true
+  # The assignee picker's new list (core's `PeoplePicker`): taken only while
+  # the viewer may assign now (`AssigneeField.handle_info/3`).
+  def handle_info({PhoenixKitWeb.Components.PeoplePicker, _id, {:changed, _}} = msg, socket),
+    do: AssigneeField.handle_info(msg, socket, __MODULE__)
+
   def handle_info({:leaf_changed, _} = msg, socket) do
     case DescriptionEditor.changed(msg) do
       {"assignment-description", lang, markdown} ->
@@ -5113,24 +5110,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
             <%!-- The same picker as a task's (V30: the sub-project's own
                  assignees, any number, live on the child project). --%>
-            <.assignee_multi_picker
+            <.assignee_field
               :if={@fx.assignees}
               id="subproject-assignee"
-              label={gettext("Assignees")}
-              search_form={"subproject-assignee-form-#{@dom}"}
               name="subproject[assignees][]"
+              label={gettext("Assignees")}
               selected={@assignee_selected}
-              rows={@assignee_rows}
-              can_assign?={@can_assign?}
-              my_person_uuid={@my_person_uuid}
-              recent={@recent_assignees}
-              notice={@assignee_notice}
-              view={@assignee_view}
-              home={@assignee_home}
-              more?={not is_nil(@assignee_cursor)}
-              none?={@assignee_seen == %{}}
-              open?={@assignee_open?}
-              streams={@streams}
+              can_assign={@can_assign?}
+              project_uuid={@assignee_project_uuid}
+              source={@assignee_source}
+              viewer_uuid={@assignee_viewer_uuid}
             />
           </.form_pane>
 
@@ -5239,7 +5228,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </button>
         </div>
       </.form>
-      <.assignee_picker_outside search_form={"subproject-assignee-form-#{@dom}"} staff_confirm={@staff_confirm} />
       <%!-- The Close question of this form (`ConfirmAction.close/2`). --%>
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
@@ -5491,25 +5479,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                departments, all equal): ticked in lists — Recent, then five
                of each kind with "Browse more", or a search — and shown as
                chips. Posted as the form's `assignees` list. --%>
-          <.assignee_multi_picker
+          <.assignee_field
             :if={@fx.assignees}
             id="assignment-assignee"
-            me_id="assignment-assign-me"
-            label={gettext("Assignees")}
             name="assignment[assignees][]"
+            label={gettext("Assignees")}
             selected={@assignee_selected}
-            rows={@assignee_rows}
-            view={@assignee_view}
-            home={@assignee_home}
-            more?={not is_nil(@assignee_cursor)}
-            none?={@assignee_seen == %{}}
-            open?={@assignee_open?}
-            streams={@streams}
-            search_form={"assignment-assignee-form-#{@dom}"}
-            can_assign?={@can_assign?}
-            my_person_uuid={@my_person_uuid}
-            recent={@recent_assignees}
-            notice={@assignee_notice}
+            can_assign={@can_assign?}
+            project_uuid={@assignee_project_uuid}
+            source={@assignee_source}
+            viewer_uuid={@assignee_viewer_uuid}
           />
 
           <%!-- The deadline: by when it has to be done — the one date that
@@ -6257,7 +6236,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       </form>
       <%!-- Owns the assignee search box, and asks before an assignment
            makes a staff record. --%>
-      <.assignee_picker_outside search_form={"assignment-assignee-form-#{@dom}"} staff_confirm={@staff_confirm} />
       <%!-- The shared confirm (`Components.ConfirmAction`): removing a file. --%>
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>

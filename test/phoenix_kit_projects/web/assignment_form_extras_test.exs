@@ -8,6 +8,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import PhoenixKitProjects.PickerHelpers
+
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitStaff.Schemas.{Department, Person, Team}
@@ -101,7 +103,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
-      render_click(view, "assignee_pick", %{"kind" => "team", "uuid" => uuid, "label" => "x"})
+      pick(view, "assignment-assignee", "team", uuid)
 
       _ =
         view
@@ -129,11 +131,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
-      render_click(view, "assignee_pick", %{
-        "kind" => "department",
-        "uuid" => uuid,
-        "label" => "x"
-      })
+      pick(view, "assignment-assignee", "department", uuid)
 
       _ =
         view
@@ -161,7 +159,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
-      render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => uuid, "label" => "x"})
+      pick(view, "assignment-assignee", "person", uuid)
 
       _ =
         view

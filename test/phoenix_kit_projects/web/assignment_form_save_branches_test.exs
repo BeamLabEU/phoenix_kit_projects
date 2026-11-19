@@ -8,6 +8,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import PhoenixKitProjects.PickerHelpers
+
   alias PhoenixKitProjects.{Assignees, Projects}
   alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitStaff.Schemas.Department
@@ -129,7 +131,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       # A library pick is a tick in the picker (item 27).
       render_click(view, "library_toggle", %{"uuid" => task.uuid})
 
-      render_click(view, "assignee_pick", %{"kind" => "department", "uuid" => dept.uuid})
+      pick(view, "assignment-assignee", "department", dept.uuid)
 
       {:error, {:live_redirect, _}} =
         view

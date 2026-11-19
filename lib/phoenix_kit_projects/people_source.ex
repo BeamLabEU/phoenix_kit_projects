@@ -8,9 +8,12 @@ defmodule PhoenixKitProjects.PeopleSource do
 
   Keys are `{kind, uuid}`: `"person"`, `"team"`, `"department"` — what a
   task, a project or a library task is assigned to — and `"user"`, an
-  account with no staff record. Picking a `"user"` asks first and, on Yes,
-  makes the staff record (`People.ensure_person_for_user/2`, logged as the
-  old picker did) and picks the person it became.
+  account with no staff record. Picking a `"user"` asks first; on Yes the
+  account's key is picked as it is, and the FORM makes the staff record
+  (`AssigneeField.handle_info/3` — after asking the viewer's right to
+  assign as it is now, which this source cannot see) and puts the person it
+  became in its place. An account whose staff record is in the trash is
+  refused with where to restore it.
 
   `ctx` takes `:project_uuid` (the project whose tasks Recent looks at) and
   `:source` (the activity's `source`, "task_form" by default), plus core's
@@ -21,6 +24,8 @@ defmodule PhoenixKitProjects.PeopleSource do
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.{Assignees, People}
 
   @kinds ~w(person team department)
@@ -48,7 +53,12 @@ defmodule PhoenixKitProjects.PeopleSource do
   def page(_view, _cursor, _limit, _ctx), do: {[], nil}
 
   @impl true
-  def describe({"user", uuid}, _ctx), do: uuid |> Assignees.describe_user() |> row()
+  def describe({"user", uuid}, _ctx) do
+    case Assignees.describe_user(uuid) do
+      %{} = r -> row(r)
+      nil -> trashed_account_row(uuid)
+    end
+  end
 
   def describe({kind, uuid}, ctx) when kind in @kinds,
     do: kind |> Assignees.describe(uuid, lang(ctx)) |> row()
@@ -58,7 +68,23 @@ defmodule PhoenixKitProjects.PeopleSource do
   # A new pick: a trashed person is offered nowhere, so a pick naming one
   # takes nobody; an account asks before a staff record is made for it.
   @impl true
-  def pick({"user", _uuid} = key, ctx) do
+  def pick({"user", uuid} = key, ctx) do
+    case trashed_person(uuid) do
+      %{} -> {:error, trashed_message(uuid, ctx)}
+      nil -> ask_staff(key, ctx)
+    end
+  end
+
+  def pick({kind, uuid} = key, _ctx) when kind in @kinds do
+    case Assignees.describe_pick(kind, uuid) do
+      %{} -> {:ok, key}
+      _ -> {:error, gettext("That person can no longer be picked.")}
+    end
+  end
+
+  def pick(_key, _ctx), do: {:error, gettext("That person can no longer be picked.")}
+
+  defp ask_staff(key, ctx) do
     case describe(key, ctx) do
       %{label: name} ->
         {:confirm,
@@ -77,28 +103,59 @@ defmodule PhoenixKitProjects.PeopleSource do
     end
   end
 
-  def pick({kind, uuid} = key, _ctx) when kind in @kinds do
-    case Assignees.describe_pick(kind, uuid) do
-      %{} -> {:ok, key}
+  # The Yes: the account itself is picked; the form makes its staff record
+  # once it has asked the viewer's right as it is now.
+  @impl true
+  def confirm({"user", uuid} = key, ctx) do
+    case {describe(key, ctx), trashed_person(uuid)} do
+      {_, %{}} -> {:error, trashed_message(uuid, ctx)}
+      {%{}, nil} -> {:ok, key}
       _ -> {:error, gettext("That person can no longer be picked.")}
     end
   end
 
-  def pick(_key, _ctx), do: {:error, gettext("That person can no longer be picked.")}
+  def confirm(_key, _ctx), do: {:error, gettext("That person can no longer be picked.")}
 
-  @impl true
-  def confirm({"user", uuid}, ctx) do
-    case People.ensure_person_for_user(uuid,
-           actor_uuid: ctx[:viewer_uuid],
-           source: ctx[:source] || "task_form"
-         ) do
-      {:ok, %{uuid: person_uuid}} -> {:ok, {"person", person_uuid}}
-      {:error, :trashed_person} -> {:error, gettext("Their staff record is in the trash.")}
-      {:error, _} -> {:error, gettext("Could not create the staff record.")}
+  # An account whose staff record is in the trash: still offered (its
+  # "Assign to me" says why it cannot be assigned), never picked.
+  defp trashed_person(uuid) when is_binary(uuid) do
+    case People.get_person_by_user_uuid(uuid) do
+      %{status: "trashed"} = person -> person
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp trashed_person(_uuid), do: nil
+
+  defp trashed_account_row(uuid) do
+    with %{} = person <- trashed_person(uuid),
+         {:ok, id} <- Ecto.UUID.cast(uuid),
+         %User{} = user <- RepoHelper.repo().get(User, id),
+         true <- People.assignable_user?(user) do
+      row(%{
+        kind: "user",
+        uuid: uuid,
+        label: person.name || People.new_person_name(user),
+        icon: "hero-user"
+      })
+    else
+      _ -> nil
     end
   end
 
-  def confirm(_key, _ctx), do: {:error, gettext("That person can no longer be picked.")}
+  defp trashed_message(uuid, ctx) do
+    if uuid == ctx[:viewer_uuid],
+      do:
+        gettext(
+          "Your staff record is in the trash; restore it under Staff → People to be assigned."
+        ),
+      else:
+        gettext(
+          "Their staff record is in the trash; restore it under Staff → People to assign them."
+        )
+  end
 
   # "Assign to me": the viewer's staff person, else their account (which
   # then asks to make the record).
@@ -106,8 +163,8 @@ defmodule PhoenixKitProjects.PeopleSource do
   def me(%{viewer_uuid: viewer}) when is_binary(viewer) do
     case People.get_person_by_user_uuid(viewer) do
       %{uuid: person_uuid, status: status} when status != "trashed" -> {"person", person_uuid}
-      %{} -> nil
-      nil -> if Assignees.describe_user(viewer), do: {"user", viewer}
+      # Trashed: the button stays and says why (`pick/2`).
+      _ -> {"user", viewer}
     end
   rescue
     _ -> nil
@@ -140,6 +197,8 @@ defmodule PhoenixKitProjects.PeopleSource do
       sublabel: r[:sublabel],
       icon: r[:icon],
       name: if(kind in ~w(person user), do: label),
+      # A team's or department's people follow it in a search, indented.
+      member?: is_binary(r[:id]) and String.contains?(r[:id], "-person-"),
       faces: faces(r[:faces])
     }
   end
