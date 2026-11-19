@@ -82,6 +82,7 @@ defmodule PhoenixKitProjects.Web.HubPermissionEnforcementTest do
         ctx.conn |> put_test_scope(ctx.owner) |> live(show_path(project))
 
       render_click(lv, "complete", %{"uuid" => ctx.assignment.uuid})
+      render_submit(lv, "next_up_confirm", %{"uuid" => ctx.assignment.uuid})
 
       assert Projects.get_assignment(ctx.assignment.uuid).status == "done"
     end
@@ -301,6 +302,7 @@ defmodule PhoenixKitProjects.Web.HubPermissionEnforcementTest do
         ctx.conn |> put_test_scope(assignee_scope) |> live(show_path(project))
 
       render_click(lv, "complete", %{"uuid" => assignment.uuid})
+      render_submit(lv, "next_up_confirm", %{"uuid" => assignment.uuid})
 
       assert Projects.get_assignment(assignment.uuid).status == "done",
              "the assignee was blocked from their own task"

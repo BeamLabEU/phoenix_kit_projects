@@ -103,8 +103,12 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       assert_reply(view, %{asked: true})
       assert Projects.get_assignment(parent.uuid).status == "waiting"
 
+      # Even the forced tick asks (Done always does); the confirm finishes it.
       render_hook(view, "outline_tick", %{"id" => parent.uuid, "done" => true, "force" => true})
-      assert_reply(view, %{asked: false})
+      assert_reply(view, %{asked: true})
+      assert Projects.get_assignment(child.uuid).status != "done"
+
+      render_submit(view, "next_up_confirm", %{"uuid" => parent.uuid})
       assert Projects.get_assignment(child.uuid).status == "done"
     end
 

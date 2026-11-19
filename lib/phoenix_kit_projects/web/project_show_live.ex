@@ -72,12 +72,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Labels,
     Ledger,
     ListControls,
+    Members,
     MoveLock,
+    Notices,
     Paths,
+    People,
     Portal,
     Projects,
     Statuses
   }
+
+  alias PhoenixKitProjects.AssigneeSet
+  alias PhoenixKitWeb.Components.PeoplePicker
 
   import PhoenixKitProjects.Web.Components.DescriptionEditor, only: [description_editor: 1]
 
@@ -791,6 +797,33 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # A picker of the "next up" dialog changed (the people to tell). Taken
+  # only while that dialog is open and the picker is one of its own; an
+  # addition (someone not there by default, who will be assigned) needs the
+  # right to assign, asked again now — a crafted change is ignored.
+  def handle_info(
+        {PeoplePicker, id, {:changed, keys}},
+        %{assigns: %{next_up: %{} = next_up}} = socket
+      )
+      when is_binary(id) and is_list(keys) do
+    keys = Enum.filter(keys, &match?({kind, uuid} when is_binary(kind) and is_binary(uuid), &1))
+
+    case next_up_picker(next_up, id) do
+      nil ->
+        {:noreply, socket}
+
+      {defaults, put} ->
+        if keys -- defaults != [] and not may_assign_now?(socket, next_up) do
+          {:noreply, put_flash(socket, :error, gettext("You may not assign people here."))}
+        else
+          next_up = put.(next_up, keys)
+          {:noreply, assign(socket, next_up: retag(socket, next_up))}
+        end
+    end
+  end
+
+  def handle_info({PeoplePicker, _id, _msg}, socket), do: {:noreply, socket}
+
   # `@` and `#` in the page's own dialog editors (the reopen reason, the
   # next-up comments); the comments component's editors are its own.
   def handle_info({:leaf_suggest, %{editor_id: "pkp-dialog-" <> _}} = msg, socket),
@@ -1405,8 +1438,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          ["complete"]
        )}
     else
-      # Asked first when the completion would hand work on: nothing is
-      # written — and nobody told — until "next up" is confirmed.
+      # Done always asks (the boss, 2026-11-18): a comment for the people
+      # told, who to tell, and what it lets start. Nothing is written — and
+      # nobody told — until it is confirmed.
       case a.status != "done" and next_up_for(socket, a, params) do
         %{} = next_up -> {:noreply, assign(socket, next_up: next_up)}
         _ -> socket |> complete_assignment(a, below) |> maybe_sync_and_reload()
@@ -1453,7 +1487,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> Handoffs.would_ready(a.uuid)
       |> Enum.flat_map(&List.wrap(Map.get(shown, &1.uuid)))
 
-    if rows != [], do: build_next_up(socket, :complete, a, rows, params["force"] == "1")
+    build_next_up(socket, :complete, a, rows, params["force"] == "1")
   end
 
   # `project` is the rows' project: this page's, or — for a sub-project
@@ -1478,10 +1512,226 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              comment: may_comment_next_up?(socket, scope, project, row)
            }}
         end),
-      recipients: next_up_recipients(socket, rows, project),
-      muted: %{},
       idle: []
     }
+    |> put_next_up_people(socket, project, mode, a, rows)
+  end
+
+  # Who each picker of the dialog starts with (the boss, 2026-11-18: the
+  # assignee picker replaces the tick boxes). Done: the task's creator (the
+  # people the task is for hear of it anyway). A task that can start: its
+  # people — a team's or department's members each — all of them shown,
+  # those who cannot open the project or have no login tagged, never
+  # dropped. Nobody is told of their own act.
+  defp put_next_up_people(next_up, socket, project, mode, a, rows) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    actor = Activity.actor_uuid(socket)
+    done = if mode == :complete, do: done_default_keys(a, actor), else: []
+    row_defaults = Map.new(rows, &{&1.uuid, row_default_keys(&1, project, actor)})
+
+    next_up
+    |> Map.merge(%{
+      can_assign: Authz.can?(scope, project, :assign_tasks),
+      done_keys: done,
+      done_defaults: done,
+      row_keys: row_defaults,
+      row_defaults: row_defaults,
+      tags: %{}
+    })
+    |> refresh_next_up_tags(socket, project, a, rows)
+  end
+
+  defp done_default_keys(%Assignment{created_by_uuid: creator}, actor)
+       when is_binary(creator) and creator != actor do
+    case People.get_person_by_user_uuid(creator) do
+      %{uuid: person_uuid, status: status} when status != "trashed" -> [{"person", person_uuid}]
+      _ -> [{"user", creator}]
+    end
+  end
+
+  defp done_default_keys(_a, _actor), do: []
+
+  defp row_default_keys(row, project, actor) do
+    row
+    |> assignee_holder()
+    |> AssigneeSet.keys()
+    |> Members.assignee_reach(project)
+    |> Enum.reject(&(is_binary(&1.user_uuid) and &1.user_uuid == actor))
+    |> Enum.map(&{"person", &1.uuid})
+    |> Enum.uniq()
+  end
+
+  # Who is who, and why they are in the list (the boss, 2026-11-18, item
+  # 22): tags on each chip, several where they apply. Read when the dialog
+  # opens and when a picker changes — never per render.
+  defp refresh_next_up_tags(next_up, socket, project, a, rows) do
+    actor = Activity.actor_uuid(socket)
+    roles = member_roles(project)
+
+    done_tags =
+      if next_up.mode == :complete,
+        do: %{
+          done_picker_id(a.uuid) =>
+            people_tags(next_up.done_keys, next_up.done_defaults, a, project, actor, roles,
+              assigned: gettext("Assigned to this task")
+            )
+        },
+        else: %{}
+
+    label =
+      if next_up.mode == :release,
+        do: gettext("Assigned to this task"),
+        else: gettext("Assigned to the next task")
+
+    row_tags =
+      Map.new(rows, fn row ->
+        {row_picker_id(row.uuid),
+         people_tags(
+           Map.get(next_up.row_keys, row.uuid, []),
+           Map.get(next_up.row_defaults, row.uuid, []),
+           row,
+           project,
+           actor,
+           roles,
+           assigned: label
+         )}
+      end)
+
+    Map.put(next_up, :tags, Map.merge(done_tags, row_tags))
+  end
+
+  defp people_tags(keys, defaults, task, project, actor, roles, opts) do
+    reach = keys |> Members.assignee_reach(project) |> Map.new(&{&1.uuid, &1})
+    direct = task |> assignee_holder() |> AssigneeSet.keys()
+    via = via_group(direct)
+    commenters = commenter_uuids(task)
+
+    Map.new(keys, fn key ->
+      {user, status} = key_reach(key, reach, project)
+
+      tags =
+        Enum.filter(
+          [
+            user && user == actor && gettext("You"),
+            role_tag(user && roles[user]),
+            user && user == Map.get(task, :created_by_uuid) && gettext("Created this task"),
+            assigned_tag(key, direct, via, opts[:assigned]),
+            user && MapSet.member?(commenters, user) && gettext("Commented here"),
+            key not in defaults && %{label: gettext("Added by you"), tone: :success},
+            status == :cannot_open &&
+              %{label: gettext("Not on this project — added when you confirm"), tone: :warning},
+            status == :no_login && %{label: gettext("No login yet"), tone: :warning}
+          ],
+          & &1
+        )
+
+      {key, tags}
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  defp key_reach({"person", uuid}, reach, _project) do
+    case reach[uuid] do
+      %{user_uuid: user, status: status} -> {user, status}
+      _ -> {nil, :ok}
+    end
+  end
+
+  defp key_reach({"user", user}, _reach, project),
+    do: {user, if(Notices.may_view?(user, project), do: :ok, else: :cannot_open)}
+
+  defp key_reach(_key, _reach, _project), do: {nil, :ok}
+
+  defp role_tag("owner"), do: %{label: gettext("Project owner"), tone: :info}
+  defp role_tag("manager"), do: %{label: gettext("Manager"), tone: :info}
+  defp role_tag("member"), do: gettext("Member")
+  defp role_tag(_), do: nil
+
+  defp assigned_tag({"person", uuid} = key, direct, via, label) do
+    cond do
+      key in direct -> label
+      group = via[uuid] -> gettext("Assigned through %{group}", group: group)
+      true -> nil
+    end
+  end
+
+  defp assigned_tag(key, direct, _via, label), do: if(key in direct, do: label)
+
+  # person uuid => the team or department of `keys` they are on.
+  defp via_group(keys) do
+    for {kind, uuid} = key <- keys,
+        kind in ~w(team department),
+        %{label: label} <- [Assignees.describe(kind, uuid)],
+        person <- People.people_for([key]),
+        reduce: %{} do
+      acc -> Map.put_new(acc, person.uuid, label)
+    end
+  end
+
+  defp member_roles(%Project{uuid: uuid}) do
+    Map.new(Members.list_members(uuid), &{&1.user_uuid, &1.role})
+  rescue
+    _ -> %{}
+  end
+
+  defp member_roles(_), do: %{}
+
+  defp commenter_uuids(%Assignment{uuid: uuid}) do
+    if Code.ensure_loaded?(PhoenixKitComments) do
+      "assignment"
+      |> PhoenixKitComments.list_comments(uuid)
+      |> Enum.flat_map(&List.wrap(Map.get(&1, :user_uuid)))
+      |> MapSet.new()
+    else
+      MapSet.new()
+    end
+  rescue
+    _ -> MapSet.new()
+  end
+
+  defp commenter_uuids(_), do: MapSet.new()
+
+  @doc false
+  def done_picker_id(task_uuid), do: "next-up-done-#{task_uuid}"
+
+  @doc false
+  def row_picker_id(row_uuid), do: "next-up-row-#{row_uuid}"
+
+  # Which list of the open dialog a picker id is: the Done picker, or one
+  # of its rows' — `{defaults, put}`, nil for anything else.
+  defp next_up_picker(%{mode: :complete, task_uuid: task} = next_up, id) do
+    if id == done_picker_id(task),
+      do: {next_up.done_defaults, &Map.put(&1, :done_keys, &2)},
+      else: row_picker(next_up, id)
+  end
+
+  defp next_up_picker(next_up, id), do: row_picker(next_up, id)
+
+  defp row_picker(next_up, id) do
+    Enum.find_value(next_up.uuids, fn uuid ->
+      if id == row_picker_id(uuid) do
+        {Map.get(next_up.row_defaults, uuid, []),
+         fn nu, keys -> %{nu | row_keys: Map.put(nu.row_keys, uuid, keys)} end}
+      end
+    end)
+  end
+
+  defp retag(socket, next_up) do
+    project =
+      next_up_project(socket, Map.get(next_up, :project_uuid, socket.assigns.project.uuid))
+
+    a = Projects.get_assignment(next_up.task_uuid)
+    refresh_next_up_tags(next_up, socket, project, a, next_up_rows_from(socket, next_up))
+  rescue
+    _ -> next_up
+  end
+
+  # The user accounts behind picker keys: a person's, a team's or a
+  # department's people's, an account's own.
+  defp keys_users(keys) do
+    {accounts, staff} = Enum.split_with(keys, &match?({"user", _}, &1))
+    Enum.uniq(Enum.map(accounts, &elem(&1, 1)) ++ People.user_uuids_for(staff))
   end
 
   # A sub-project row is released like a task (the boss, 2026-10-30).
@@ -1491,43 +1741,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp may_comment_next_up?(socket, scope, project, row),
     do: socket.assigns.comments_enabled and Authz.can?(scope, project, :comment, row)
 
-  # Who each task's notice would reach: its person, or its team's or
-  # department's people (`People.assignee_user_uuids/1`, the hand-off's own
-  # list), less the viewer (nobody hears of their own act) and anyone who
-  # may not open the project (`Notices.notify/3` would skip them anyway).
-  # Names read in one go, sorted.
-  defp next_up_recipients(socket, rows, project) do
-    actor = Activity.actor_uuid(socket)
-
-    by_row =
-      Map.new(rows, fn row ->
-        {row.uuid, PhoenixKitProjects.People.assignee_user_uuids(assignee_holder(row)) -- [actor]}
-      end)
-
-    visible =
-      by_row
-      |> Map.values()
-      |> List.flatten()
-      |> Enum.uniq()
-      |> Enum.filter(&PhoenixKitProjects.Notices.may_view?(&1, project))
-
-    names = user_names(visible)
-
-    Map.new(by_row, fn {uuid, users} ->
-      people =
-        for user <- users, user in visible do
-          %{uuid: user, name: Map.get(names, user) || gettext("Someone")}
-        end
-
-      {uuid, Enum.sort_by(people, &String.downcase(&1.name))}
-    end)
-  end
-
   # Whose a row is: a task's own fields, a sub-project's project's.
   defp assignee_holder(%Assignment{child_project: %Project{} = child}), do: child
   defp assignee_holder(row), do: row
-
-  defp user_names(uuids), do: PhoenixKitProjects.People.user_display_names(uuids)
 
   # The offered rows still on the page and still not started, in order.
   defp next_up_rows(nil, _assignments), do: []
@@ -1543,22 +1759,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp next_up_release?(%{idle: idle, can: can}, row),
     do: row.uuid not in idle and get_in(can, [row.uuid, :release]) == true
 
-  defp next_up_muted?(%{muted: muted}, row_uuid, user_uuid),
-    do: user_uuid in Map.get(muted, row_uuid, [])
-
   # What each released task's notice carries: only the ticked people, and
   # the comment typed for it.
   defp next_up_overrides(next_up, notes) do
     notes = if is_map(notes), do: notes, else: %{}
 
     Map.new(next_up.uuids, fn uuid ->
-      ticked =
-        next_up.recipients
-        |> Map.get(uuid, [])
-        |> Enum.map(& &1.uuid)
-        |> Kernel.--(Map.get(next_up.muted, uuid, []))
-
-      {uuid, %{only: ticked, note: next_up_note(notes[uuid])}}
+      people = next_up.row_keys |> Map.get(uuid, []) |> keys_users()
+      {uuid, %{only: people, note: next_up_note(notes[uuid])}}
     end)
   end
 
@@ -1578,6 +1786,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # after the kept-idle rows were put back must not leave them demoted, so
   # either everything is written or nothing is. A row that moved on since
   # the dialog opened (`:stale`) is left as it is and is no failure.
+  defp confirm_subproject_next_up(socket, next_up, params) do
+    socket = assign(socket, next_up: nil)
+
+    case confirm_next_up(socket, nil, next_up, params["notes"]) do
+      {:ok, socket, released} ->
+        {socket, sent} = post_next_up_comments(socket, next_up, params["notes"])
+        maybe_sync_and_reload({:ok, next_up_flash(socket, released, sent)})
+
+      error ->
+        maybe_sync_and_reload(error)
+    end
+  end
+
   defp confirm_next_up(socket, a, next_up, notes) do
     scope = socket.assigns[:phoenix_kit_current_scope]
 
@@ -1589,10 +1810,146 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     Handoffs.with_overrides(next_up_overrides(next_up, notes), fn ->
       Handoffs.batch(fn ->
-        in_one_write(socket, fn -> run_next_up(socket, a, rows, next_up, may?) end)
+        in_one_write(socket, fn ->
+          with :ok <- apply_next_up_people(socket, project, a, rows, next_up) do
+            run_next_up(socket, a, rows, next_up, may?)
+          end
+        end)
       end)
     end)
   end
+
+  # Before anything moves: the people ADDED in a picker become assignees of
+  # that task (the normal write path, so `Members.admit_assignees/3` adds
+  # them to the project with the "you were added" notice), and a person
+  # kept in a picker who cannot open the project yet is made a member — so
+  # everyone shown is someone the notice can reach (the boss, 2026-11-18).
+  defp apply_next_up_people(socket, project, a, rows, next_up) do
+    actor = Activity.actor_uuid(socket)
+
+    pickers =
+      if(next_up.mode == :complete and match?(%Assignment{}, a),
+        do: [{a, next_up.done_keys, next_up.done_defaults}],
+        else: []
+      ) ++
+        Enum.map(rows, fn row ->
+          {row, Map.get(next_up.row_keys, row.uuid, []),
+           Map.get(next_up.row_defaults, row.uuid, [])}
+        end)
+
+    Enum.reduce_while(pickers, :ok, fn {task, keys, defaults}, :ok ->
+      admit_kept(project, keys -- (keys -- defaults), actor, task)
+
+      case assign_added(task, keys -- defaults, actor) do
+        :ok -> {:cont, :ok}
+        :error -> {:halt, {:error, socket, gettext("Could not assign the people you added.")}}
+      end
+    end)
+  end
+
+  defp assign_added(%Assignment{child_project_uuid: nil} = task, added, actor) do
+    added = Enum.filter(added, &match?({kind, _} when kind in ~w(person team department), &1))
+
+    with [_ | _] <- added,
+         %Assignment{} = fresh <- Projects.get_assignment(task.uuid),
+         current = AssigneeSet.keys(fresh),
+         wanted when wanted != current <- Enum.uniq(current ++ added) do
+      case Projects.update_assignment_form(fresh, %{"assignees" => wanted}, actor_uuid: actor) do
+        {:ok, _} -> :ok
+        _ -> :error
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp assign_added(_task, _added, _actor), do: :ok
+
+  defp admit_kept(project, keys, actor, task) do
+    for user <- keys_users(keys),
+        is_binary(user),
+        not Notices.may_view?(user, project) do
+      Members.add_member(project, user,
+        role: "member",
+        actor_uuid: actor,
+        log_metadata: %{
+          "via" => "assignment",
+          "task" => Assignment.label(task),
+          "task_uuid" => task.uuid
+        }
+      )
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  # A crafted confirm (or a picker change that slipped past the check)
+  # adding someone without the right to assign: refused, nothing written.
+  defp additions_refused?(socket, next_up) do
+    added? =
+      (next_up[:done_keys] || []) -- (next_up[:done_defaults] || []) != [] or
+        Enum.any?(next_up[:row_keys] || %{}, fn {uuid, keys} ->
+          keys -- Map.get(next_up[:row_defaults] || %{}, uuid, []) != []
+        end)
+
+    added? and not may_assign_now?(socket, next_up)
+  end
+
+  defp may_assign_now?(socket, next_up) do
+    project =
+      next_up_project(socket, Map.get(next_up, :project_uuid, socket.assigns.project.uuid))
+
+    match?(%Project{}, project) and
+      Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :assign_tasks)
+  end
+
+  # After a Done: its comment kept on the task's thread (when the project
+  # has discussions; flagged so the thread does not tell its people a
+  # second time), and the people picked told, the comment quoted. The
+  # task's own assignee hears of it through the completion already.
+  defp after_done(socket, %Assignment{} = a, %{mode: :complete} = next_up) do
+    actor = Activity.actor_uuid(socket)
+    note = Map.get(next_up, :done_note, "")
+    fresh = Projects.get_assignment(a.uuid) || a
+
+    told =
+      next_up.done_keys
+      |> keys_users()
+      |> Kernel.--([actor, Activity.assignee_target_uuid(fresh)])
+
+    if told != [] do
+      Notices.notify("projects.assignment_completed", fresh,
+        actor_uuid: actor,
+        recipients: told,
+        quote: if(note != "", do: note),
+        metadata: %{"note" => note}
+      )
+    end
+
+    posted? =
+      note != "" and is_binary(actor) and
+        may_comment_next_up?(
+          socket,
+          socket.assigns[:phoenix_kit_current_scope],
+          socket.assigns.project,
+          fresh
+        ) and
+        match?(
+          {:ok, _},
+          PhoenixKitComments.create_comment("assignment", a.uuid, actor, %{
+            content: note,
+            metadata: %{"handoff_note" => true}
+          })
+        )
+
+    if posted?, do: {load_comment_counts(socket), 1}, else: {socket, 0}
+  rescue
+    _ -> {socket, 0}
+  end
+
+  defp after_done(socket, _a, _next_up), do: {socket, 0}
 
   defp run_next_up(socket, _a, rows, %{mode: :release} = next_up, may?) do
     with {:ok, released} <- release_next_up(socket, rows, next_up, may?),
@@ -3676,49 +4033,37 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # A person's "notify" tick — UI state until the confirm.
-  defp gated_handle_event("next_up_toggle_person", %{"uuid" => uuid, "user" => user}, socket) do
-    with %{recipients: recipients, muted: muted} = next_up <- socket.assigns.next_up,
-         people when is_list(people) <- Map.get(recipients, uuid),
-         true <- Enum.any?(people, &(&1.uuid == user)) do
-      mine = Map.get(muted, uuid, [])
-      mine = if user in mine, do: mine -- [user], else: [user | mine]
-      {:noreply, assign(socket, next_up: %{next_up | muted: Map.put(muted, uuid, mine)})}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
-
   # After a sub-project finished by itself: its row is done already.
   defp gated_handle_event(
          "next_up_confirm",
          %{"uuid" => uuid} = params,
          %{assigns: %{next_up: %{mode: :subproject, task_uuid: uuid} = next_up}} = socket
        ) do
-    socket = assign(socket, next_up: nil)
-
-    case confirm_next_up(socket, nil, next_up, params["notes"]) do
-      {:ok, socket, released} ->
-        {socket, sent} = post_next_up_comments(socket, next_up, params["notes"])
-        maybe_sync_and_reload({:ok, next_up_flash(socket, released, sent)})
-
-      error ->
-        maybe_sync_and_reload(error)
+    if additions_refused?(socket, next_up) do
+      {:noreply, put_flash(socket, :error, gettext("You may not assign people here."))}
+    else
+      confirm_subproject_next_up(socket, next_up, params)
     end
   end
 
   defp gated_handle_event("next_up_confirm", %{"uuid" => uuid} = params, socket) do
     with %{task_uuid: ^uuid} = next_up <- socket.assigns.next_up,
          %Assignment{status: status} = a when status != "done" <- scoped_assignment(socket, uuid) do
-      socket = assign(socket, next_up: nil)
+      if additions_refused?(socket, next_up) do
+        {:noreply, put_flash(socket, :error, gettext("You may not assign people here."))}
+      else
+        next_up = Map.put(next_up, :done_note, next_up_note(params["done_note"]))
+        socket = assign(socket, next_up: nil)
 
-      case confirm_next_up(socket, a, next_up, params["notes"]) do
-        {:ok, socket, released} ->
-          {socket, sent} = post_next_up_comments(socket, next_up, params["notes"])
-          maybe_sync_and_reload({:ok, next_up_flash(socket, released, sent)})
+        case confirm_next_up(socket, a, next_up, params["notes"]) do
+          {:ok, socket, released} ->
+            {socket, sent} = post_next_up_comments(socket, next_up, params["notes"])
+            {socket, done_sent} = after_done(socket, a, next_up)
+            maybe_sync_and_reload({:ok, next_up_flash(socket, released, sent + done_sent)})
 
-        error ->
-          maybe_sync_and_reload(error)
+          error ->
+            maybe_sync_and_reload(error)
+        end
       end
     else
       _ -> {:noreply, socket |> assign(next_up: nil) |> load_assignments()}
@@ -7552,20 +7897,49 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <% next_rows = next_up_rows(@next_up, @assignments) %>
         <.form for={%{}} id={"next-up-form-#{@project.uuid}"} phx-submit="next_up_confirm" class="flex flex-col gap-3">
           <input type="hidden" name="uuid" value={@next_up.task_uuid} />
-          <p class="text-sm text-base-content/70">
+          <% viewer = assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid %>
+          <%!-- Done always asks (the boss, 2026-11-18): what was done, and
+               who to tell — the task's creator to start with; anyone added
+               is assigned to the task too. --%>
+          <div :if={@next_up.mode == :complete} class="flex flex-col gap-3">
+            <.description_editor
+              id={"pkp-dialog-done-#{@next_up.task_uuid}"}
+              name="done_note"
+              label={gettext("What was done, anything to know")}
+              height="120px"
+            />
+            <div class="flex flex-col gap-1" data-next-up-tell>
+              <span class="text-sm font-semibold">{gettext("Who to tell")}</span>
+              <.live_component
+                module={PeoplePicker}
+                id={done_picker_id(@next_up.task_uuid)}
+                selected={@next_up.done_keys}
+                source={PhoenixKitProjects.PeopleSource}
+                source_opts={%{project_uuid: @project.uuid, source: "next_up"}}
+                viewer_uuid={viewer}
+                can_edit={@next_up.can_assign}
+                tags={Map.get(@next_up.tags, done_picker_id(@next_up.task_uuid), %{})}
+                placeholder={gettext("Add a person, team or department")}
+                me_label={nil}
+              />
+              <p :if={@next_up.can_assign} class="text-xs text-base-content/60">
+                {gettext("Anyone you add is assigned to the task as well and told.")}
+              </p>
+            </div>
+          </div>
+          <p :if={next_rows != []} class="text-sm text-base-content/70">
             <%= cond do %>
               <% @next_up.mode == :release -> %>
-                {gettext("The people ticked below are told it is their turn when you confirm — untick anyone who should not be notified. A comment goes along with the notification.")}
+                {gettext("The people below are told it is their turn when you confirm — take off anyone who should not be notified, add anyone who should (they are assigned to it too). A comment goes along with the notification.")}
               <% @next_up.mode == :subproject -> %>
-                {gettext("Its last task is done, so these tasks can start: the people ticked below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait. Cancel, and they stay as they are.")}
+                {gettext("Its last task is done, so these tasks can start: the people below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait. Cancel, and they stay as they are.")}
               <% true -> %>
-                {gettext("Once it is done, these tasks can start: the people ticked below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait.")}
+                {gettext("Once it is done, these tasks can start: the people below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait.")}
             <% end %>
           </p>
           <div :for={a <- next_rows} class="rounded-box border border-base-200 p-3 flex flex-col gap-2">
             <% can = Map.get(@next_up.can, a.uuid, %{release: false, comment: false}) %>
             <% release? = next_up_release?(@next_up, a) %>
-            <% people = Map.get(@next_up.recipients, a.uuid, []) %>
             <div class="flex flex-wrap items-center gap-2">
               <span class={["font-medium flex-1 min-w-0 truncate", not release? && "line-through opacity-50"]}>
                 {Assignment.label(a, L10n.current_content_lang())}
@@ -7585,63 +7959,46 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               </button>
             </div>
 
-            <%!-- Who it is assigned to, and who the notice reaches. --%>
-            <div class={["flex items-center gap-1.5 text-xs text-base-content/70", not release? && "opacity-50"]}>
-              <%= if assignee_type(a) do %>
-                <.assignee_shown a={a} faces={(assigns[:assignee_faces] || %{})[a.uuid]} class="font-medium text-base-content" />
-              <% else %>
-                <.icon name="hero-user" class="w-3.5 h-3.5 shrink-0" />
-                <span>{gettext("Nobody is assigned")}</span>
-              <% end %>
-            </div>
-
-            <%= cond do %>
-              <% not release? -> %>
-                <p class="text-xs text-base-content/50 flex items-center gap-1">
-                  <.icon name="hero-bell-slash" class="w-3.5 h-3.5" />
-                  {gettext("Kept idle — nobody is notified.")}
-                </p>
-              <% people == [] -> %>
-                <p class="text-xs text-warning flex items-center gap-1">
-                  <.icon name="hero-bell-slash" class="w-3.5 h-3.5" />
-                  {gettext("Nobody to notify — no one who can open this project is on it.")}
-                </p>
-              <% true -> %>
-                <fieldset class="flex flex-col gap-1">
-                  <legend class="text-xs font-semibold text-base-content/70 mb-1">
-                    {gettext("Send a notification to")}
-                  </legend>
-                  <label
-                    :for={person <- people}
-                    class="flex items-center gap-2 text-sm cursor-pointer w-fit"
-                  >
-                    <% on? = not next_up_muted?(@next_up, a.uuid, person.uuid) %>
-                    <input
-                      type="checkbox"
-                      class="checkbox checkbox-sm checkbox-info"
-                      checked={on?}
-                      phx-click="next_up_toggle_person"
-                      phx-value-uuid={a.uuid}
-                      phx-value-user={person.uuid}
-                    />
-                    <.icon
-                      name={if(on?, do: "hero-bell-alert", else: "hero-bell-slash")}
-                      class={if(on?, do: "w-4 h-4 text-info", else: "w-4 h-4 text-base-content/40")}
-                    />
-                    <span class={[not on? && "line-through text-base-content/50"]}>{person.name}</span>
-                  </label>
-                </fieldset>
+            <%= if release? do %>
+              <%!-- Who is told: the task's people to start with, every one
+                   of them shown and tagged (who is who, and why); a person
+                   added is assigned to it too. --%>
+              <.live_component
+                module={PeoplePicker}
+                id={row_picker_id(a.uuid)}
+                selected={Map.get(@next_up.row_keys, a.uuid, [])}
+                source={PhoenixKitProjects.PeopleSource}
+                source_opts={%{project_uuid: @project.uuid, source: "next_up"}}
+                viewer_uuid={viewer}
+                can_edit={@next_up.can_assign and is_nil(a.child_project_uuid)}
+                tags={Map.get(@next_up.tags, row_picker_id(a.uuid), %{})}
+                label={gettext("Send a notification to")}
+                placeholder={gettext("Add a person, team or department")}
+                me_label={nil}
+              />
+              <p
+                :if={Map.get(@next_up.row_keys, a.uuid, []) == []}
+                class="text-xs text-warning flex items-center gap-1"
+              >
+                <.icon name="hero-bell-slash" class="w-3.5 h-3.5" />
+                {gettext("Nobody is told — nobody is on it.")}
+              </p>
+            <% else %>
+              <p class="text-xs text-base-content/50 flex items-center gap-1">
+                <.icon name="hero-bell-slash" class="w-3.5 h-3.5" />
+                {gettext("Kept idle — nobody is notified.")}
+              </p>
             <% end %>
 
-            <textarea
+            <.description_editor
               :if={release? or can.comment}
+              id={"pkp-dialog-next-#{a.uuid}"}
               name={"notes[#{a.uuid}]"}
-              rows="2"
-              class="textarea textarea-bordered textarea-sm w-full"
               placeholder={gettext("Comment for whoever does it")}
-            ></textarea>
+              height="90px"
+            />
           </div>
-          <p :if={next_rows != [] and not @comments_enabled} class="text-xs text-base-content/60">
+          <p :if={not @comments_enabled} class="text-xs text-base-content/60">
             {gettext("Discussions are off for this project, so a comment goes out with the notification only and is not kept on the task.")}
           </p>
           <div class="modal-action">
@@ -7662,7 +8019,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               phx-disable-with={gettext("Saving…")}
               class="btn btn-success btn-sm"
             >
-              <.icon name="hero-check" class="w-4 h-4" /> {gettext("Confirm — mark done")}
+              <.icon name="hero-check" class="w-4 h-4" /> {gettext("Mark done")}
             </button>
           </div>
         </.form>

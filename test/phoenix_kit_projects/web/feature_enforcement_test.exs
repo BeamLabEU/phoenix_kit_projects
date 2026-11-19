@@ -115,6 +115,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       assert Projects.get_assignment(a.uuid).status == "todo"
 
       render_click(view, "complete", %{"uuid" => a.uuid})
+      render_submit(view, "next_up_confirm", %{"uuid" => a.uuid})
       assert Projects.get_assignment(a.uuid).status == "done"
 
       # Reopen goes back to to-do — still no Start on offer.

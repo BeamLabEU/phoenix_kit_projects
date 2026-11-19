@@ -193,6 +193,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       _ = render_click(view, "complete", %{"uuid" => a.uuid})
+      # Done always asks first; nothing is written until it is confirmed.
+      assert Projects.get_assignment(a.uuid).status == "todo"
+      _ = render_submit(view, "next_up_confirm", %{"uuid" => a.uuid})
 
       reread = Projects.get_assignment(a.uuid)
       assert reread.status == "done"
@@ -209,6 +212,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       _ = render_click(view, "complete", %{"uuid" => a.uuid})
+      _ = render_submit(view, "next_up_confirm", %{"uuid" => a.uuid})
       _ = render_click(view, "reopen", %{"uuid" => a.uuid})
 
       reread = Projects.get_assignment(a.uuid)
@@ -1410,6 +1414,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         "ordered_ids" => [a.uuid]
       })
 
+      # A drop into Done asks like the button does; the card waits.
+      assert Projects.get_assignment(a.uuid).status == "todo"
+      render_submit(view, "next_up_confirm", %{"uuid" => a.uuid})
+
       done = Projects.get_assignment(a.uuid)
 
       # A naked status write would look identical on the board and leave a
@@ -1474,10 +1482,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
-      render_hook(view, "board_move", %{"moved_id" => a.uuid, "status" => "done"})
+      render_hook(view, "board_move", %{"moved_id" => a.uuid, "status" => "in_progress"})
 
       assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
-      assert Projects.get_assignment(a.uuid).status == "done"
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
     end
 
     test "who may move a card but not edit the plan moves it without reordering", %{

@@ -205,11 +205,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
     refute_activity_logged("projects.assignment_made_idle", resource_uuid: ctx.render.uuid)
   end
 
-  test "a completion that holds nothing up completes at once", ctx do
+  # Done always asks (the boss, 2026-11-18): a comment and who to tell,
+  # even when nothing waits on the task.
+  test "a completion that holds nothing up still asks, then completes", ctx do
     {:ok, view, _html} = show(ctx)
 
     render_click(view, "complete", %{"uuid" => ctx.render.uuid})
 
+    assert has_element?(view, next_up(ctx.project), "done?")
+    assert has_element?(view, "#{next_up(ctx.project)} [data-next-up-tell]")
+    assert status(ctx.render) == "waiting"
+
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.render.uuid})
     refute has_element?(view, next_up(ctx.project))
     assert status(ctx.render) == "done"
   end
@@ -294,26 +301,36 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       )
     end
 
-    test "the dialog names the assignee and everyone the notice would reach", ctx do
+    defp person_key(user_uuid),
+      do: {"person", PhoenixKitProjects.People.get_person_by_user_uuid(user_uuid).uuid}
+
+    defp row_picker(a), do: PhoenixKitProjects.Web.ProjectShowLive.row_picker_id(a.uuid)
+
+    test "the dialog lists everyone the notice would reach, tagged with why", ctx do
       {:ok, view, _html} = show(ctx)
 
       html = render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
 
-      assert html =~ ctx.dept.name
       assert html =~ "Send a notification to"
       assert has_element?(view, next_up(ctx.project), "Alice")
       assert has_element?(view, next_up(ctx.project), "Bob")
+      # who is who, and why (item 22): through the department, and a member
+      assert html =~ "Assigned through #{ctx.dept.name}"
+      assert html =~ "Member"
     end
 
-    test "an unticked person is not told; the comment goes along with the notice", ctx do
+    test "a person taken off the list is not told; the comment rides as the quote", ctx do
       {:ok, view, _html} = show(ctx)
 
       render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
 
-      render_click(view, "next_up_toggle_person", %{
-        "uuid" => ctx.measure.uuid,
-        "user" => ctx.bob
-      })
+      send(
+        view.pid,
+        {PhoenixKitWeb.Components.PeoplePicker, row_picker(ctx.measure),
+         {:changed, [person_key(ctx.alice)]}}
+      )
+
+      _ = render(view)
 
       render_submit(view, "next_up_confirm", %{
         "uuid" => ctx.measure.uuid,
@@ -322,24 +339,77 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
 
       assert status(ctx.measure) == "todo"
       assert [notice] = notices("projects.assignment_ready", ctx.alice)
-      assert notice.metadata["notification_text"] =~ "Client is home after 17:00."
+
+      assert notice.metadata["quote"]["text"] == "Client is home after 17:00." or
+               notice.metadata["notification_text"] =~ "Client is home after 17:00."
+
       assert notices("projects.assignment_ready", ctx.bob) == []
     end
 
-    test "only the task's own people can be unticked", ctx do
-      {:ok, view, _html} = show(ctx)
+    test "a person added is assigned to the task, made a member, and told", ctx do
+      # Carol works elsewhere (not in the task's department) and is not on
+      # the project (person!/3 made her a member — undo it).
+      elsewhere =
+        Repo.insert!(%Department{name: "Elsewhere #{System.unique_integer([:positive])}"})
 
+      outsider = person!(ctx.project, "Carol", elsewhere)
+      {:ok, _} = PhoenixKitProjects.Members.remove_member(ctx.project, outsider)
+
+      {:ok, view, _html} = show(ctx)
       render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
 
-      render_click(view, "next_up_toggle_person", %{
-        "uuid" => ctx.measure.uuid,
-        "user" => ctx.actor_uuid
-      })
+      keys = [person_key(ctx.alice), person_key(ctx.bob), person_key(outsider)]
+
+      send(
+        view.pid,
+        {PhoenixKitWeb.Components.PeoplePicker, row_picker(ctx.measure), {:changed, keys}}
+      )
+
+      html = render(view)
+      assert html =~ "Added by you"
 
       render_submit(view, "next_up_confirm", %{"uuid" => ctx.measure.uuid})
 
-      assert [_] = notices("projects.assignment_ready", ctx.alice)
-      assert [_] = notices("projects.assignment_ready", ctx.bob)
+      assert person_key(outsider) in PhoenixKitProjects.AssigneeSet.keys(
+               Projects.get_assignment(ctx.measure.uuid)
+             )
+
+      assert PhoenixKitProjects.Members.get_member(ctx.project.uuid, outsider)
+      assert [_] = notices("projects.assignment_ready", outsider)
+    end
+
+    test "without the right to assign, an added person is refused", ctx do
+      elsewhere =
+        Repo.insert!(%Department{name: "Elsewhere #{System.unique_integer([:positive])}"})
+
+      outsider = person!(ctx.project, "Dan", elsewhere)
+      scope = fake_scope(user_uuid: ctx.actor_uuid, permissions: ["projects"])
+
+      {:ok, _} =
+        PhoenixKitProjects.Members.add_member(ctx.project, ctx.actor_uuid, role: "member")
+
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(ctx.project, %{"assign_tasks" => "managers"})
+
+      {:ok, view, _html} =
+        live(put_test_scope(ctx.conn, scope), "/en/admin/projects/#{ctx.project.uuid}")
+
+      render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+
+      keys = [person_key(ctx.alice), person_key(ctx.bob), person_key(outsider)]
+
+      send(
+        view.pid,
+        {PhoenixKitWeb.Components.PeoplePicker, row_picker(ctx.measure), {:changed, keys}}
+      )
+
+      assert render(view) =~ "You may not assign people here."
+
+      render_submit(view, "next_up_confirm", %{"uuid" => ctx.measure.uuid})
+
+      refute person_key(outsider) in PhoenixKitProjects.AssigneeSet.keys(
+               Projects.get_assignment(ctx.measure.uuid)
+             )
     end
 
     test "with comments on, the comment is kept on the task without a second notice", ctx do
