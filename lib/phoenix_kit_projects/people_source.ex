@@ -42,12 +42,12 @@ defmodule PhoenixKitProjects.PeopleSource do
   @impl true
   def page({:group, kind}, cursor, limit, ctx) when kind in @kinds do
     {rows, next} = Assignees.page({:browse, kind}, cursor, limit, lang(ctx))
-    {Enum.map(rows, &row/1), next}
+    {rows |> Enum.map(&row/1) |> with_users(), next}
   end
 
   def page({:search, text}, cursor, limit, ctx) when is_binary(text) do
     {rows, next} = Assignees.page({:search, text}, cursor, limit, lang(ctx))
-    {Enum.map(rows, &row/1), next}
+    {rows |> Enum.map(&row/1) |> with_users(), next}
   end
 
   def page(_view, _cursor, _limit, _ctx), do: {[], nil}
@@ -55,13 +55,13 @@ defmodule PhoenixKitProjects.PeopleSource do
   @impl true
   def describe({"user", uuid}, _ctx) do
     case Assignees.describe_user(uuid) do
-      %{} = r -> row(r)
+      %{} = r -> r |> row() |> with_user()
       nil -> trashed_account_row(uuid)
     end
   end
 
   def describe({kind, uuid}, ctx) when kind in @kinds,
-    do: kind |> Assignees.describe(uuid, lang(ctx)) |> row()
+    do: kind |> Assignees.describe(uuid, lang(ctx)) |> row() |> with_user()
 
   def describe(_key, _ctx), do: nil
 
@@ -177,6 +177,7 @@ defmodule PhoenixKitProjects.PeopleSource do
     ctx[:viewer_uuid]
     |> Assignees.recent_for_viewer(ctx[:project_uuid], limit, lang(ctx))
     |> Enum.map(&row/1)
+    |> with_users()
   end
 
   @impl true
@@ -204,6 +205,59 @@ defmodule PhoenixKitProjects.PeopleSource do
   end
 
   defp row(_), do: nil
+
+  # A person's (or an account's) own account on the row, so core draws
+  # their avatar — a photo, or two letters from the name shown — instead of
+  # a blank icon (the boss, 2026-11-18: people "didn't have any icons").
+  # One query for the whole page; a person with no account keeps the icon.
+  defp with_users(rows) do
+    rows = Enum.reject(rows, &is_nil/1)
+    people = for %{kind: "person", uuid: u} <- rows, do: u
+    accounts = for %{kind: "user", uuid: u} <- rows, do: u
+    by_person = users_by_person(people)
+    by_account = users_by_uuid(accounts)
+
+    Enum.map(rows, fn
+      %{kind: "person", uuid: u} = r -> put_user(r, Map.get(by_person, u))
+      %{kind: "user", uuid: u} = r -> put_user(r, Map.get(by_account, u))
+      r -> r
+    end)
+  end
+
+  defp with_user(nil), do: nil
+  defp with_user(row), do: row |> List.wrap() |> with_users() |> List.first()
+
+  defp put_user(row, %User{} = user), do: Map.put(row, :user, user)
+  defp put_user(row, _), do: row
+
+  defp users_by_person([]), do: %{}
+
+  defp users_by_person(uuids) do
+    import Ecto.Query
+
+    from(p in PhoenixKitProjects.People.Person,
+      join: u in User,
+      on: u.uuid == p.user_uuid,
+      where: p.uuid in ^uuids,
+      select: {p.uuid, u}
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new(fn {p, u} -> {to_string(p), u} end)
+  rescue
+    _ -> %{}
+  end
+
+  defp users_by_uuid([]), do: %{}
+
+  defp users_by_uuid(uuids) do
+    import Ecto.Query
+
+    from(u in User, where: u.uuid in ^uuids)
+    |> RepoHelper.repo().all()
+    |> Map.new(&{to_string(&1.uuid), &1})
+  rescue
+    _ -> %{}
+  end
 
   # `Assignees` faces (`%{faces: [%{name, user}], extra}`) as core's stack
   # of users; people with no account have no picture to stack.

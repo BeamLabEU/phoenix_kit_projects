@@ -329,4 +329,19 @@ defmodule PhoenixKitProjects.Web.AssigneeFieldTest do
       assert child.assigned_person_uuid == fia.uuid
     end
   end
+
+  describe "faces in the picker (the boss, 2026-11-18)" do
+    test "a person's row carries their account, so core draws their letters", ctx do
+      anna = person!("Annika")
+      pctx = %{viewer_uuid: ctx.me, project_uuid: ctx.project.uuid}
+
+      assert %{user: %{uuid: user_uuid}} =
+               PhoenixKitProjects.PeopleSource.describe({"person", anna.uuid}, pctx)
+
+      assert user_uuid == anna.user_uuid
+
+      {rows, _next} = PhoenixKitProjects.PeopleSource.page({:search, "Annika"}, nil, 10, pctx)
+      assert Enum.any?(rows, &match?(%{kind: "person", user: %{uuid: ^user_uuid}}, &1))
+    end
+  end
 end
