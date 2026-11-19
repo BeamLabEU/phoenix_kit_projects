@@ -12,6 +12,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveExtrasTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import PhoenixKitProjects.PickerHelpers
+
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitStaff.Schemas.Department
@@ -168,7 +170,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveExtrasTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
 
       assert has_element?(view, "#task-default-assignee-search")
-      render_click(view, "assignee_pick", %{"kind" => "department", "uuid" => dept.uuid})
+      pick(view, "task-default-assignee", "department", dept.uuid)
       assert has_element?(view, "#task-default-assignee-chips", dept.name)
 
       view |> form("#task-form") |> render_submit()

@@ -9,6 +9,8 @@ defmodule PhoenixKitProjects.Web.PopupsPanelReviewTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import PhoenixKitProjects.PickerHelpers
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Test.Repo
@@ -115,20 +117,18 @@ defmodule PhoenixKitProjects.Web.PopupsPanelReviewTest do
   test "5: the empty line sits outside the list the next page is loaded from", ctx do
     {:ok, view, _} = edit(ctx)
 
-    render_change(view, "assignee_query", %{
-      "assignee_q" => "zzz-nobody-#{System.unique_integer()}"
-    })
+    query(view, "assignment-assignee", "zzz-nobody-#{System.unique_integer()}")
 
-    assert has_element?(view, "#assignment-assignee-options-empty")
-    refute has_element?(view, "#assignment-assignee-options #assignment-assignee-options-empty")
+    assert has_element?(view, "#assignment-assignee-none")
+    refute has_element?(view, "#assignment-assignee-options #assignment-assignee-none")
   end
 
   test "7: a one-pick picker's list row follows the choice", ctx do
     cleo = person!("Cleopatra#{System.unique_integer([:positive])}")
     {:ok, view, _} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/edit")
 
-    render_change(view, "assignee_query", %{"assignee_q" => cleo.name})
-    sel = "#project-assignee-options [data-assignee='person:#{cleo.uuid}']"
+    query(view, "project-assignee", cleo.name)
+    sel = "#project-assignee-options [data-pick='person:#{cleo.uuid}']"
     assert has_element?(view, sel <> "[aria-selected='false']")
 
     view |> element(sel) |> render_click()

@@ -333,7 +333,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
          %{event: "ask_ready", uuid: ctx.measure.uuid, user_uuid: ctx.user.uuid}}
       )
 
-      assert render(view) =~ "Allow “"
+      assert render(view) =~ "as can be started?"
     end
 
     test "a step another viewer's drawer asked for is not run here", ctx do
@@ -347,7 +347,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
          %{event: "start_task", uuid: ctx.model.uuid, user_uuid: Ecto.UUID.generate()}}
       )
 
-      refute render(view) =~ "Allow “"
+      refute render(view) =~ "as can be started?"
       assert Projects.get_assignment(ctx.model.uuid).status == ctx.model.status
     end
 

@@ -84,12 +84,16 @@ defmodule PhoenixKitProjects.Notices do
 
   Options: `:actor_uuid` (left out of the recipients, named in the line),
   `:recipients` (user uuids; duplicates and the actor dropped), `:metadata`
-  (merged into each row — `"reason"`, `"after"`, `"excerpt"` feed the line).
+  (merged into each row — `"reason"`, `"after"`, `"excerpt"` feed the line),
+  `:quote` (words the actor wrote, shown in full under the line — see
+  `with_quote/4`).
   """
   @spec notify(String.t(), Assignment.t() | Project.t(), keyword()) :: :ok
   def notify(action, subject, opts) do
     actor = Keyword.get(opts, :actor_uuid)
-    meta = Keyword.get(opts, :metadata) || %{}
+
+    meta =
+      with_quote(action, Keyword.get(opts, :metadata) || %{}, actor, Keyword.get(opts, :quote))
 
     {resource_type, resource_uuid, project_uuid} =
       case subject do
@@ -127,6 +131,63 @@ defmodule PhoenixKitProjects.Notices do
           })
       )
     end)
+  end
+
+  # The words someone wrote with the act — the "Can be started" / Done
+  # dialog's comment (`"note"`), the reopen reason (`"reason"`), a comment
+  # that mentions the reader (`:quote`) — go in core's quote block, shown
+  # whole under the line, with the writer's face (the boss, 2026-11-18:
+  # "add comment into notification"). The line stays a one-line summary
+  # then. A core without the block (no `Notifications.Render.quote/1`) keeps
+  # the old cut-off excerpt in the line.
+  @quoted_meta %{
+    "projects.assignment_ready" => "note",
+    "projects.assignment_completed" => "note",
+    "projects.assignment_reopened" => "reason"
+  }
+
+  @quote_max 4_000
+
+  @doc false
+  @spec with_quote(String.t(), map(), binary() | nil, String.t() | nil) :: map()
+  def with_quote(action, meta, actor_uuid, explicit) do
+    text =
+      case explicit do
+        text when is_binary(text) -> text
+        _ -> Map.get(meta, Map.get(@quoted_meta, action))
+      end
+
+    if is_binary(text) and String.trim(text) != "" and quotes?() do
+      block =
+        %{"text" => text |> String.trim() |> String.slice(0, @quote_max) |> cap_bytes()}
+        |> then(&if(is_binary(actor_uuid), do: Map.put(&1, "author_uuid", actor_uuid), else: &1))
+
+      Map.put(meta, "quote", block)
+    else
+      meta
+    end
+  end
+
+  # The grapheme cap alone lets one "character" carry any number of
+  # combining marks (codex, 2026-11-19): the quote is held to 16 KB too,
+  # cut at a valid UTF-8 boundary.
+  @quote_max_bytes 16_384
+  defp cap_bytes(text) when byte_size(text) <= @quote_max_bytes, do: text
+
+  defp cap_bytes(text) do
+    text
+    |> binary_part(0, @quote_max_bytes)
+    |> String.chunk(:valid)
+    |> Enum.take_while(&String.valid?/1)
+    |> Enum.join()
+  end
+
+  @doc false
+  # Whether the loaded core draws a notification's quote block.
+  @spec quotes?() :: boolean()
+  def quotes? do
+    Code.ensure_loaded?(PhoenixKit.Notifications.Render) and
+      function_exported?(PhoenixKit.Notifications.Render, :quote, 1)
   end
 
   @doc """
@@ -421,9 +482,14 @@ defmodule PhoenixKitProjects.Notices do
     end
   end
 
-  # A hand-off's note (the "next up" dialog) rides along in its notice.
-  defp with_note(line, "projects.assignment_ready", %{"note" => note})
-       when is_binary(note) and note != "",
+  # A hand-off's note (the "next up" dialog) rides along in its notice: in
+  # core's quote block when there is one (`with_quote/4`), else cut into
+  # the line.
+  defp with_note(line, _action, %{"quote" => %{}}), do: line
+
+  defp with_note(line, action, %{"note" => note})
+       when action in ["projects.assignment_ready", "projects.assignment_completed"] and
+              is_binary(note) and note != "",
        do: gettext("%{line} — “%{note}”", line: line, note: excerpt(note))
 
   defp with_note(line, _action, _meta), do: line
@@ -439,6 +505,10 @@ defmodule PhoenixKitProjects.Notices do
 
   defp text("projects.assignment_completed", c),
     do: gettext("%{actor} marked your task “%{task}” done", actor: c.actor, task: c.task)
+
+  # The reason is shown whole in the quote block (`with_quote/4`).
+  defp text("projects.assignment_reopened", %{meta: %{"quote" => %{}}} = c),
+    do: gettext("%{actor} reopened your task “%{task}”", actor: c.actor, task: c.task)
 
   defp text("projects.assignment_reopened", %{meta: %{"reason" => reason}} = c)
        when is_binary(reason) and reason != "" do
@@ -472,9 +542,11 @@ defmodule PhoenixKitProjects.Notices do
 
   defp text("projects.assignment_ready", %{meta: %{"after" => after_task, "more" => n}} = c)
        when is_binary(after_task) and after_task != "" and is_integer(n) and n > 0 do
+    # The status's own name, as on the button and the setting line (the
+    # boss, 2026-11-18).
     ngettext(
-      "Your turn: “%{task}” and 1 more task — “%{after}” is done",
-      "Your turn: “%{task}” and %{count} more tasks — “%{after}” is done",
+      "“%{task}” and 1 more task can be started — “%{after}” is done",
+      "“%{task}” and %{count} more tasks can be started — “%{after}” is done",
       n,
       task: c.task,
       after: after_task
@@ -483,21 +555,21 @@ defmodule PhoenixKitProjects.Notices do
 
   defp text("projects.assignment_ready", %{meta: %{"after" => after_task}} = c)
        when is_binary(after_task) and after_task != "" do
-    gettext("Your turn: “%{task}” — “%{after}” is done", task: c.task, after: after_task)
+    gettext("“%{task}” can be started — “%{after}” is done", task: c.task, after: after_task)
   end
 
   defp text("projects.assignment_ready", %{meta: %{"more" => n}} = c)
        when is_integer(n) and n > 0 do
     ngettext(
-      "Your turn: “%{task}” and 1 more task",
-      "Your turn: “%{task}” and %{count} more tasks",
+      "“%{task}” and 1 more task can be started",
+      "“%{task}” and %{count} more tasks can be started",
       n,
       task: c.task
     )
   end
 
   defp text("projects.assignment_ready", c),
-    do: gettext("Your turn: “%{task}” can start", task: c.task)
+    do: gettext("“%{task}” can be started", task: c.task)
 
   defp text("projects.assignment_on_hold", %{meta: %{"more" => n}} = c)
        when is_integer(n) and n > 0 do
@@ -567,6 +639,15 @@ defmodule PhoenixKitProjects.Notices do
       text: c.meta["excerpt"] || ""
     )
   end
+
+  # Added because a task was given to them (`Members.admit_assignees/3`).
+  defp text("projects.member_added", %{meta: %{"via" => "assignment", "task" => task}} = c)
+       when is_binary(task) and task != "",
+       do:
+         gettext("You were added to %{project} — you're assigned “%{task}”",
+           project: c.project,
+           task: task
+         )
 
   defp text("projects.member_added", c),
     do: gettext("%{actor} added you to %{project}", actor: c.actor, project: c.project)

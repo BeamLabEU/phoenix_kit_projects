@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import PhoenixKitProjects.PickerHelpers
+
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.Users.Auth
@@ -118,8 +120,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
             "assignment-#{u}-pane-more",
             "assignment-log-form-#{u}",
             "assignment-subtask-form-#{u}",
-            "assignment-files-form-#{u}",
-            "assignment-assignee-form-#{u}"
+            "assignment-files-form-#{u}"
           ],
           do: assert(html =~ ~s(id="#{id}"), id)
 
@@ -205,14 +206,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       {:ok, view, _html} = edit(ctx.conn, ctx.project, a)
       assert has_element?(view, "#assignment-assignee-chip-person-#{bob.uuid}", "Bob")
 
-      render_change(view, "assignee_query", %{"assignee_q" => "Crew"})
+      query(view, "assignment-assignee", "Crew")
 
       assert has_element?(
                view,
-               "#assignment-assignee-options [data-assignee='team:#{team.uuid}']"
+               "#assignment-assignee-options [data-pick='team:#{team.uuid}']"
              )
 
-      render_click(view, "assignee_toggle", %{"kind" => "team", "uuid" => team.uuid})
+      pick(view, "assignment-assignee", "team", team.uuid)
       assert has_element?(view, "#assignment-assignee-chip-team-#{team.uuid}", team.name)
       autosave(view)
 
@@ -228,7 +229,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
       # Save closed the popup: open it again for the next change.
       {:ok, view, _html} = edit(ctx.conn, ctx.project, saved)
-      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => bob.uuid})
+      remove(view, "assignment-assignee", "person", bob.uuid)
       autosave(view)
       saved = Projects.get_assignment(a.uuid)
       assert saved.assigned_team_uuid == team.uuid
@@ -239,7 +240,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
     test "a forged pick of something that does not exist assigns nobody", ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      render_click(view, "assignee_pick", %{"kind" => "team", "uuid" => Ecto.UUID.generate()})
+      pick(view, "assignment-assignee", "team", Ecto.UUID.generate())
       autosave(view)
 
       assert Projects.get_assignment(ctx.a.uuid).assigned_team_uuid == nil
@@ -248,11 +249,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
     test "a forged pick or search with malformed values leaves the form standing", ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      for kind <- ~w(person team department) do
-        render_click(view, "assignee_pick", %{"kind" => kind, "uuid" => "not-a-uuid"})
+      for kind <- ~w(person team department user) do
+        pick(view, "assignment-assignee", kind, "not-a-uuid")
       end
 
-      render_hook(view, "assignee_search", %{"q" => %{"nested" => "x"}})
+      view
+      |> with_target("#assignment-assignee")
+      |> render_keyup("query", %{"value" => %{"nested" => "x"}})
 
       assert Process.alive?(view.pid)
       assert render(view) =~ "Measure the kitchen"
@@ -264,9 +267,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       me = person!("Me", ctx.me)
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
-      view |> element("#assignment-assign-me") |> render_click()
+      view |> element("#assignment-assignee-me") |> render_click()
       # Theirs now: the button goes.
-      refute has_element?(view, "#assignment-assign-me")
+      refute has_element?(view, "#assignment-assignee-me")
       autosave(view)
 
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == me.uuid
@@ -297,17 +300,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
          ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      refute has_element?(view, "#assignment-assign-me[disabled]")
+      refute has_element?(view, "#assignment-assignee-me[disabled]")
       refute render(view) =~ "not linked to a staff person"
 
-      view |> element("#assignment-assign-me") |> render_click()
+      view |> element("#assignment-assignee-me") |> render_click()
       assert render(view) =~ "Create a staff record?"
       # Nothing made, nothing assigned until confirmed.
       assert staff_person_of(ctx.me) == nil
 
-      render_click(view, "staff_create_confirm", %{})
+      confirm(view, "assignment-assignee")
       refute render(view) =~ "Create a staff record?"
-      refute has_element?(view, "#assignment-assign-me")
+      refute has_element?(view, "#assignment-assignee-me")
       autosave(view)
 
       person = staff_person_of(ctx.me)
@@ -333,7 +336,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
         )
 
       {:ok, view2, _} = edit(ctx.conn, ctx.project, b)
-      view2 |> element("#assignment-assign-me") |> render_click()
+      view2 |> element("#assignment-assignee-me") |> render_click()
       refute render(view2) =~ "Create a staff record?"
       autosave(view2)
 
@@ -344,10 +347,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
     test "Cancel on the question creates nothing and leaves the form as it was", ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      view |> element("#assignment-assign-me") |> render_click()
+      view |> element("#assignment-assignee-me") |> render_click()
       assert render(view) =~ "Create a staff record?"
 
-      render_click(view, "staff_create_cancel", %{})
+      cancel(view, "assignment-assignee")
       refute render(view) =~ "Create a staff record?"
       autosave(view)
 
@@ -360,7 +363,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       me = person!("Me", ctx.me)
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      view |> element("#assignment-assign-me") |> render_click()
+      view |> element("#assignment-assignee-me") |> render_click()
       refute render(view) =~ "Create a staff record?"
       autosave(view)
 
@@ -372,7 +375,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       trashed = Repo.insert!(%Person{user_uuid: ctx.me, status: "trashed", name: "Old me"})
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      view |> element("#assignment-assign-me") |> render_click()
+      view |> element("#assignment-assignee-me") |> render_click()
       refute render(view) =~ "Create a staff record?"
 
       assert has_element?(
@@ -402,23 +405,23 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       staffed = person!("Quill#{n}staffed")
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
-      render_hook(view, "assignee_search", %{"q" => "Quill#{n}"})
-      assert_push_event(view, "assignee_results", %{results: rows})
+      html = query(view, "assignment-assignee", "Quill#{n}")
 
-      assert %{kind: "user", label: label, sublabel: sublabel, icon: "hero-user"} =
-               Enum.find(rows, &(&1.uuid == zoe.uuid))
-
-      assert label == "Zoe Quill#{n}"
-      assert sublabel == zoe.email
+      zoe_sel = "#assignment-assignee-options [data-pick='user:#{zoe.uuid}']"
+      assert has_element?(view, zoe_sel, "Zoe Quill#{n}")
+      assert has_element?(view, zoe_sel, zoe.email)
       # A user who already has a person shows as that person, not twice.
-      refute Enum.any?(rows, &(&1.kind == "user" and &1.uuid == staffed.user_uuid))
-      assert List.last(rows).kind == "user"
+      refute has_element?(view, "[data-pick='user:#{staffed.user_uuid}']")
+      # Accounts come after the staff.
+      {person_at, _} = :binary.match(html, "person:#{staffed.uuid}")
+      {user_at, _} = :binary.match(html, "user:#{zoe.uuid}")
+      assert person_at < user_at
 
-      render_click(view, "assignee_pick", %{"kind" => "user", "uuid" => zoe.uuid})
-      assert render(view) =~ "Zoe Quill#{n} has no staff record yet."
+      pick(view, "assignment-assignee", "user", zoe.uuid)
+      assert render(view) =~ "Zoe Quill#{n} has an account but no staff record."
       assert staff_person_of(zoe.uuid) == nil
 
-      render_click(view, "staff_create_confirm", %{})
+      confirm(view, "assignment-assignee")
       autosave(view)
 
       person = staff_person_of(zoe.uuid)
@@ -429,7 +432,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
     test "a pending staff creation rechecks the live assignment permission", ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
-      render_click(view, "assign_to_me", %{})
+      me(view, "assignment-assignee")
       assert render(view) =~ "Create a staff record?"
 
       scope = fake_scope(user_uuid: ctx.me, roles: [], permissions: ["projects"])
@@ -438,7 +441,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
         %{state | socket: Phoenix.Component.assign(socket, :phoenix_kit_current_scope, scope)}
       end)
 
-      render_click(view, "staff_create_confirm", %{})
+      confirm(view, "assignment-assignee")
       assert staff_person_of(ctx.me) == nil
       refute_activity_logged("projects.staff_person_created")
     end
@@ -447,7 +450,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.project, ctx.me, role: "member")
       scope = fake_scope(user_uuid: ctx.me, roles: [], permissions: ["projects"])
       {:ok, view, _} = edit(put_test_scope(ctx.conn, scope), ctx.project, ctx.a)
-      render_click(view, "assign_to_me", %{})
+      me(view, "assignment-assignee")
       assert render(view) =~ "Create a staff record?"
 
       {:ok, _} =
@@ -455,7 +458,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
           "settings" => %{"authz" => %{"assign_tasks" => "managers"}}
         })
 
-      render_click(view, "staff_create_confirm", %{})
+      confirm(view, "assignment-assignee")
       assert staff_person_of(ctx.me) == nil
       refute_activity_logged("projects.staff_person_created")
     end
@@ -473,12 +476,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       off |> Ecto.Changeset.change(is_active: false) |> Repo.update!()
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
-      render_hook(view, "assignee_search", %{"q" => "Offline#{n}"})
-      assert_push_event(view, "assignee_results", %{results: rows})
-      refute Enum.any?(rows, &(&1.uuid == off.uuid))
+      query(view, "assignment-assignee", "Offline#{n}")
+      refute has_element?(view, "[data-pick='user:#{off.uuid}']")
 
-      render_click(view, "assignee_pick", %{"kind" => "user", "uuid" => off.uuid})
-      render_click(view, "assignee_pick", %{"kind" => "user", "uuid" => "not-a-uuid"})
+      pick(view, "assignment-assignee", "user", off.uuid)
+      pick(view, "assignment-assignee", "user", "not-a-uuid")
       refute render(view) =~ "Create a staff record?"
       assert staff_person_of(off.uuid) == nil
     end
@@ -676,7 +678,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       {:ok, view, _} = edit(conn, ctx.project, ctx.a)
       {:ok, _} = PhoenixKitProjects.Members.change_role(ctx.project, user, "member")
 
-      render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => bob.uuid})
+      pick(view, "assignment-assignee", "person", bob.uuid)
       autosave(view)
 
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == nil
@@ -725,8 +727,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       {:ok, view, _} =
         live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new?kind=subproject")
 
-      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ann.uuid})
-      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => bob.uuid})
+      pick(view, "subproject-assignee", "person", ann.uuid)
+      pick(view, "subproject-assignee", "person", bob.uuid)
 
       render_submit(view, "save_subproject", %{
         "subproject" => %{

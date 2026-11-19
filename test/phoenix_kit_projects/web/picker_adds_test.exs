@@ -8,6 +8,8 @@ defmodule PhoenixKitProjects.Web.PickerAddsTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import PhoenixKitProjects.PickerHelpers
+
   import Ecto.Query
 
   alias PhoenixKit.Users.Auth
@@ -34,8 +36,9 @@ defmodule PhoenixKitProjects.Web.PickerAddsTest do
     project = fixture_project(%{"start_mode" => "immediate"})
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{project.uuid}/edit")
 
-    render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ctx.ann.uuid})
-    html = render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ctx.bob.uuid})
+    pick(view, "project-assignee", "person", ctx.ann.uuid)
+    pick(view, "project-assignee", "person", ctx.bob.uuid)
+    html = render(view)
 
     assert html =~ ~s(value="person:#{ctx.ann.uuid}")
     assert html =~ ~s(value="person:#{ctx.bob.uuid}")
@@ -59,7 +62,8 @@ defmodule PhoenixKitProjects.Web.PickerAddsTest do
       })
 
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{project.uuid}/edit")
-    html = render_click(view, "assignee_remove", %{"kind" => "person", "uuid" => ctx.ann.uuid})
+    remove(view, "project-assignee", "person", ctx.ann.uuid)
+    html = render(view)
 
     refute html =~ ~s(value="person:#{ctx.ann.uuid}")
     assert html =~ ~s(value="person:#{ctx.bob.uuid}")
@@ -69,8 +73,9 @@ defmodule PhoenixKitProjects.Web.PickerAddsTest do
     task = fixture_task()
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
 
-    render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ctx.ann.uuid})
-    html = render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ctx.bob.uuid})
+    pick(view, "task-default-assignee", "person", ctx.ann.uuid)
+    pick(view, "task-default-assignee", "person", ctx.bob.uuid)
+    html = render(view)
 
     assert html =~ ~s(value="person:#{ctx.ann.uuid}")
     assert html =~ ~s(value="person:#{ctx.bob.uuid}")

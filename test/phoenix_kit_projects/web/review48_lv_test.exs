@@ -72,10 +72,12 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
         "status" => "todo"
       })
 
-    {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}")
+    # The redirect lives in the task's popup (its AI notes tab) since the
+    # boss's 2026-11-18 list; the page's separate notes popup is gone.
+    {:ok, view, _} =
+      live(conn, "/en/admin/projects/#{project.uuid}/assignments/#{a.uuid}?tab=notes")
 
     render_submit(view, "save_redirect", %{
-      "uuid" => a.uuid,
       "summary" => "Do it the other way",
       "usage" => %{"tokens" => 9_999_999, "minutes" => 600}
     })
@@ -102,9 +104,19 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
 
     {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}")
 
+    # A task's comments and notes no longer open here at all.
     for type <- ["assignment", "notes"] do
-      html = render_hook(view, "open_comments", %{"type" => type, "uuid" => foreign.uuid})
-      refute html =~ ~s|aria-label="Comments"|
+      {:ok, mine} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      for uuid <- [foreign.uuid, mine.uuid] do
+        html = render_hook(view, "open_comments", %{"type" => type, "uuid" => uuid})
+        refute html =~ ~s|aria-label="Comments"|
+      end
     end
 
     html = render_hook(view, "open_comments", %{"type" => "project", "uuid" => other.uuid})
@@ -146,20 +158,22 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
     test "a member may not set a direction or adopt a summary; a manager may", ctx do
       %{project: project, assignment: a} = ctx
 
-      {:ok, view, _} = live(ctx.member, "/en/admin/projects/#{project.uuid}")
+      path = "/en/admin/projects/#{project.uuid}/assignments/#{a.uuid}?tab=notes"
+      {:ok, view, html} = live(ctx.member, path)
 
-      html =
-        render_submit(view, "save_redirect", %{"uuid" => a.uuid, "summary" => "Go left instead"})
+      # the member is not offered the form, and a crafted submit is refused
+      refute html =~ "Change the direction"
+      html = render_submit(view, "save_redirect", %{"summary" => "Go left instead"})
 
-      assert html =~ "You don&#39;t have permission to do that here."
+      assert html =~ "Could not set the direction."
       assert PhoenixKitProjects.TaskNotes.latest(a.uuid).redirect == nil
 
-      render_click(view, "adopt_summary", %{"uuid" => a.uuid})
+      render_click(view, "adopt_summary", %{})
       assert Projects.get_assignment(a.uuid).description in [nil, ""]
 
       # the control: the same event from a manager is accepted
-      {:ok, mview, _} = live(ctx.manager, "/en/admin/projects/#{project.uuid}")
-      render_submit(mview, "save_redirect", %{"uuid" => a.uuid, "summary" => "Go left instead"})
+      {:ok, mview, _mhtml} = live(ctx.manager, path)
+      render_submit(mview, "save_redirect", %{"summary" => "Go left instead"})
 
       assert %{redirect: %{metadata: %{"summary" => "Go left instead"}}} =
                PhoenixKitProjects.TaskNotes.latest(a.uuid)

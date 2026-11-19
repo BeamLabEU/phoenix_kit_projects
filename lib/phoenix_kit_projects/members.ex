@@ -21,9 +21,10 @@ defmodule PhoenixKitProjects.Members do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Activity, ApiKeys}
+  alias PhoenixKit.Users.Auth.User
+  alias PhoenixKitProjects.{Activity, ApiKeys, AssigneeSet, Notices, People}
   alias PhoenixKitProjects.PubSub
-  alias PhoenixKitProjects.Schemas.ProjectMember
+  alias PhoenixKitProjects.Schemas.{Assignment, Project, ProjectMember}
 
   @doc "All members of a project, owners first, user preloaded."
   @spec list_members(binary()) :: [ProjectMember.t()]
@@ -242,8 +243,10 @@ defmodule PhoenixKitProjects.Members do
   def role_of(_, _), do: nil
 
   @doc """
-  Adds a member. Options: `:role` (default `"member"`), `:actor_uuid`.
-  Adding an existing member updates their role through the same guards.
+  Adds a member. Options: `:role` (default `"member"`), `:actor_uuid`,
+  `:log_metadata` (merged under the history entry's own, e.g. the task an
+  assignment added them through). Adding an existing member updates their
+  role through the same guards.
   """
   @spec add_member(map() | binary(), binary(), keyword()) ::
           {:ok, ProjectMember.t()} | {:error, term()}
@@ -267,9 +270,13 @@ defmodule PhoenixKitProjects.Members do
         })
         |> RepoHelper.repo().insert()
         |> tap_ok(fn member ->
-          log_member("projects.member_added", project_uuid, member, actor_uuid, %{
-            "role" => member.role
-          })
+          log_member(
+            "projects.member_added",
+            project_uuid,
+            member,
+            actor_uuid,
+            Map.merge(Keyword.get(opts, :log_metadata, %{}), %{"role" => member.role})
+          )
 
           PubSub.broadcast_project(:project_members_changed, %{uuid: project_uuid})
         end)
@@ -278,6 +285,122 @@ defmodule PhoenixKitProjects.Members do
         change_role(project_uuid, existing, role, actor_uuid)
     end
   end
+
+  @doc """
+  The rule behind "if we can assign them, they can open the project" (Max,
+  2026-11-19): after a write that put people on a task — directly, or a
+  team or department and so its people — each of them with a login who
+  cannot open the task's project becomes a **member** of it. They are told
+  (`projects.member_added`, naming the task), with nothing to accept: the
+  project is simply in their list from then on, and the history records
+  it. They stay members when taken off the task again; removing someone is
+  the Members page's.
+
+  `was_keys` are the assignees before the write (`[]` for a new task); only
+  the ones added now are looked at. Nobody is added to a template, and a
+  deactivated or API-only account never. A staff record with no login has
+  nobody to add (`assignee_reach/2` says so to the screens). Called from
+  the context's writes (`Projects.create_assignment/2`,
+  `create_task_with_assignment/4`, `update_assignment_form/3`), so the
+  form, the popup, the API and a template's clone all get it. Never
+  raises: an assignment is never lost to this. Answers the users added.
+  """
+  @spec admit_assignees(Assignment.t(), [AssigneeSet.key()], keyword()) :: [binary()]
+  def admit_assignees(%Assignment{} = a, was_keys, opts \\ []) do
+    added = AssigneeSet.keys(a) -- List.wrap(was_keys)
+
+    # A task still waiting for review (a portal request) admits nobody until
+    # it is accepted (codex, 2026-11-19).
+    with false <- Map.get(a, :review_status) == "pending",
+         [_ | _] <- added,
+         [_ | _] = users <- People.user_uuids_for(added),
+         %Project{is_template: false} = project <-
+           PhoenixKitProjects.Projects.get_project(a.project_uuid) do
+      meta = %{"via" => "assignment", "task" => task_label(a), "task_uuid" => a.uuid}
+
+      for user <- users,
+          admissible?(user, project),
+          match?(
+            {:ok, _},
+            add_member(project, user,
+              role: "member",
+              actor_uuid: Keyword.get(opts, :actor_uuid),
+              log_metadata: meta
+            )
+          ),
+          do: user
+    else
+      _ -> []
+    end
+  rescue
+    error ->
+      Logger.warning("[Projects] admitting assignees failed: #{inspect(error.__struct__)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  # The task's name as audit rows keep it. A row just written has no task
+  # loaded, so it is read once.
+  defp task_label(%Assignment{} = a) do
+    case PhoenixKitProjects.Projects.get_assignment(a.uuid) do
+      %Assignment{} = fresh -> Assignment.label(fresh)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp admissible?(user_uuid, project) do
+    case Auth.get_user(user_uuid) do
+      %User{} = user ->
+        People.assignable_user?(user) and get_member(project.uuid, user_uuid) == nil and
+          not Notices.may_view?(user_uuid, project)
+
+      _ ->
+        false
+    end
+  end
+
+  @doc """
+  Who a list of assignee keys reaches, person by person, for the screens
+  that say who will be told: `%{uuid, name, user_uuid, status}`, `status`
+  one of
+
+    * `:ok` — has a login and can open `project`;
+    * `:cannot_open` — has a login but cannot open it (assigning makes
+      them a member; until then nothing reaches them);
+    * `:no_login` — a staff record no account is linked to: nothing can
+      reach them ("No login yet").
+
+  A team or a department is expanded into its people. Never raises.
+  """
+  @spec assignee_reach([AssigneeSet.key()], Project.t()) :: [
+          %{
+            uuid: binary(),
+            name: String.t(),
+            user_uuid: binary() | nil,
+            status: :ok | :cannot_open | :no_login
+          }
+        ]
+  def assignee_reach(keys, %Project{} = project) when is_list(keys) do
+    keys
+    |> People.people_for()
+    |> Enum.map(fn person ->
+      status =
+        cond do
+          is_nil(person.user_uuid) -> :no_login
+          Notices.may_view?(person.user_uuid, project) -> :ok
+          true -> :cannot_open
+        end
+
+      Map.put(person, :status, status)
+    end)
+  rescue
+    _ -> []
+  end
+
+  def assignee_reach(_keys, _project), do: []
 
   @doc """
   Changes a member's role. Demoting the last owner is refused

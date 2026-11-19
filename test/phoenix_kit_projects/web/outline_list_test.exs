@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Features, Outline, Projects}
+  alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Web.OutlineList
 
   setup %{conn: conn} do
@@ -102,8 +103,12 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       assert_reply(view, %{asked: true})
       assert Projects.get_assignment(parent.uuid).status == "waiting"
 
+      # Even the forced tick asks (Done always does); the confirm finishes it.
       render_hook(view, "outline_tick", %{"id" => parent.uuid, "done" => true, "force" => true})
-      assert_reply(view, %{asked: false})
+      assert_reply(view, %{asked: true})
+      assert Projects.get_assignment(child.uuid).status != "done"
+
+      render_submit(view, "next_up_confirm", %{"uuid" => parent.uuid})
       assert Projects.get_assignment(child.uuid).status == "done"
     end
 
@@ -168,7 +173,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
   end
 
   describe "the cards" do
-    test "a richer project keeps cards, nested, with titles typed in place", %{conn: conn} do
+    test "a richer project keeps cards, nested, each title a link to its task", %{conn: conn} do
       p = project()
 
       {:ok, _} =
@@ -178,7 +183,10 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
 
       {:ok, view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
       refute html =~ ~s(phx-hook="PkpOutline")
-      assert html =~ ~s(id="task-title-#{child.uuid}")
+      # A created task's title opens it (the boss, 2026-11-18); only the row
+      # being typed is a text box.
+      refute html =~ ~s(id="task-title-#{child.uuid}")
+      assert has_element?(view, "#task-#{child.uuid} [phx-click='open_embed']", "Child")
       # The parent says how far its subtasks are, and folds them away.
       assert html =~ "0/1"
 
@@ -186,7 +194,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       |> element("button[phx-click='outline_fold'][phx-value-uuid='#{parent.uuid}']")
       |> render_click()
 
-      refute render(view) =~ ~s(id="task-title-#{child.uuid}")
+      refute has_element?(view, "#task-#{child.uuid}")
     end
 
     test "Enter adds the next task, Tab nests it, and a typed title is saved", %{conn: conn} do
@@ -570,16 +578,58 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       refute html =~ ~s(name="checklist_text")
 
       render_submit(element(view, "[id^='assignment-subtask-form-']"), %{"title" => "Typed here"})
-      assert "Typed here" in titles(p)
 
       view
       |> element("input[phx-click='subtask_toggle'][phx-value-uuid='#{sub.uuid}']")
       |> render_click()
 
-      assert Projects.get_assignment(sub.uuid).status == "done"
+      html = view |> form("#assignment-form") |> render_change(%{"parent_task" => other.uuid})
 
-      view |> form("#assignment-form") |> render_change(%{"parent_task" => other.uuid})
+      # All three held until Save, shown as they will be (the boss,
+      # 2026-11-18: nothing moved behind the popup before Save).
+      assert html =~ ~s(data-held="subtask")
+      assert html =~ ~s(data-held="parent")
+      refute "Typed here" in titles(p)
+      assert Projects.get_assignment(sub.uuid).status != "done"
+      assert Projects.get_assignment(holder.uuid).parent_uuid == nil
+
+      view |> form("#assignment-form") |> render_submit()
+
+      assert "Typed here" in titles(p)
+      assert Projects.get_assignment(sub.uuid).status == "done"
       assert Projects.get_assignment(holder.uuid).parent_uuid == other.uuid
+
+      typed =
+        Enum.find(Projects.list_assignments(p.uuid), &(Assignment.label(&1) == "Typed here"))
+
+      assert typed.parent_uuid == holder.uuid
+    end
+
+    test "a subtask, a tick and a move held in the form are dropped by Close", %{conn: conn} do
+      p = project()
+
+      {:ok, _} =
+        Outline.sync(
+          p.uuid,
+          [%{"text" => "Holder"}, %{"text" => "Sub", "depth" => 1}, %{"text" => "Other"}],
+          []
+        )
+
+      [holder, sub, other] = Projects.list_assignments(p.uuid)
+
+      {:ok, view, _} =
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{holder.uuid}/edit")
+
+      render_submit(element(view, "[id^='assignment-subtask-form-']"), %{"title" => "Never"})
+      render_click(view, "subtask_toggle", %{"uuid" => sub.uuid})
+      view |> form("#assignment-form") |> render_change(%{"parent_task" => other.uuid})
+      assert :sys.get_state(view.pid).socket.assigns.dirty?
+
+      render_click(view, "close_form", %{})
+
+      refute "Never" in titles(p)
+      assert Projects.get_assignment(sub.uuid).status != "done"
+      assert Projects.get_assignment(holder.uuid).parent_uuid == nil
     end
   end
 

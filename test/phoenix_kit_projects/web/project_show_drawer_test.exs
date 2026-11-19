@@ -83,7 +83,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     {host, form, html} =
       open_drawer(view, p, "button[phx-value-lv$='AssignmentFormLive']", "Add task")
 
-    assert html =~ ~s(class="modal modal-end")
+    # Centred, not a right-hand sheet (the boss, 2026-11-18).
+    refute html =~ ~s(class="modal modal-end")
+    assert html =~ "max-w-5xl"
     assert render(form) =~ "Add task"
 
     # Create-new mode, title typed: the form reports dirty → the drawer

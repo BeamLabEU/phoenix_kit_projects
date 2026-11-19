@@ -12,8 +12,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   import PhoenixKitWeb.Components.MultilangForm
   import PhoenixKitProjects.Web.Components.DurationInput, only: [duration_input: 1]
 
-  import PhoenixKitProjects.Web.Components.AssigneePicker,
-    only: [assignee_multi_picker: 1, assignee_picker_outside: 1]
+  import PhoenixKitProjects.Web.Components.AssigneeField, only: [assignee_field: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts, only: [form_header: 1, words_block: 1]
 
@@ -22,14 +21,13 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Task
-  alias PhoenixKitProjects.Web.Components.{AssigneePicker, DurationInput}
+  alias PhoenixKitProjects.Web.Components.{AssigneeField, DurationInput}
   alias PhoenixKitProjects.Web.Components.{ConfirmAction, DescriptionEditor}
   alias PhoenixKitProjects.Web.DescriptionImages
 
   import PhoenixKitProjects.Web.Components.DescriptionEditor,
     only: [description_editor: 1, description_value: 4]
 
-  @picker_events AssigneePicker.events()
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -229,26 +227,26 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
   defp assign_assignee_picker(socket) do
     socket
-    |> AssigneePicker.init(nil, can_assign?: picker_allowed?(socket), source: "task_library")
+    |> AssigneeField.init(nil, can_assign?: picker_allowed?(socket), source: "task_library")
     |> refresh_assignee_chip()
   end
 
   defp refresh_assignee_chip(%{assigns: %{form: %Phoenix.HTML.Form{source: cs}}} = socket),
-    do: AssigneePicker.set_selected(socket, AssigneePicker.changeset_keys(cs))
+    do: AssigneeField.set_selected(socket, AssigneeField.changeset_keys(cs))
 
   defp refresh_assignee_chip(socket), do: socket
 
   @doc false
-  # `AssigneePicker` callback: who may save the library task.
+  # `AssigneeField` callback: who may save the library task.
   def picker_allowed?(socket), do: can_manage?(socket) and may_write?(socket)
 
   @doc false
-  # `AssigneePicker` callback: the whole new list into the form, as if
+  # `AssigneeField` callback: the whole new list into the form, as if
   # posted (saved with Save).
   def picker_set(socket, keys) do
     attrs =
       (socket.assigns.form.params || %{})
-      |> Map.put("assignees", AssigneePicker.posted(keys))
+      |> Map.put("assignees", AssigneeField.posted(keys))
       |> merge_attrs(socket)
 
     socket
@@ -310,10 +308,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     {:noreply, WebHelpers.close_or_navigate(socket, Paths.tasks())}
   end
 
-  # The default-assignee picker (`Web.Components.AssigneePicker`).
-  def handle_event(event, params, socket) when event in @picker_events,
-    do: AssigneePicker.handle_event(event, params, socket, __MODULE__)
-
   # The library writes re-check the sub-key against the live scope.
   def handle_event(event, params, socket) when event in ~w(save add_dep remove_dep) do
     if can_manage?(socket) and may_write?(socket),
@@ -326,7 +320,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       attrs =
         attrs
         |> merge_attrs(socket)
-        |> AssigneePicker.vet_posted(socket.assigns.task)
+        |> AssigneeField.vet_posted(socket.assigns.task)
 
       save(socket, socket.assigns.live_action, attrs)
     else
@@ -409,6 +403,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   # The description editor (Leaf): its text into the form, as if the field
   # had posted it; `@` and `#` suggestions as the textarea offered them.
   @impl true
+  # The assignee picker's new list (core's `PeoplePicker`): taken only while
+  # the viewer may assign now (`AssigneeField.handle_info/3`).
+  def handle_info({PhoenixKitWeb.Components.PeoplePicker, _id, {:changed, _}} = msg, socket),
+    do: AssigneeField.handle_info(msg, socket, __MODULE__)
+
   def handle_info({:leaf_changed, _} = msg, socket) do
     case DescriptionEditor.changed(msg) do
       {"task-description", lang, markdown} -> {:noreply, put_description(socket, lang, markdown)}
@@ -664,23 +663,15 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
             <%!-- Whom the task goes to when it is added to a project (V30:
                  any number): the task popup's picker. --%>
-            <.assignee_multi_picker
+            <.assignee_field
               id="task-default-assignee"
-              label={gettext("Default assignment")}
-              search_form="task-default-assignee-form"
               name="task[assignees][]"
+              label={gettext("Default assignment")}
               selected={@assignee_selected}
-              rows={@assignee_rows}
-              can_assign?={@can_assign?}
-              my_person_uuid={@my_person_uuid}
-              recent={@recent_assignees}
-              notice={@assignee_notice}
-              view={@assignee_view}
-              home={@assignee_home}
-              more?={not is_nil(@assignee_cursor)}
-              none?={@assignee_seen == %{}}
-              open?={@assignee_open?}
-              streams={@streams}
+              can_assign={@can_assign?}
+              project_uuid={@assignee_project_uuid}
+              source={@assignee_source}
+              viewer_uuid={@assignee_viewer_uuid}
             />
           </div>
         </div>
@@ -755,7 +746,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
       <%!-- Modal lives outside the form — see project_form_live.ex. --%>
       <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
-      <.assignee_picker_outside search_form="task-default-assignee-form" staff_confirm={@staff_confirm} />
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """

@@ -1,13 +1,18 @@
-defmodule PhoenixKitProjects.Web.AssigneePickerTest do
+defmodule PhoenixKitProjects.Web.AssigneeFieldTest do
   @moduledoc """
-  The one assignee picker (`Web.Components.AssigneePicker`), shared by the
-  task and sub-project popups, and its Recent chips: the viewer's own picks
-  first — remembered on their account, so one removed again is still a press
-  away (the boss, 2026-10-30) — then whom this project's tasks went to, then
-  the site's.
+  The assignee field (`Web.Components.AssigneeField`): core's people picker
+  over this module's people, teams and departments
+  (`PhoenixKitProjects.PeopleSource`), shared by the task, sub-project,
+  project and library-task forms (the boss, 2026-11-18: the picker moved
+  into core), and its Recent chips: the viewer's own picks first —
+  remembered on their account, so one removed again is still a press away
+  (the boss, 2026-10-30) — then whom this project's tasks went to, then the
+  site's.
   """
 
   use PhoenixKitProjects.LiveCase, async: false
+
+  import PhoenixKitProjects.PickerHelpers
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Assignees, AssigneeSet, Projects}
@@ -75,12 +80,12 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
       {:ok, view, _} = edit(ctx)
       refute has_element?(view, "#assignment-assignee-recent", "Dora")
 
-      render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => dora.uuid})
+      pick(view, "assignment-assignee", "person", dora.uuid)
       assert has_element?(view, "#assignment-assignee-chip-person-#{dora.uuid}", "Dora")
       # A card above the field now, so not offered again in Recent.
       refute has_element?(view, "#assignment-assignee-recent", "Dora")
 
-      render_click(view, "assignee_remove", %{"kind" => "person", "uuid" => dora.uuid})
+      remove(view, "assignment-assignee", "person", dora.uuid)
       refute has_element?(view, "#assignment-assignee-chip-person-#{dora.uuid}")
       assert has_element?(view, "#assignment-assignee-recent", "Dora")
 
@@ -124,8 +129,8 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
       bo = person!("Boris")
       {:ok, view, _} = edit(ctx)
 
-      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ann.uuid})
-      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => bo.uuid})
+      pick(view, "assignment-assignee", "person", ann.uuid)
+      pick(view, "assignment-assignee", "person", bo.uuid)
       assert has_element?(view, "#assignment-assignee-chip-person-#{ann.uuid}")
       assert has_element?(view, "#assignment-assignee-chip-person-#{bo.uuid}")
 
@@ -138,7 +143,7 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
 
       {:ok, view, _} = edit(ctx)
       assert has_element?(view, "#assignment-assignee-chip-person-#{bo.uuid}")
-      render_click(view, "assignee_remove", %{"kind" => "person", "uuid" => ann.uuid})
+      remove(view, "assignment-assignee", "person", ann.uuid)
       refute has_element?(view, "#assignment-assignee-chip-person-#{ann.uuid}")
     end
 
@@ -146,25 +151,28 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
       for i <- 1..6, do: person!("Browse#{i}")
       {:ok, view, _} = edit(ctx)
 
-      assert has_element?(view, "#assignment-assignee-home-person")
-      view |> element("#assignment-assignee-home-person-more") |> render_click()
-      assert has_element?(view, "#assignment-assignee-options [data-assignee^='person:']")
-      refute has_element?(view, "#assignment-assignee-home-person")
+      open(view, "assignment-assignee")
+      assert has_element?(view, "#assignment-assignee-group-person")
+      view |> element("#assignment-assignee-group-person-more") |> render_click()
+      assert has_element?(view, "#assignment-assignee-options [data-pick^='person:']")
+      refute has_element?(view, "#assignment-assignee-group-person")
 
       view |> element("#assignment-assignee-back") |> render_click()
-      assert has_element?(view, "#assignment-assignee-home-person")
+      assert has_element?(view, "#assignment-assignee-group-person")
     end
 
     test "a tick in a list redraws as ticked", ctx do
       cleo = person!("Cleopatra#{System.unique_integer([:positive])}")
       {:ok, view, _} = edit(ctx)
 
-      render_change(view, "assignee_query", %{"assignee_q" => cleo.name})
-      sel = "#assignment-assignee-options [data-assignee='person:#{cleo.uuid}']"
+      query(view, "assignment-assignee", cleo.name)
+      sel = "#assignment-assignee-options [data-pick='person:#{cleo.uuid}']"
       assert has_element?(view, sel <> "[aria-selected='false']")
 
       view |> element(sel) |> render_click()
       assert has_element?(view, sel <> "[aria-selected='true']")
+      # Added in place: the list is still there, nothing redrawn from scratch.
+      assert has_element?(view, "#assignment-assignee-options [data-pick='person:#{cleo.uuid}']")
     end
   end
 
@@ -193,20 +201,48 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
        outsider: outsider, viewer: fake_scope(user_uuid: viewer.uuid, permissions: ["projects"])}
     end
 
-    test "a crafted search, query, browse or page from someone who may not assign reads nothing",
+    test "a crafted query, browse or pick from someone who may not assign reads nothing",
          ctx do
       {:ok, view, _} =
         ctx.conn
         |> put_test_scope(ctx.viewer)
         |> live("/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
 
-      render_hook(view, "assignee_search", %{"q" => "listleak", "limit" => 1000})
-      refute_push_event(view, "assignee_results", _)
+      # Chips only: no search field to type in.
+      refute has_element?(view, "#assignment-assignee-search")
 
-      html = render_hook(view, "assignee_query", %{"assignee_q" => "listleak"})
+      html = query(view, "assignment-assignee", "listleak")
       refute html =~ ctx.outsider.email
-      html = render_hook(view, "assignee_browse", %{"kind" => "person"})
+
+      html =
+        view
+        |> with_target("#assignment-assignee")
+        |> render_click("browse", %{"group" => "person"})
+
       refute html =~ "assignment-assignee-options"
+    end
+
+    test "a crafted change reaching the form without the right is refused", ctx do
+      {:ok, view, _} =
+        ctx.conn
+        |> put_test_scope(ctx.viewer)
+        |> live("/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
+
+      someone = person!("Crafted#{System.unique_integer([:positive])}")
+
+      send(
+        view.pid,
+        {PhoenixKitWeb.Components.PeoplePicker, "assignment-assignee",
+         {:changed, [{"person", someone.uuid}]}}
+      )
+
+      _ = render(view)
+      assert :sys.get_state(view.pid).socket.assigns.assignee_selected == []
+
+      refute has_element?(
+               view,
+               "input[name='assignment[assignees][]'][value='person:#{someone.uuid}']"
+             )
     end
 
     test "a trashed person cannot be ticked, nor a forged one saved", ctx do
@@ -214,7 +250,7 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
       gone |> Ecto.Changeset.change(status: "trashed") |> Repo.update!()
 
       {:ok, view, _} = edit(ctx)
-      render_hook(view, "assignee_toggle", %{"kind" => "person", "uuid" => gone.uuid})
+      pick(view, "assignment-assignee", "person", gone.uuid)
       refute has_element?(view, "#assignment-assignee-chip-person-#{gone.uuid}")
 
       {:ok, view, _} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new")
@@ -240,7 +276,7 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
 
     test "someone who may assign still finds the account", ctx do
       {:ok, view, _} = edit(ctx)
-      html = render_hook(view, "assignee_query", %{"assignee_q" => "listleak"})
+      html = query(view, "assignment-assignee", "listleak")
       assert html =~ ctx.outsider.email
     end
   end
@@ -278,7 +314,7 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
       |> form("#subproject-form", %{"subproject" => %{"name" => "Pantry"}})
       |> render_change()
 
-      render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => fia.uuid})
+      pick(view, "subproject-assignee", "person", fia.uuid)
       assert has_element?(view, "#subproject-assignee-chips", "Fia")
 
       view |> form("#subproject-form") |> render_submit()

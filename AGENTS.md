@@ -11,9 +11,11 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 3.5.0 and < 4.0.0` (Hex — floor 3.5.0;
-  the compound form keeps the ceiling open across later 3.x minors and
-  `core_pin_conformance_test.exs` guards it),
+- **Depends on:** `phoenix_kit` `>= 3.7.0 and < 4.0.0` (Hex — floor 3.7.0, the
+  first core with `PhoenixKitWeb.Components.PeoplePicker`, the release after
+  3.6.1: match it to the version that ships it; the compound form keeps the
+  ceiling open across later 3.x minors and `core_pin_conformance_test.exs`
+  guards it),
   `phoenix_kit_ai` `~> 0.28` (hard — the AI-translation pipeline),
   `phoenix_kit_comments` `~> 0.5` (hard — `ProjectShowLive` does
   `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `>= 0.11.1 and < 1.0.0` (hard since the module-table-ownership
@@ -1896,6 +1898,67 @@ reference:
   `phoenix_kit_projects_drafts.js`, global `PhoenixKitProjectsDraftHooks`),
   `PkpTabScroll`, `PkpDrawerUrl`, `PkpUrlMirror` (`phoenix_kit_projects.js`,
   `PhoenixKitProjectsHooks`).
+
+## Boss review of 2026-11-18 (tim-dev, the fourth list)
+
+What it changed, by where it lives — each module's `@moduledoc` is the
+reference:
+
+- **The task popup is centred** (`ProjectShowLive`'s `PopupHostLive`:
+  `"placement" => "center"`, `"max_width" => "5xl"`), and it is the one
+  popup per task: the row's comment button, the ⋮ "AI notes" item and the
+  AI-time chip open it on that tab (`AssignmentViewLive` takes `"tab"` in
+  its session or `?tab=` — `comments`, `history`, `notes` — and focuses the
+  activity section). The notes tab carries "Change the direction" and "Use
+  as description" (`save_redirect` / `adopt_summary`, `:edit_tasks` asked
+  again at the write). The page's own comments popup is for the PROJECT's
+  thread only (`open_comments` accepts `type: "project"`).
+- **A task's title opens it.** On the cards, a title is a text box only
+  while it is the row being typed (`OutlineList`'s `outline_focus`: after a
+  Tab or a split line); `outline_blur` turns it back into the link. Renaming
+  is the pencil in the popup (`rename_start` / `rename_save`, the card
+  title's rules: a one-off task with `:edit_tasks`, a library task with
+  `projects.manage_library` too, and only while the title shown is the
+  primary one).
+- **Quick add at the top** (`PkpQuickTop` hook, `outline_quick_add`): one
+  title, or a pasted list, each a task at the end of the top level; the
+  reply's count and last title fill the note under the field, which keeps
+  the cursor.
+- **Card menus are native popovers** (`card_pop/1` + `PkpPop`): status,
+  deadline and who-has-it open in the browser's top layer, so a faded
+  card (`opacity-75` done rows, `PkpLinks`' half-opacity fade) can never
+  paint over them; `popover="auto"` closes the others, Esc and an outside
+  click close it; a `role="menuitem"` or `[data-pop-close]` closes it once
+  used. Core's ⋮ `table_row_menu` was already top-layer.
+- **The list keeps a readable width** (`max-w-6xl`), a row highlights on
+  hover, and on `2xl` screens an optional side panel beside it
+  (`side_panel/1`: Discussion, Activity, Timeline, Calendar — the Board is
+  the page's own markup and is not offered twice) — collapsed by default,
+  each viewer's choice kept in `custom_fields["projects_side_panel"]`
+  (`%{"open", "view"}`, written with `Auth.merge_user_custom_fields/3`).
+- **Destructive ×'s ask first**: the "depends on" chip (`remove_dependency`)
+  and "stop tracking progress" (`toggle_tracking`) go through
+  `ConfirmAction`.
+- **The step into `todo` is named as the status** ("Can be started";
+  `action_label(:allow_start)`).
+- **Leaf** for the reopen reason, the redirect's reason and an event's
+  description; a page answers `@`/`#` for its own `pkp-dialog-*` editors
+  (`{:leaf_suggest, …}` → `DescriptionEditor.suggest/3`).
+- **The task form writes nothing before Save** (item 8): waits-on,
+  sits-under, the subtasks box and file removals are held (shown as they
+  will be, marked "not saved"); a file stored in an unsaved edit is removed
+  again on Close. Logging time and the portal switches stay immediate.
+- **Assigning someone admits them** (`Members.admit_assignees/3`, from
+  `create_assignment/2`, `create_task_with_assignment/4` and
+  `update_assignment_form/3`): a person (or a team's / department's people)
+  who cannot open the project becomes a `member`, told "you were added";
+  `Members.assignee_reach/2` labels people `:ok | :cannot_open | :no_login`
+  for the dialogs. The notification types read plainly, each with an
+  `example`; a dialog's comment and a reopen reason ride as the core
+  notification quote (`Notices.with_quote/4`).
+- **`PhoenixKitProjects.PeopleSource`** is the module's source for core's
+  `PeoplePicker` (staff's teams, departments, people, and accounts without
+  a staff record behind the "Create a staff record?" question).
 
 ## TODOs
 

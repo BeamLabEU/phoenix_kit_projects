@@ -387,6 +387,72 @@ defmodule PhoenixKitProjects.People do
   defp key_user_uuids(_), do: []
 
   @doc """
+  The people a list of assignee keys stands for — a person, a team's
+  members, a department's people (its own and its teams') — each once,
+  WITH or without a login account: `%{uuid, name, user_uuid}`, `user_uuid`
+  nil for a staff record no account is linked to. Trashed people are left
+  out. What `user_uuids_for/1` reads before it drops the people with no
+  account; the screens use it to say who cannot be told (Max, 2026-11-19:
+  "No login yet").
+  """
+  @spec people_for([{String.t(), binary()}]) :: [
+          %{uuid: binary(), name: String.t(), user_uuid: binary() | nil}
+        ]
+  def people_for(keys) when is_list(keys) do
+    person_uuids = keys |> Enum.flat_map(&key_person_uuids/1) |> Enum.uniq()
+
+    if person_uuids == [] do
+      []
+    else
+      people =
+        from(p in Person,
+          where: p.uuid in ^person_uuids and p.status != @trashed,
+          preload: [:user]
+        )
+        |> RepoHelper.repo().all()
+        |> Map.new(&{&1.uuid, &1})
+
+      for uuid <- person_uuids, %Person{} = p <- [people[uuid]] do
+        %{uuid: p.uuid, name: display_name(p), user_uuid: p.user_uuid}
+      end
+    end
+  rescue
+    _ -> []
+  end
+
+  def people_for(_keys), do: []
+
+  defp key_person_uuids({"person", uuid}) when is_binary(uuid), do: [uuid]
+
+  defp key_person_uuids({"team", uuid}) when is_binary(uuid) do
+    from(m in TeamMembership, where: m.team_uuid == ^uuid, select: m.staff_person_uuid)
+    |> RepoHelper.repo().all()
+  rescue
+    _ -> []
+  end
+
+  defp key_person_uuids({"department", uuid}) when is_binary(uuid) do
+    in_teams =
+      from(m in TeamMembership,
+        join: t in Team,
+        on: t.uuid == m.team_uuid,
+        where: t.department_uuid == ^uuid,
+        select: m.staff_person_uuid
+      )
+
+    from(p in Person,
+      where: p.primary_department_uuid == ^uuid or p.uuid in subquery(in_teams),
+      select: p.uuid,
+      distinct: true
+    )
+    |> RepoHelper.repo().all()
+  rescue
+    _ -> []
+  end
+
+  defp key_person_uuids(_), do: []
+
+  @doc """
   The names of a record's assignees — the person's, the team's or the
   department's (primary names, as audit rows keep them) — joined with
   ", " in chip order, or nil when nobody is on it.

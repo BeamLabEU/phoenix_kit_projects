@@ -7,6 +7,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormTabsTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import PhoenixKitProjects.PickerHelpers
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Test.Repo
@@ -49,7 +51,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormTabsTest do
     gert = Repo.insert!(%Person{user_uuid: user.uuid, status: "active", name: "Gert"})
     {:ok, view, _} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/edit")
 
-    render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => gert.uuid})
+    pick(view, "project-assignee", "person", gert.uuid)
     assert has_element?(view, "#project-assignee-chips", "Gert")
     view |> form("#project-form") |> render_submit()
 

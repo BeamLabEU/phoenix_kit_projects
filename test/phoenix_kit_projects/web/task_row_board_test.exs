@@ -279,12 +279,12 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
 
       render_hook(view, "board_move", %{
         "moved_id" => a.uuid,
-        "status" => "done",
+        "status" => "in_progress",
         "ordered_ids" => [a.uuid]
       })
 
       assert_push_event(view, "sortable:flash", %{status: "ok"})
-      assert Projects.get_assignment(a.uuid).status == "done"
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
     end
 
     test "a waiting card dropped into In progress is released through its dialog, not started",
@@ -389,12 +389,33 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
 
       render_hook(view, "board_move", %{
         "moved_id" => a.uuid,
-        "status" => "done",
+        "status" => "in_progress",
         "ordered_ids" => [a.uuid]
       })
 
       assert_push_event(view, "sortable:flash", %{status: "ok"})
       refute_push_event(view, "pkp-board:revert", %{})
+    end
+
+    test "a drop into Done asks first and waits in its column", %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      a = task(project, "Finish", %{"status" => "todo"})
+
+      {:ok, view, _html} = show(conn, project)
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "done",
+        "ordered_ids" => [a.uuid]
+      })
+
+      uuid = a.uuid
+      assert_push_event(view, "pkp-board:revert", %{uuid: ^uuid})
+      assert Projects.get_assignment(a.uuid).status == "todo"
+      assert render(view) =~ "Mark done"
+
+      render_submit(view, "next_up_confirm", %{"uuid" => a.uuid})
+      assert Projects.get_assignment(a.uuid).status == "done"
     end
 
     test "a drop into a column that does not exist goes back", %{conn: conn} do

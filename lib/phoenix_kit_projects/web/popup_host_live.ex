@@ -43,7 +43,8 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     **drawer** — every frame is a full-height sheet sliding in from the
     right edge (core `<.modal placement={:end}>`), the shape for a
     create/edit form opened over the page it belongs to. The admin's
-    project page uses it for its task forms.
+    project page used it for its task forms until the boss's 2026-11-18
+    list; it now opens them centred (`"max_width" => "5xl"`).
   - `"max_width"` (optional) — core `<.modal>` `max_width` for every
     frame: `"6xl"` by default for the centered box, `"2xl"` by default
     for the drawer.

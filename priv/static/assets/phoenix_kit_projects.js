@@ -17,6 +17,12 @@
  *
  * PkpTitle: one task title edited in place on a card row.
  *
+ * PkpPop: a task card's small menu (status, deadline, who has it) drawn in
+ * the browser's top layer, under its trigger.
+ *
+ * PkpQuickTop: the quiet "+ Add a task" line at the top of a task list;
+ * Enter adds, the cursor stays for the next title.
+ *
  * PkpBoard: one column of the board, its cards dragged between columns.
  *
  * PkpTabScroll: the one scroll area under a tab strip, back to its top
@@ -1153,7 +1159,11 @@
         if (rows.length === 0) return;
         self.save(function () { self.pushEvent("outline_paste", { after: el.dataset.id, lines: rows }); });
       });
-      el.addEventListener("blur", function () { if (el.value.trim() === "") self.pushEvent("outline_drop", { id: el.dataset.id }); else self.save(); });
+      el.addEventListener("blur", function () {
+        if (el.value.trim() === "") { self.pushEvent("outline_drop", { id: el.dataset.id }); return; }
+        // Saved, then the row turns back into the task's link.
+        self.save(function () { self.pushEvent("outline_blur", { id: el.dataset.id }); });
+      });
       this.wanted = el.dataset.focus === "1";
       if (this.wanted) { el.focus(); el.setSelectionRange(0, 0); }
     },
@@ -1938,7 +1948,161 @@
     });
   }
 
+  /*
+   * PkpQuickTop: the quick-add line at the top of a task list (the boss,
+   * 2026-11-18). At rest only its "+ Add a task" button shows; a click
+   * opens the field. Enter sends the title (`outline_quick_add`), empties
+   * the field and keeps the cursor in it for the next one; the reply's
+   * count and last title fill the note under it, since the new task lands
+   * where the list's order puts it, often out of sight. A pasted list adds
+   * a task per line. Escape, or leaving an empty field, folds it back.
+   */
+  var QuickTop = {
+    mounted: function () {
+      var self = this;
+      var root = this.el;
+      var open = root.querySelector("[data-quick-open]");
+      var field = root.querySelector("[data-quick-field]");
+      var input = root.querySelector("input");
+      var note = root.querySelector("[data-quick-note]");
+      this.total = 0;
+
+      function show(on) {
+        open.classList.toggle("hidden", on);
+        field.classList.toggle("hidden", !on);
+        if (on) { input.focus(); } else { input.value = ""; note.textContent = ""; self.total = 0; }
+      }
+
+      function send(payload) {
+        self.pushEvent("outline_quick_add", payload, function (reply) {
+          if (!reply || !reply.added) return;
+          self.total += reply.added;
+          // Count first, then the title by split/join: a title holding
+          // "%{count}" or "$&" stays as typed (codex, 2026-11-19).
+          note.textContent = (root.dataset.added || "Added: %{title} · %{count} added")
+            .split("%{count}").join(String(self.total))
+            .split("%{title}").join(reply.last || "");
+        });
+      }
+
+      open.addEventListener("click", function () { show(true); });
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.isComposing) {
+          e.preventDefault();
+          var text = input.value.replace(/\s+/g, " ").trim();
+          if (text === "") return;
+          input.value = "";
+          send({ text: text });
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          show(false);
+        }
+      });
+      input.addEventListener("paste", function (e) {
+        var plain = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
+        if (plain.indexOf("\n") === -1) return;
+        e.preventDefault();
+        var lines = parsePasted(plain).map(function (r) { return r.text; });
+        if (lines.length) send({ lines: lines });
+      });
+      input.addEventListener("blur", function () {
+        if (input.value.trim() === "") setTimeout(function () {
+          if (document.activeElement !== input) show(false);
+        }, 150);
+      });
+    }
+  };
+
+  /*
+   * PkpPop: a card's menu as a native popover (`popover="auto"`): the top
+   * layer, so no neighbouring card can paint over it (a faded card makes a
+   * stacking context that a z-index cannot leave), and the browser closes
+   * one when another opens, on Esc and on a click outside. This hook only
+   * places the panel under its trigger, above it when there is no room
+   * below, inside the viewport, and keeps it there while the page scrolls.
+   * A menu item, or anything marked `data-pop-close`, closes it once
+   * clicked (a form marked so: once submitted). Browsers without the
+   * Popover API get a plain toggle.
+   */
+  var Pop = {
+    mounted: function () {
+      var self = this;
+      this.trigger = this.el.querySelector("[data-pop-trigger]");
+      this.panel = this.el.querySelector("[data-pop-panel]");
+      this.place = function () { self.position(); };
+      var panel = this.panel;
+      if (!panel || !this.trigger) return;
+
+      if (typeof panel.showPopover !== "function") {
+        panel.removeAttribute("popover");
+        panel.style.display = "none";
+        panel.style.position = "fixed";
+        panel.style.zIndex = "9999";
+        this.trigger.removeAttribute("popovertarget");
+        this.trigger.addEventListener("click", function () {
+          var open = panel.style.display === "none";
+          panel.style.display = open ? "block" : "none";
+          if (open) self.position();
+        });
+      } else {
+        panel.addEventListener("toggle", function (e) {
+          if (e.newState === "open") {
+            self.position();
+            window.addEventListener("scroll", self.place, true);
+            window.addEventListener("resize", self.place);
+          } else {
+            window.removeEventListener("scroll", self.place, true);
+            window.removeEventListener("resize", self.place);
+          }
+        });
+      }
+
+      panel.addEventListener("click", function (e) {
+        var hit = e.target.closest("[role='menuitem'], [data-pop-close]");
+        if (hit && hit.tagName !== "FORM" && !hit.disabled) setTimeout(function () { self.close(); }, 0);
+      });
+      panel.addEventListener("submit", function (e) {
+        if (e.target.closest("[data-pop-close]")) setTimeout(function () { self.close(); }, 0);
+      });
+    },
+    updated: function () { if (this.isOpen()) this.position(); },
+    destroyed: function () {
+      window.removeEventListener("scroll", this.place, true);
+      window.removeEventListener("resize", this.place);
+    },
+    isOpen: function () {
+      var p = this.panel;
+      if (!p) return false;
+      try { return p.matches(":popover-open"); } catch (_e) { return p.style.display === "block"; }
+    },
+    close: function () {
+      var p = this.panel;
+      if (!p) return;
+      if (typeof p.hidePopover === "function") { try { p.hidePopover(); } catch (_e) {} }
+      else p.style.display = "none";
+    },
+    position: function () {
+      var p = this.panel, t = this.trigger;
+      if (!p || !t) return;
+      var r = t.getBoundingClientRect();
+      var gap = 4, margin = 8;
+      var w = p.offsetWidth, h = p.offsetHeight;
+      var vw = document.documentElement.clientWidth, vh = window.innerHeight;
+      var top = r.bottom + gap;
+      if (top + h > vh - margin && r.top - gap - h >= margin) top = r.top - gap - h;
+      var left = Math.min(Math.max(r.left, margin), Math.max(margin, vw - w - margin));
+      p.style.position = "fixed";
+      p.style.top = Math.round(top) + "px";
+      p.style.left = Math.round(left) + "px";
+      p.style.right = "auto";
+      p.style.bottom = "auto";
+      p.style.margin = "0";
+    }
+  };
+
   window.PhoenixKitProjectsHooks = {
+    PkpPop: Pop,
+    PkpQuickTop: QuickTop,
     PkpOutline: Outline,
     PkpTitle: Title,
     PkpLinks: Links,

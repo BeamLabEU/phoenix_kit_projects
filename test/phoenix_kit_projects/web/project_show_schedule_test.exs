@@ -169,6 +169,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
           "progress_pct" => "100"
         })
 
+      # Reaching 100 is Done, and Done asks first.
+      _ = render_submit(view, "next_up_confirm", %{"uuid" => a.uuid})
+
       reread = Projects.get_assignment(a.uuid)
       assert reread.status == "done"
       assert reread.progress_pct == 100
@@ -252,6 +255,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "200"})
+      _ = render_submit(view, "next_up_confirm", %{"uuid" => a.uuid})
 
       reread = Projects.get_assignment(a.uuid)
       assert reread.progress_pct == 100

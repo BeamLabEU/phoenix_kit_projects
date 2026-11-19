@@ -143,12 +143,14 @@ defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
 
   @doc """
   The step that moves a task INTO a status, phrased on the status's own
-  root (`pgettext "task action"`): Можно начинать ← Разрешить начать, В работе ← Взять в работу, Выполнена ←
-  Отметить выполненной, and Открыть заново out of done.
+  root (`pgettext "task action"`): В работе ← Взять в работу, Выполнена ←
+  Отметить выполненной, and Открыть заново out of done. The step into
+  `todo` is named exactly as the status, "Can be started" (the boss,
+  2026-11-18: "the button should be can be started").
   """
   @spec action_label(:allow_start | :start | :mark_done | :reopen, boolean()) :: String.t()
   def action_label(action, subproject? \\ false)
-  def action_label(:allow_start, _), do: pgettext("task action", "Allow start")
+  def action_label(:allow_start, _), do: pgettext("task action", "Can be started")
   def action_label(:start, _), do: pgettext("task action", "Start")
   def action_label(:mark_done, true), do: pgettext("sub-project action", "Mark done")
   def action_label(:mark_done, _), do: pgettext("task action", "Mark done")

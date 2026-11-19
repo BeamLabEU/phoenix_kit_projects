@@ -43,7 +43,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLinksTest do
 
     assert has_element?(
              view,
-             ~s([phx-click="remove_dependency"][phx-value-assignment="#{ctx.measure.uuid}"])
+             # the chip's x asks first (the boss, 2026-11-18)
+             ~s([phx-value-event="remove_dependency"][phx-value-assignment="#{ctx.measure.uuid}"])
            )
 
     # The rail that drew one line through every row is gone.

@@ -111,7 +111,10 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      # Floor 3.5.0, ceiling open through every core 3.x.
+      # Floor 3.7.0, ceiling open through every core 3.x: the assignee fields
+      # and the next-up dialogs are core's `PeoplePicker` (with
+      # `PhoenixKitProjects.PeopleSource`), first released in the core version
+      # after 3.6.1 — set this to the version that release carries.
       # `Web.Helpers.assign_embed_user/2` and the notification fan-outs call core
       # directly, with no fallback for an older one.
       #
@@ -121,7 +124,7 @@ defmodule PhoenixKitProjects.MixProject do
       # the breakage lands only on consumers. Core majors are not assumed
       # compatible. `core_pin_conformance_test.exs` guards this, and
       # `core_ui_api_conformance_test.exs` the core attrs and slots the pages use.
-      pk_dep(:phoenix_kit, ">= 3.5.0 and < 4.0.0"),
+      pk_dep(:phoenix_kit, ">= 3.7.0 and < 4.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into, and calls
       # `handle_ai_usage/1` back. 0.28 is the release this package is built and

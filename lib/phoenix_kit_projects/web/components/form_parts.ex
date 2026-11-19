@@ -19,7 +19,7 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
       press each.
 
   The assignee picker, the time pickers and the amount-of-time input are
-  components of their own (`AssigneePicker`, `TimeInput`,
+  components of their own (`AssigneeField`, `TimeInput`,
   `DurationInput`).
   """
 

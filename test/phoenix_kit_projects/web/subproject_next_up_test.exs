@@ -56,6 +56,8 @@ defmodule PhoenixKitProjects.Web.SubprojectNextUpTest do
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.child.uuid}")
 
     render_click(view, "complete", %{"uuid" => ctx.cut.uuid})
+    # Done asks first; the sub-project finishes on the confirm.
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.cut.uuid})
 
     assert status(ctx.cut) == "done"
     assert status(ctx.link) == "done"
@@ -86,6 +88,8 @@ defmodule PhoenixKitProjects.Web.SubprojectNextUpTest do
       |> live("/en/admin/projects/#{ctx.child.uuid}")
 
     render_click(view, "complete", %{"uuid" => ctx.cut.uuid})
+    # Done asks first; the sub-project finishes on the confirm.
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.cut.uuid})
 
     assert status(ctx.cut) == "done"
     refute render(view) =~ "Fit the worktop"
@@ -96,6 +100,8 @@ defmodule PhoenixKitProjects.Web.SubprojectNextUpTest do
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.child.uuid}")
 
     render_click(view, "complete", %{"uuid" => ctx.cut.uuid})
+    # Done asks first; the sub-project finishes on the confirm.
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.cut.uuid})
     assert has_element?(view, dialog(ctx.child))
 
     render_click(view, "next_up_close", %{})
@@ -110,6 +116,8 @@ defmodule PhoenixKitProjects.Web.SubprojectNextUpTest do
 
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.child.uuid}")
     render_click(view, "complete", %{"uuid" => ctx.cut.uuid})
+    # Done asks first; the sub-project finishes on the confirm.
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.cut.uuid})
     render_click(view, "next_up_toggle_idle", %{"uuid" => other.uuid})
     render_submit(view, "next_up_confirm", %{"uuid" => ctx.link.uuid})
 
@@ -122,6 +130,8 @@ defmodule PhoenixKitProjects.Web.SubprojectNextUpTest do
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.child.uuid}")
 
     render_click(view, "complete", %{"uuid" => ctx.cut.uuid})
+    # Done asks first; the sub-project finishes on the confirm.
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.cut.uuid})
     refute has_element?(view, dialog(ctx.child))
     assert status(second) == "todo"
     assert status(ctx.fit) == "waiting"

@@ -12,14 +12,26 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
   outright, with no degraded mode. Nothing else in this repo's own test run
   would notice, which is why the check is a test rather than a convention.
 
-  The requirement is `>= 3.5.0 and < 4.0.0`: 3.5.0 is the minimum core every
-  module requires, and the ceiling is open through every core 3.x.
+  The requirement is `>= 3.7.0 and < 4.0.0`: 3.7.0 is the first core with
+  `PhoenixKitWeb.Components.PeoplePicker`, which the assignee fields and the
+  next-up dialogs are built on (the boss's 2026-11-18 list), and the ceiling
+  is open through every core 3.x.
   """
 
-  @must_admit ["3.5.0", "3.5.1", "3.6.0", "3.9.9"]
-  @must_reject ["1.7.236", "2.0.0", "2.65.0", "2.99.4", "3.0.0", "3.4.0", "3.4.9", "4.0.0"]
+  @must_admit ["3.7.0", "3.7.1", "3.8.0", "3.9.9"]
+  @must_reject [
+    "1.7.236",
+    "2.0.0",
+    "2.65.0",
+    "2.99.4",
+    "3.0.0",
+    "3.4.9",
+    "3.5.0",
+    "3.6.1",
+    "4.0.0"
+  ]
 
-  test "the :phoenix_kit requirement admits every core >= 3.5.0 minor and nothing else" do
+  test "the :phoenix_kit requirement admits every core >= 3.7.0 minor and nothing else" do
     requirement = core_requirement()
 
     assert match?({:ok, _parsed}, Version.parse_requirement(requirement)),
@@ -30,7 +42,7 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
              "`:phoenix_kit` requirement #{inspect(requirement)} rejects core #{version}. " <>
                "A pin that excludes a core minor breaks `mix deps.get` for every host " <>
                "running this module alongside that core. Keep the floor patch-precise " <>
-               "and the ceiling open (`>= 3.5.0 and < 4.0.0`), never a three-segment `~>`."
+               "and the ceiling open (`>= 3.7.0 and < 4.0.0`), never a three-segment `~>`."
     end
 
     for version <- @must_reject do

@@ -43,6 +43,8 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     Refs
   }
 
+  alias Phoenix.LiveView.JS
+  alias PhoenixKitProjects.{Activity, TaskNotes}
   alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
@@ -50,6 +52,8 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   import PhoenixKitProjects.Web.Components.TaskTimes, only: [deadline_chip: 1, planned_label: 1]
+  import PhoenixKitProjects.Web.Components.DescriptionEditor, only: [description_editor: 1]
+  alias PhoenixKitProjects.Web.Components.DescriptionEditor
   import PhoenixKitProjects.Web.Components.RichText, only: [rich_text: 1]
   import PhoenixKitProjects.Web.Components.TaskFiles, only: [task_files: 1]
 
@@ -70,8 +74,14 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
         wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
         embed_redirect_to: Map.get(session, "redirect_to"),
         back_to: Map.get(session, "back_to"),
-        activity_tab: nil,
-        desc_open?: false
+        # The row's comment and notes buttons open the view on that tab
+        # (the boss, 2026-11-18: one popup per task, not a second one for
+        # its comments), scrolled to it.
+        activity_tab: requested_tab(params, session),
+        focus_activity?: requested_tab(params, session) != nil,
+        desc_open?: false,
+        notes_summary_preview: nil,
+        renaming?: false
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
@@ -181,7 +191,13 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
       can_step?: may_step?(fx, project, scope, a),
       # The project's "who may comment" floor: below it the threads are
       # read-only (the comments component takes a nil user as a reader).
-      may_comment?: Authz.can?(scope, project, :comment)
+      may_comment?: Authz.can?(scope, project, :comment),
+      notes_summary_preview: notes_summary_preview(a),
+      # `@` in the comments offers the task's people first, then the
+      # project's members (item 21) — read once per load, not per render.
+      mention_people:
+        if(threads, do: PhoenixKitProjects.CommentMentions.people(project, a), else: []),
+      can_rename?: can_rename?(scope, project, a)
     )
   end
 
@@ -237,6 +253,55 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   end
 
   defp threads(_project, _a), do: nil
+
+  # The pencil beside the title (the boss, 2026-11-18: the title on the
+  # list only opens the task, so renaming moved in here). The same rules as
+  # renaming a card's title: a one-off task with `:edit_tasks`, a library
+  # task with the library right too, and only while the title shown is the
+  # task's own (a translated title is edited in the form's language tab).
+  defp can_rename?(scope, %Project{is_template: false} = project, %Assignment{
+         task: %Task{} = task
+       }) do
+    Authz.can?(scope, project, :edit_tasks) and
+      (task.ad_hoc == true or Authz.manage_library?(scope)) and
+      Task.localized_title(task, L10n.current_content_lang()) == task.title
+  end
+
+  defp can_rename?(_scope, _project, _a), do: false
+
+  defp maybe_rename(%Task{title: title} = task, title), do: {:ok, task}
+  defp maybe_rename(task, title), do: Projects.update_task(task, %{"title" => title})
+
+  # The right asked at the write, against the project as stored now.
+  defp may_edit_now?(%{assigns: %{project: %Project{uuid: uuid}}} = socket) do
+    case Projects.get_project(uuid) do
+      %Project{is_template: false} = project ->
+        Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :edit_tasks)
+
+      _ ->
+        false
+    end
+  end
+
+  defp may_edit_now?(_socket), do: false
+
+  defp requested_tab(params, session) do
+    tab = (is_map(params) && params["tab"]) || Map.get(session, "tab")
+    if tab in ~w(comments history notes), do: tab
+  end
+
+  # The latest summary an agent or a redirect left, for "Use as
+  # description" (nil when the description is already it, or none).
+  defp notes_summary_preview(a) do
+    description = a.description || (match?(%Task{}, a.task) && a.task.description) || nil
+
+    case TaskNotes.display_summary(description, TaskNotes.latest(a.uuid)) do
+      %{source: source, text: text} when source in [:redirect, :agent] -> text
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
 
   defp history(%Project{is_template: false} = project, a) do
     PhoenixKitProjects.History.list(project, task: a.uuid).entries
@@ -329,6 +394,109 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     {:noreply, assign(socket, activity_tab: tab)}
   end
 
+  # "No, that's wrong — do X": a redirect note, the API's first answer to
+  # the next agent. Moved here from the page's separate notes popup; the
+  # same right as there (`:edit_tasks`), read again at the write.
+  def handle_event("save_redirect", params, socket) do
+    with true <- may_edit_now?(socket),
+         a = socket.assigns.assignment,
+         {:ok, fields} <- TaskNotes.validate(Map.take(params, ~w(summary content)), "redirect"),
+         {:ok, _} <-
+           TaskNotes.create(a, fields,
+             user_uuid: Activity.actor_uuid(socket),
+             kind: "redirect",
+             metadata: %{"via" => "web"}
+           ) do
+      Activity.log("projects.assignment_redirected",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: a.uuid,
+        metadata: %{"summary" => fields.summary}
+      )
+
+      {:noreply,
+       socket
+       |> assign(notes_summary_preview: notes_summary_preview(a))
+       |> put_flash(:info, gettext("Direction set."))}
+    else
+      {:error, %{"summary" => _}} ->
+        {:noreply, put_flash(socket, :error, gettext("Write one line for the new direction."))}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Could not set the direction."))}
+    end
+  end
+
+  # The latest summary becomes the task's description — a person's act,
+  # logged as machine-made text adopted.
+  def handle_event("adopt_summary", _params, socket) do
+    a = socket.assigns.assignment
+
+    with true <- may_edit_now?(socket),
+         # The same rule as the button: only while the task has no
+         # description of its own (codex, 2026-11-19).
+         %{text: text, source: source} when is_binary(text) and source != :description <-
+           TaskNotes.display_summary(a.description, TaskNotes.latest(a.uuid)),
+         {:ok, _} <- Projects.update_assignment_form(a, %{"description" => text}) do
+      Activity.log("projects.assignment_updated",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: a.uuid,
+        metadata: %{"description_from" => to_string(source), "machine_made" => source == :agent}
+      )
+
+      {:noreply,
+       socket
+       |> assign(notes_summary_preview: nil)
+       |> put_flash(:info, gettext("Description set from the latest summary."))}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Nothing to adopt."))}
+    end
+  end
+
+  def handle_event("rename_start", _params, %{assigns: %{can_rename?: true}} = socket),
+    do: {:noreply, assign(socket, renaming?: true)}
+
+  def handle_event("rename_cancel", _params, socket),
+    do: {:noreply, assign(socket, renaming?: false)}
+
+  def handle_event("rename_save", %{"title" => title}, socket) when is_binary(title) do
+    title = title |> String.replace(~r/\s+/u, " ") |> String.trim()
+    a = socket.assigns.assignment
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    with true <- title != "",
+         %Project{} = project <- Projects.get_project(socket.assigns.project.uuid),
+         %Assignment{task: %Task{} = task} = fresh <- Projects.get_assignment(a.uuid),
+         true <- can_rename?(scope, project, fresh),
+         {:ok, _} <- maybe_rename(task, title) do
+      Activity.log("projects.assignment_updated",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: a.uuid,
+        metadata: %{"fields" => ["title"]}
+      )
+
+      {:noreply,
+       socket
+       |> assign(renaming?: false)
+       |> load(socket.assigns.project.uuid, a.uuid)}
+    else
+      false when title == "" ->
+        {:noreply, assign(socket, renaming?: false)}
+
+      _ ->
+        {:noreply,
+         socket
+         |> assign(renaming?: false)
+         |> put_flash(:error, gettext("Could not rename the task."))}
+    end
+  end
+
+  # A crafted save with no title, or not a string: nothing to rename (zai,
+  # 2026-11-19).
+  def handle_event("rename_save", _params, socket), do: {:noreply, socket}
+
   def handle_event("toggle_desc", _params, socket),
     do: {:noreply, assign(socket, desc_open?: not socket.assigns.desc_open?)}
 
@@ -371,6 +539,12 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     {:noreply, reload(socket)}
   end
 
+  # `@` and `#` in the redirect's editor.
+  def handle_info({:leaf_suggest, %{editor_id: "pkp-dialog-" <> _}} = msg, socket),
+    do:
+      {:noreply,
+       DescriptionEditor.suggest(socket, msg, %{"project" => socket.assigns.project.uuid})}
+
   def handle_info(msg, socket) do
     Logger.debug("[AssignmentViewLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}
@@ -411,9 +585,46 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
             <.icon name="hero-arrow-left" class="w-4 h-4" />
           </button>
           <.ref_chip :if={@ref} ref={@ref} />
-          <h2 class="flex-1 min-w-0 text-lg font-semibold leading-tight break-words">
-            {Assignment.label(@assignment, @lang)}
-          </h2>
+          <%= if @renaming? do %>
+            <form
+              id={"task-view-rename-#{@assignment.uuid}"}
+              phx-submit="rename_save"
+              class="flex-1 min-w-0 flex items-center gap-1"
+            >
+              <input
+                type="text"
+                name="title"
+                value={Assignment.label(@assignment, @lang)}
+                maxlength="500"
+                autocomplete="off"
+                phx-mounted={JS.focus()}
+                phx-keydown="rename_cancel"
+                phx-key="Escape"
+                aria-label={gettext("Task title")}
+                class="input input-sm w-full font-semibold"
+              />
+              <button type="submit" class="btn btn-primary btn-sm" phx-disable-with={gettext("Saving…")}>
+                {gettext("Save")}
+              </button>
+              <button type="button" phx-click="rename_cancel" class="btn btn-ghost btn-sm">
+                {gettext("Cancel")}
+              </button>
+            </form>
+          <% else %>
+            <h2 class="flex-1 min-w-0 text-lg font-semibold leading-tight break-words">
+              {Assignment.label(@assignment, @lang)}
+              <button
+                :if={@can_rename?}
+                type="button"
+                phx-click="rename_start"
+                class="btn btn-ghost btn-xs btn-square align-middle ml-1 opacity-60 hover:opacity-100"
+                title={gettext("Rename")}
+                aria-label={gettext("Rename")}
+              >
+                <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+              </button>
+            </h2>
+          <% end %>
           <%!-- In a drawer the drawer has its ✕; one more here made two.
                On its own page this is the way back to the project. --%>
           <button
@@ -584,7 +795,13 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
           </section>
 
           <%!-- Activity: one place, three tabs. --%>
-          <section :if={@threads || @history != []} class="flex flex-col gap-3">
+          <section
+            :if={@threads || @history != []}
+            id={"task-view-activity-#{@assignment.uuid}"}
+            tabindex="-1"
+            phx-mounted={@focus_activity? && JS.focus()}
+            class="flex flex-col gap-3 outline-none"
+          >
             <%!-- The tabs' edge on the details box's, their words and what
                  they open on one line further in (the boss, 2026-11-02). --%>
             <div role="tablist" class="tabs tabs-border [&>.tab]:px-3">
@@ -612,7 +829,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
                 {gettext("History")}
               </button>
               <button
-                :if={@threads && @threads.notes > 0}
+                :if={@threads && (@threads.notes > 0 or @activity_tab == "notes")}
                 type="button"
                 role="tab"
                 phx-click="activity_tab"
@@ -635,6 +852,8 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               current_user={if @may_comment?, do: assigns[:phoenix_kit_current_user]}
               title=""
               show_likes={false}
+              mention_people={@mention_people}
+              mention_warning={PhoenixKitProjects.CommentMentions.warning(@project)}
             />
             <PhoenixKitProjects.Web.Components.HistoryFeed.history_feed
               :if={@activity_tab == "history" and @history != []}
@@ -643,6 +862,46 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               project={@project}
               compact={true}
             />
+            <%!-- A person changing the direction after an attempt: a
+                 `redirect` note, which the API hands an agent FIRST on the
+                 next read. --%>
+            <form
+              :if={@threads && @activity_tab == "notes" && @can_edit?}
+              id={"task-view-redirect-#{@assignment.uuid}"}
+              phx-submit="save_redirect"
+              class="flex flex-col gap-2 rounded-box border border-warning/40 bg-warning/5 p-3 mb-3"
+            >
+              <.input
+                id={"task-view-redirect-summary-#{@assignment.uuid}"}
+                name="summary"
+                value=""
+                label={gettext("Change the direction")}
+                maxlength={TaskNotes.summary_max()}
+                class="input-sm"
+                placeholder={gettext("One line the next worker follows, e.g. \"Keep the old parser, fix the encoder\"")}
+              />
+              <.description_editor
+                id={"pkp-dialog-redirect-#{@assignment.uuid}"}
+                name="content"
+                label={gettext("Why")}
+                height="110px"
+              />
+              <div class="flex items-center justify-between gap-2">
+                <button
+                  :if={@notes_summary_preview}
+                  type="button"
+                  phx-click="adopt_summary"
+                  class="btn btn-ghost btn-xs"
+                  title={gettext("Copy the latest summary into the task's description")}
+                >
+                  <.icon name="hero-document-arrow-down" class="w-3.5 h-3.5" /> {gettext("Use as description")}
+                </button>
+                <span :if={is_nil(@notes_summary_preview)}></span>
+                <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-warning btn-xs">
+                  {gettext("Set direction")}
+                </button>
+              </div>
+            </form>
             <.live_component
               :if={@threads && @activity_tab == "notes"}
               module={PhoenixKitComments.Web.CommentsComponent}

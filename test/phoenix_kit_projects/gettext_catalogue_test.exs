@@ -197,11 +197,13 @@ defmodule PhoenixKitProjects.GettextCatalogueTest do
   @vocabulary %{
     "ru" => {
       ["В ожидании", "Можно начинать", "В работе", "Выполнена"],
-      ["Разрешить начать", "Взять в работу", "Отметить выполненной", "Открыть заново"]
+      # The step into "can be started" is named as the status itself (the
+      # boss, 2026-11-18: "the button should be can be started").
+      ["Можно начинать", "Взять в работу", "Отметить выполненной", "Открыть заново"]
     },
     "et" => {
       ["Ootel", "Saab alustada", "Töös", "Tehtud"],
-      ["Luba alustada", "Võta töösse", "Märgi tehtuks", "Ava uuesti"]
+      ["Saab alustada", "Võta töösse", "Märgi tehtuks", "Ava uuesti"]
     }
   }
 
