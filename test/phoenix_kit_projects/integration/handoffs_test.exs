@@ -1193,7 +1193,10 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
 
       for p <- [bob, carl] do
         assert [n] = notices("projects.assignment_reopened", p.user)
-        assert n.metadata["notification_text"] =~ "Wrong board thickness."
+        # The reason rides as the notification's quote, its own block
+        # (the boss, 2026-11-18), not squeezed into the line.
+        assert n.metadata["quote"]["text"] == "Wrong board thickness." or
+                 n.metadata["notification_text"] =~ "Wrong board thickness."
       end
 
       assert notices("projects.assignment_reopened", alice.user) == []

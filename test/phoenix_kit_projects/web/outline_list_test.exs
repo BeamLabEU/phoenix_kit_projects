@@ -173,7 +173,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
   end
 
   describe "the cards" do
-    test "a richer project keeps cards, nested, with titles typed in place", %{conn: conn} do
+    test "a richer project keeps cards, nested, each title a link to its task", %{conn: conn} do
       p = project()
 
       {:ok, _} =
@@ -183,7 +183,10 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
 
       {:ok, view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
       refute html =~ ~s(phx-hook="PkpOutline")
-      assert html =~ ~s(id="task-title-#{child.uuid}")
+      # A created task's title opens it (the boss, 2026-11-18); only the row
+      # being typed is a text box.
+      refute html =~ ~s(id="task-title-#{child.uuid}")
+      assert has_element?(view, "#task-#{child.uuid} [phx-click='open_embed']", "Child")
       # The parent says how far its subtasks are, and folds them away.
       assert html =~ "0/1"
 
@@ -191,7 +194,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       |> element("button[phx-click='outline_fold'][phx-value-uuid='#{parent.uuid}']")
       |> render_click()
 
-      refute render(view) =~ ~s(id="task-title-#{child.uuid}")
+      refute has_element?(view, "#task-#{child.uuid}")
     end
 
     test "Enter adds the next task, Tab nests it, and a typed title is saved", %{conn: conn} do
