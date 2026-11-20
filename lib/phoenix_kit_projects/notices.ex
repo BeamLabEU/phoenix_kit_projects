@@ -324,7 +324,12 @@ defmodule PhoenixKitProjects.Notices do
               # otherwise be the sender's (the dialect of their page).
               "notification_text" => line(action, subject, actor, meta, lang),
               "notification_icon" => icon(action),
-              "notification_link" => link(action, subject)
+              "notification_link" => link(action, subject),
+              # Item 20 (2026-11-20): the email's subject and Telegram's
+              # first line, and the button's label. A label, never a
+              # sentence built from pieces.
+              "notification_title" => title(action, subject, lang),
+              "notification_action" => action_label(action, subject)
             }
           end)
 
@@ -685,6 +690,68 @@ defmodule PhoenixKitProjects.Notices do
   defp icon("projects.comment_added"), do: "hero-chat-bubble-left-right"
   defp icon("projects.member_" <> _), do: "hero-user-group"
   defp icon(_), do: "hero-clipboard-document-list"
+
+  @doc """
+  Core's `visible` check for this module's notification type: whether the
+  reader may still open the project the notice is about, asked when an email
+  or Telegram message goes out (a queued comment must not reach someone who
+  lost access since). A membership notice is about the reader's own access
+  and is always visible: a removed member is told although they are out.
+  """
+  @spec still_visible?(term(), term()) :: boolean()
+  def still_visible?(%{activity: %{action: "projects.member_" <> _}}, _user), do: true
+
+  def still_visible?(%{activity: %{resource_type: type, resource_uuid: uuid}}, %{uuid: user_uuid})
+      when is_binary(uuid) and is_binary(user_uuid) do
+    project =
+      case type do
+        "assignment" ->
+          case Projects.get_assignment(uuid) do
+            %Assignment{} = a -> project_of(a)
+            _ -> nil
+          end
+
+        "project" ->
+          Projects.get_project(uuid)
+
+        _ ->
+          nil
+      end
+
+    case project do
+      %Project{} = p -> may_view?(user_uuid, p)
+      _ -> false
+    end
+  end
+
+  def still_visible?(_notification, _user), do: false
+
+  # The task's key and name ("ACME-12 · Fit the doors"), or the project's
+  # name — what the email's subject and Telegram's first line show.
+  defp title("projects.assignment_removed", %Assignment{} = a, lang),
+    do: project_title(project_of(a), lang)
+
+  defp title(_action, %Assignment{} = a, lang) do
+    name = Assignment.label(a, lang)
+
+    case Assignment.row_ref(a) do
+      ref when is_binary(ref) and ref != "" -> "#{ref} · #{name}"
+      _ -> name
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp title(_action, %Project{} = p, lang), do: project_title(p, lang)
+  defp title(_action, _subject, _lang), do: nil
+
+  defp project_title(%Project{} = p, _lang), do: p.name
+  defp project_title(_p, _lang), do: nil
+
+  defp action_label("projects.assignment_removed", _subject), do: gettext("Open project")
+  defp action_label(_action, %Assignment{}), do: gettext("Open task")
+  defp action_label(_action, %Project{}), do: gettext("Open project")
+  defp action_label(_action, _subject), do: nil
 
   defp link("projects.assignment_removed", %Assignment{} = a), do: Paths.project(a.project_uuid)
   defp link(_action, subject), do: link(subject)

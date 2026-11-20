@@ -118,6 +118,35 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     assert notices("projects.assignment_created", alice.user) == []
   end
 
+  test "a task's notice carries a title and a button label (item 20)", ctx do
+    %{alice: alice, bob: bob} = ctx.people
+    a = task!(ctx.project, "Measure", %{"assigned_person_uuid" => bob.person})
+
+    log!("projects.assignment_created", a, alice.user)
+
+    assert [n] = notices("projects.assignment_created", bob.user)
+    ref = PhoenixKitProjects.Schemas.Assignment.row_ref(a)
+    assert n.metadata["notification_title"] == if(ref, do: "#{ref} · Measure", else: "Measure")
+    assert n.metadata["notification_action"] == "Open task"
+  end
+
+  test "a notice stays visible while its reader can open the project, not after", ctx do
+    %{alice: alice, bob: bob} = ctx.people
+    a = task!(ctx.project, "Measure", %{"assigned_person_uuid" => bob.person})
+    log!("projects.assignment_created", a, alice.user)
+    [n] = notices("projects.assignment_created", bob.user)
+    notification = %{activity: n}
+    reader = Auth.get_user(bob.user)
+
+    assert Notices.still_visible?(notification, reader)
+
+    {:ok, _} = PhoenixKitProjects.Members.remove_member(ctx.project, bob.user)
+    refute Notices.still_visible?(notification, reader)
+
+    # A membership notice is about the reader's own access: always visible.
+    assert Notices.still_visible?(%{activity: %{n | action: "projects.member_removed"}}, reader)
+  end
+
   test "a team's task started, finished, reopened and changed by someone tells each of its people, never the one who did it",
        ctx do
     %{alice: alice, bob: bob, carl: carl} = ctx.people
