@@ -743,7 +743,6 @@ defmodule PhoenixKitProjects.Notices do
   end
 
   defp title(_action, %Project{} = p, lang), do: project_title(p, lang)
-  defp title(_action, _subject, _lang), do: nil
 
   defp project_title(%Project{} = p, _lang), do: p.name
   defp project_title(_p, _lang), do: nil
@@ -751,7 +750,6 @@ defmodule PhoenixKitProjects.Notices do
   defp action_label("projects.assignment_removed", _subject), do: gettext("Open project")
   defp action_label(_action, %Assignment{}), do: gettext("Open task")
   defp action_label(_action, %Project{}), do: gettext("Open project")
-  defp action_label(_action, _subject), do: nil
 
   defp link("projects.assignment_removed", %Assignment{} = a), do: Paths.project(a.project_uuid)
   defp link(_action, subject), do: link(subject)
