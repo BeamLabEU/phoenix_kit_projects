@@ -257,7 +257,6 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
         language_tabs={@language_tabs}
         current_lang={@current_lang}
         class="[&>div:last-child]:mb-0"
-        ai_row_class="flex items-center gap-3 -mt-3"
         ai_translate={@ai_translate}
       />
       <.multilang_fields_wrapper
