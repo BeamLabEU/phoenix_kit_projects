@@ -298,7 +298,10 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         %{"title" => title, "ad_hoc" => true}
         |> maybe_put("description", params["description"])
 
-      case Projects.create_task_with_assignment(project.uuid, task_attrs, assignment_attrs) do
+      case Projects.create_task_with_assignment(project.uuid, task_attrs, assignment_attrs,
+             actor_uuid: ApiKey.accountable_uuid(key),
+             source: "api"
+           ) do
         {:ok, %{assignment: a}} ->
           Activity.log("projects.assignment_created",
             actor_uuid: ApiKey.accountable_uuid(key),
@@ -374,7 +377,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
            write_update(fn ->
              with :ok <- reparent(a, parent),
                   {:ok, _} <- update_content(a, content),
-                  {:ok, _} <- update_fields(a, assignment_attrs),
+                  {:ok, _} <- update_fields(a, assignment_attrs, key),
                   :ok <- stamp_words(a, key, content),
                   :ok <- keep_interaction_tokens(conn, a),
                   :ok <- apply_labels(project, a, params["labels"], key),
@@ -786,8 +789,16 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp sync_assignment_description(_a, _content), do: :ok
 
-  defp update_fields(_a, attrs) when map_size(attrs) == 0, do: {:ok, nil}
-  defp update_fields(a, attrs), do: Projects.update_assignment_form(a, attrs)
+  defp update_fields(_a, attrs, _key) when map_size(attrs) == 0, do: {:ok, nil}
+
+  # The key's accountable person is the actor of any admission an
+  # assignee change makes, marked as the API's.
+  defp update_fields(a, attrs, key),
+    do:
+      Projects.update_assignment_form(a, attrs,
+        actor_uuid: ApiKey.accountable_uuid(key),
+        source: "api"
+      )
 
   def transition(conn, %{"id" => id} = params) do
     with {:ok, conn, a} <- fetch(conn, id),

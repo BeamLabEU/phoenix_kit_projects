@@ -151,6 +151,8 @@ defmodule PhoenixKitProjects.Notices do
   @doc false
   @spec with_quote(String.t(), map(), binary() | nil, String.t() | nil) :: map()
   def with_quote(action, meta, actor_uuid, explicit) do
+    meta = cap_quoted_meta(meta, Map.get(@quoted_meta, action))
+
     text =
       case explicit do
         text when is_binary(text) -> text
@@ -167,6 +169,18 @@ defmodule PhoenixKitProjects.Notices do
       meta
     end
   end
+
+  # The copy kept beside the quote (`note`, `reason`) gets the same byte
+  # cap: it was only cut to 2,000 characters upstream (the boss's review of
+  # #63).
+  defp cap_quoted_meta(meta, key) when is_binary(key) do
+    case Map.get(meta, key) do
+      text when is_binary(text) -> Map.put(meta, key, cap_bytes(text))
+      _ -> meta
+    end
+  end
+
+  defp cap_quoted_meta(meta, _key), do: meta
 
   # The grapheme cap alone lets one "character" carry any number of
   # combining marks (codex, 2026-11-19): the quote is held to 16 KB too,

@@ -3609,7 +3609,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       }
       |> maybe_add_default_assignee(attrs)
 
-    case Projects.create_task_with_assignment(project.uuid, task_attrs, attrs) do
+    case Projects.create_task_with_assignment(project.uuid, task_attrs, attrs,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, %{assignment: assignment}} ->
         {:ok, _} =
           Projects.stamp_assignment(assignment, %{created_by_uuid: Activity.actor_uuid(socket)})
@@ -3864,7 +3866,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp save_new_simple(socket, attrs) do
-    case Projects.create_assignment(attrs) do
+    case Projects.create_assignment(attrs, actor_uuid: Activity.actor_uuid(socket)) do
       {:ok, assignment} ->
         apply_pending_labels(socket, assignment)
 
@@ -4838,7 +4840,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                |> library_attrs(project)
                |> strip_gated_attrs(fx)
                |> strip_unassignable(socket),
-             {:ok, a} <- Projects.create_assignment(attrs) do
+             {:ok, a} <-
+               Projects.create_assignment(attrs, actor_uuid: Activity.actor_uuid(socket)) do
           Activity.log("projects.assignment_created",
             actor_uuid: Activity.actor_uuid(socket),
             resource_type: "assignment",
