@@ -295,6 +295,7 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
         upload_handler={if @uploads, do: :host}
         emit_events={@uploads}
         suggestions={@suggestions}
+        mentions={true}
         loading_text={nil}
       />
     </div>

@@ -176,6 +176,8 @@ defmodule PhoenixKitProjects.Web.BossList1118Test do
 
       render_hook(view, "outline_quick_add", %{"text" => "  Paint   the hall "})
       render_hook(view, "outline_quick_add", %{"lines" => ["Buy brushes", "", "Clean up"]})
+      # A pasted list is one write (`Outline.sync`); the reply still counts it.
+      assert_reply(view, %{added: 2, last: "Clean up"})
 
       titles =
         Projects.list_assignments(ctx.project.uuid)
@@ -206,6 +208,27 @@ defmodule PhoenixKitProjects.Web.BossList1118Test do
     end
   end
 
+  describe "9 — the side panel builds its view only on a wide screen" do
+    test "nothing is mounted until the browser says the screen is 2xl wide", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "side_panel_toggle", %{})
+      html = render_click(view, "side_panel_view", %{"view" => "activity"})
+
+      assert html =~ ~s(phx-hook="PkpWide")
+      refute html =~ "side-panel-history-#{ctx.project.uuid}"
+
+      html = render_hook(view, "side_panel_wide", %{"wide" => true})
+      assert html =~ "side-panel-history-#{ctx.project.uuid}"
+
+      html = render_hook(view, "side_panel_wide", %{"wide" => false})
+      refute html =~ "side-panel-history-#{ctx.project.uuid}"
+
+      # A crafted value changes nothing.
+      refute render_hook(view, "side_panel_wide", %{"wide" => "yes"}) =~
+               "side-panel-history-#{ctx.project.uuid}"
+    end
+  end
+
   describe "9 — the side panel, review of the merge (2026-11-19)" do
     test "offers the project's Discussion only while its general comments are on", ctx do
       :ok = PhoenixKitProjects.DataCase.with_comments_module()
@@ -225,6 +248,8 @@ defmodule PhoenixKitProjects.Web.BossList1118Test do
       {:ok, view, _} = show(ctx)
       render_click(view, "side_panel_toggle", %{})
       render_click(view, "side_panel_view", %{"view" => "activity"})
+      # A wide screen, as `PkpWide` reports it.
+      render_hook(view, "side_panel_wide", %{"wide" => true})
 
       html = view |> find_live_child("side-panel-history-#{ctx.project.uuid}") |> render()
       assert html =~ ~s(id="history-filters-side-#{ctx.project.uuid}")

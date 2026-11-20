@@ -75,6 +75,25 @@ defmodule PhoenixKitProjects.Integration.AssigneeAdmissionTest do
       %{project: fixture_project(%{"start_mode" => "immediate"})}
     end
 
+    test "an admission names who assigned, and an API one says so", ctx do
+      anna = person!("Anna")
+      boss = person!("Boss")
+
+      {:ok, %{assignment: _}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Fit the doors", "ad_hoc" => true},
+          %{"assigned_person_uuid" => anna.person},
+          actor_uuid: boss.user,
+          source: "api"
+        )
+
+      assert [entry] = member_added(ctx.project.uuid, anna.user)
+      assert entry.actor_uuid == boss.user
+      assert entry.metadata["via"] == "assignment"
+      assert entry.metadata["source"] == "api"
+    end
+
     test "a new task given to someone off the project makes them a member, told so", ctx do
       anna = person!("Anna")
       refute Notices.may_view?(anna.user, ctx.project)
@@ -338,10 +357,14 @@ defmodule PhoenixKitProjects.Integration.AssigneeAdmissionTest do
       huge = "a" <> String.duplicate("\u0301", 100_000)
       meta = Notices.with_quote("projects.comment_added", %{}, "a", huge)
 
-      if quote = meta["quote"] do
-        assert byte_size(quote["text"]) <= 16_384
-        assert String.valid?(quote["text"])
-      end
+      # Core 3.7.0 (the floor) draws quotes, so this always runs.
+      assert %{"text" => text} = meta["quote"]
+      assert byte_size(text) <= 16_384
+      assert String.valid?(text)
+
+      # The copy kept beside it is held to the same size.
+      noted = Notices.with_quote("projects.assignment_ready", %{"note" => huge}, "a", nil)
+      assert byte_size(noted["note"]) <= 16_384
     end
   end
 

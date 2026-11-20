@@ -119,14 +119,18 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       assert flash =~ "not found"
     end
 
-    test "an identified viewer with access mounts and can open comments", %{
+    test "an identified viewer with access mounts and can open the discussion", %{
       conn: conn,
       project: project
     } do
-      # The comments drawer reads :phoenix_kit_current_scope, which an
+      # The comments thread reads :phoenix_kit_current_scope, which an
       # off-router mount does not get from a router hook. It must tolerate
-      # the assign being absent — but the mount itself now requires a
-      # viewer who can actually see the project, so identify one.
+      # the assign being absent — but the mount itself requires a viewer
+      # who can actually see the project, so identify one. The project's
+      # discussion lives in the side panel (its old drawer is gone).
+      :ok = PhoenixKitProjects.DataCase.with_comments_module()
+      {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "discussions")
+
       {:ok, viewer} =
         Auth.register_user(%{
           "email" => "embed-viewer-#{System.unique_integer([:positive])}@example.com",
@@ -140,14 +144,11 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           session: %{"id" => project.uuid, "current_user_uuid" => viewer.uuid}
         )
 
-      html =
-        render_hook(view, "open_comments", %{
-          "type" => "project",
-          "uuid" => project.uuid,
-          "title" => project.name
-        })
+      render_click(view, "side_panel_toggle", %{})
+      render_click(view, "side_panel_view", %{"view" => "discussion"})
+      html = render_hook(view, "side_panel_wide", %{"wide" => true})
 
-      assert html =~ ~s|aria-label="Comments"|
+      assert html =~ "side-panel-comments-#{project.uuid}"
     end
 
     test "no other bang-form router-assign refs in PKP source", _context do
@@ -230,27 +231,27 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       project: project,
       actor_uuid: actor_uuid
     } do
+      :ok = PhoenixKitProjects.DataCase.with_comments_module()
+      {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "discussions")
+
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
           session: %{"id" => project.uuid, "current_user_uuid" => actor_uuid}
         )
 
-      # The user is reconstructed at mount, so both the comments-drawer
+      # The user is reconstructed at mount, so both the discussion's
       # `current_user` and `Activity.actor_uuid/1` see the real viewer.
       assigns = :sys.get_state(view.pid).socket.assigns
       assert assigns[:phoenix_kit_current_user].uuid == actor_uuid
       assert assigns[:phoenix_kit_current_scope].user.uuid == actor_uuid
 
-      html =
-        render_hook(view, "open_comments", %{
-          "type" => "project",
-          "uuid" => project.uuid,
-          "title" => project.name
-        })
+      render_click(view, "side_panel_toggle", %{})
+      render_click(view, "side_panel_view", %{"view" => "discussion"})
+      html = render_hook(view, "side_panel_wide", %{"wide" => true})
 
       # `can_post?` is true (current_user present) => the composer renders
       # instead of the sign-in prompt that was the reported bug.
-      assert html =~ ~s|aria-label="Comments"|
+      assert html =~ "side-panel-comments-#{project.uuid}"
       refute html =~ "Sign in to post a comment."
     end
 

@@ -324,7 +324,12 @@ defmodule PhoenixKitProjects.Members do
          [_ | _] <- added,
          [_ | _] = users <- People.user_uuids_for(added),
          %Project{} = project <- PhoenixKitProjects.Projects.get_project(a.project_uuid) do
-      meta = %{"via" => "assignment", "task" => task_label(a), "task_uuid" => a.uuid}
+      # `source` says where the assigning came from ("api"), when the
+      # caller says (the boss's review of #63: API-made rows said nothing).
+      meta =
+        %{"via" => "assignment", "task" => task_label(a), "task_uuid" => a.uuid}
+        |> then(&if(is_binary(opts[:source]), do: Map.put(&1, "source", opts[:source]), else: &1))
+
       admit_users(project, users, Keyword.put(opts, :log_metadata, meta))
     else
       _ -> []

@@ -116,6 +116,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   """
 
   use Phoenix.LiveView, layout: false
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitProjects.Web.Components.PopupHost
 
@@ -526,6 +527,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       {%{event: "close_top_modal" = event, params: params}, socket} ->
         handle_event(event, params, socket)
 
+      {%{event: "pkp_url_discard"}, socket} ->
+        {:noreply, close_task_frames(socket)}
+
       {_none, socket} ->
         {:noreply, socket}
     end
@@ -567,9 +571,33 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   def handle_event("pkp_url_task", _params, %{assigns: %{url_param: nil}} = socket),
     do: {:noreply, socket}
 
+  # Back over a frame whose form holds unsaved changes asks first, as its ✕
+  # does (the boss, 2026-11-19: Back dropped held changes silently). The
+  # address gets its entry back at once, so it still names the open task
+  # while the question is up; "Discard" closes the frames like a clean Back.
   def handle_event("pkp_url_task", %{"task" => ""}, socket) do
-    {:noreply, close_task_frames(socket)}
+    if task_frames_dirty?(socket.assigns.modal_stack) do
+      socket =
+        ConfirmAction.request(
+          socket,
+          %{
+            "event" => "pkp_url_discard",
+            "title" => gettext("Close without saving?"),
+            "message" => gettext("What you changed since the last save is lost."),
+            "confirm" => gettext("Discard")
+          },
+          ~w(pkp_url_discard)
+        )
+
+      {:noreply,
+       push_event(socket, "pkp_url_restore", %{task: top_task_ref(socket.assigns.modal_stack)})}
+    else
+      {:noreply, close_task_frames(socket)}
+    end
   end
+
+  def handle_event("pkp_url_discard", _params, socket),
+    do: {:noreply, close_task_frames(socket)}
 
   # The address may name the task another way than the frame does (its
   # uuid, a former project key): the TASK is compared, not the spelling, so
@@ -613,6 +641,15 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     case Enum.find_index(stack, &is_binary(&1[:task_ref])) do
       nil -> socket
       i -> assign(socket, modal_stack: Enum.take(stack, i))
+    end
+  end
+
+  # Whether a frame Back would close (from the lowest task frame up) holds
+  # unsaved changes (`closeable: false`, set by the form's dirty notice).
+  defp task_frames_dirty?(stack) do
+    case Enum.find_index(stack, &is_binary(&1[:task_ref])) do
+      nil -> false
+      i -> stack |> Enum.drop(i) |> Enum.any?(&(Map.get(&1, :closeable, true) == false))
     end
   end
 

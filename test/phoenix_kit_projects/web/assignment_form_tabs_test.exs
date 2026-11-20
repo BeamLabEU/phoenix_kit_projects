@@ -204,17 +204,28 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
         })
 
       {:ok, view, _html} = edit(ctx.conn, ctx.project, a)
-      assert has_element?(view, "#assignment-assignee-chip-person-#{bob.uuid}", "Bob")
+
+      assert has_element?(
+               view,
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-chip-person-#{bob.uuid}",
+               "Bob"
+             )
 
       query(view, "assignment-assignee", "Crew")
 
       assert has_element?(
                view,
-               "#assignment-assignee-options [data-pick='team:#{team.uuid}']"
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-options [data-pick='team:#{team.uuid}']"
              )
 
       pick(view, "assignment-assignee", "team", team.uuid)
-      assert has_element?(view, "#assignment-assignee-chip-team-#{team.uuid}", team.name)
+
+      assert has_element?(
+               view,
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-chip-team-#{team.uuid}",
+               team.name
+             )
+
       autosave(view)
 
       saved = Projects.get_assignment(a.uuid)
@@ -254,7 +265,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       end
 
       view
-      |> with_target("#assignment-assignee")
+      |> with_target(
+        "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}"
+      )
       |> render_keyup("query", %{"value" => %{"nested" => "x"}})
 
       assert Process.alive?(view.pid)
@@ -267,9 +280,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       me = person!("Me", ctx.me)
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
-      view |> element("#assignment-assignee-me") |> render_click()
+
+      view
+      |> element("##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me")
+      |> render_click()
+
       # Theirs now: the button goes.
-      refute has_element?(view, "#assignment-assignee-me")
+      refute has_element?(
+               view,
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me"
+             )
+
       autosave(view)
 
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == me.uuid
@@ -286,10 +307,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
         )
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
-      assert has_element?(view, "#assignment-assignee-recent", "Carl")
+
+      assert has_element?(
+               view,
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-recent",
+               "Carl"
+             )
 
       view
-      |> element("#assignment-assignee-recent button[phx-value-uuid='#{carl.uuid}']")
+      |> element(
+        "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-recent button[phx-value-uuid='#{carl.uuid}']"
+      )
       |> render_click()
 
       autosave(view)
@@ -300,17 +328,29 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
          ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      refute has_element?(view, "#assignment-assignee-me[disabled]")
+      refute has_element?(
+               view,
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me[disabled]"
+             )
+
       refute render(view) =~ "not linked to a staff person"
 
-      view |> element("#assignment-assignee-me") |> render_click()
+      view
+      |> element("##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me")
+      |> render_click()
+
       assert render(view) =~ "Create a staff record?"
       # Nothing made, nothing assigned until confirmed.
       assert staff_person_of(ctx.me) == nil
 
       confirm(view, "assignment-assignee")
       refute render(view) =~ "Create a staff record?"
-      refute has_element?(view, "#assignment-assignee-me")
+
+      refute has_element?(
+               view,
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me"
+             )
+
       autosave(view)
 
       person = staff_person_of(ctx.me)
@@ -336,7 +376,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
         )
 
       {:ok, view2, _} = edit(ctx.conn, ctx.project, b)
-      view2 |> element("#assignment-assignee-me") |> render_click()
+
+      view2
+      |> element(
+        "##{PhoenixKitProjects.PickerHelpers.picker_id(view2, "assignment-assignee")}-me"
+      )
+      |> render_click()
+
       refute render(view2) =~ "Create a staff record?"
       autosave(view2)
 
@@ -347,7 +393,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
     test "Cancel on the question creates nothing and leaves the form as it was", ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      view |> element("#assignment-assignee-me") |> render_click()
+      view
+      |> element("##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me")
+      |> render_click()
+
       assert render(view) =~ "Create a staff record?"
 
       cancel(view, "assignment-assignee")
@@ -363,7 +412,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       me = person!("Me", ctx.me)
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      view |> element("#assignment-assignee-me") |> render_click()
+      view
+      |> element("##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me")
+      |> render_click()
+
       refute render(view) =~ "Create a staff record?"
       autosave(view)
 
@@ -375,12 +427,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       trashed = Repo.insert!(%Person{user_uuid: ctx.me, status: "trashed", name: "Old me"})
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      view |> element("#assignment-assignee-me") |> render_click()
+      view
+      |> element("##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-me")
+      |> render_click()
+
       refute render(view) =~ "Create a staff record?"
 
       assert has_element?(
                view,
-               "#assignment-assignee-notice",
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-notice",
                "Your staff record is in the trash"
              )
 
@@ -407,7 +462,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
       html = query(view, "assignment-assignee", "Quill#{n}")
 
-      zoe_sel = "#assignment-assignee-options [data-pick='user:#{zoe.uuid}']"
+      zoe_sel =
+        "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-options [data-pick='user:#{zoe.uuid}']"
+
       assert has_element?(view, zoe_sel, "Zoe Quill#{n}")
       assert has_element?(view, zoe_sel, zoe.email)
       # A user who already has a person shows as that person, not twice.
@@ -497,7 +554,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
         )
 
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
-      assert has_element?(view, "#assignment-assignee-recent", "Dana")
+
+      assert has_element?(
+               view,
+               "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-recent",
+               "Dana"
+             )
     end
 
     test "the old kind-first selects are gone", ctx do

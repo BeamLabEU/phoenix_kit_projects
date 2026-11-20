@@ -23,6 +23,9 @@
  * PkpQuickTop: the quiet "+ Add a task" line at the top of a task list;
  * Enter adds, the cursor stays for the next title.
  *
+ * PkpWide: tells the page whether the screen is 2xl wide, so the side
+ * panel's view is built only where it shows.
+ *
  * PkpBoard: one column of the board, its cards dragged between columns.
  *
  * PkpTabScroll: the one scroll area under a tab strip, back to its top
@@ -1790,6 +1793,18 @@
       };
       window.addEventListener("popstate", this.onPop, true);
 
+      // Back over unsaved changes: the host asks first and hands the task
+      // back, so the address names it again while the question is up (and
+      // after "Stay"). "Discard" then closes it like any Back.
+      this.handleEvent("pkp_url_restore", function (payload) {
+        var task = payload && payload.task;
+        if (!task) return;
+        self.ref = task;
+        try {
+          window.history.pushState({ pkpTask: task, back: window.history.state }, "", withTask(window.location, task, self.param));
+        } catch (_e) {}
+      });
+
       if (wanted && wanted !== this.ref) {
         // A reload or a link: the address already says it, so nothing is
         // pushed when the frame opens.
@@ -2100,7 +2115,36 @@
     }
   };
 
+  /**
+   * PkpWide: on the project page's side panel. The panel is CSS-hidden
+   * below 2xl (96rem); this says which side of that line the screen is on,
+   * at mount and on every crossing, so the server builds the panel's view
+   * (a comment thread, a history, a Gantt) only where it is seen (the
+   * boss's review of #63). `data-event` names the event.
+   */
+  var Wide = {
+    mounted: function () {
+      var self = this;
+      this.mq = window.matchMedia ? window.matchMedia("(min-width: 96rem)") : null;
+      this.send = function () {
+        self.pushEvent(self.el.dataset.event || "side_panel_wide", { wide: !!(self.mq && self.mq.matches) });
+      };
+      if (this.mq) {
+        if (this.mq.addEventListener) this.mq.addEventListener("change", this.send);
+        else if (this.mq.addListener) this.mq.addListener(this.send);
+      }
+      this.send();
+    },
+    reconnected: function () { this.send(); },
+    destroyed: function () {
+      if (!this.mq) return;
+      if (this.mq.removeEventListener) this.mq.removeEventListener("change", this.send);
+      else if (this.mq.removeListener) this.mq.removeListener(this.send);
+    }
+  };
+
   window.PhoenixKitProjectsHooks = {
+    PkpWide: Wide,
     PkpPop: Pop,
     PkpQuickTop: QuickTop,
     PkpOutline: Outline,

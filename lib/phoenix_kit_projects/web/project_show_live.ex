@@ -389,11 +389,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               editing_duration_uuid: nil,
               start_modal_open: false,
               start_form: to_form(%{"start_at" => default_start_at_local()}),
-              # Comments drawer state. `comments_resource` is `nil` when
-              # closed; a `%{type, uuid, title}` map when open. The
-              # `CommentsComponent` is keyed on `{type, uuid}` so opening
-              # different resources doesn't reuse stale state.
-              comments_resource: nil,
               side_panel: side_panel_pref(socket),
               # Availability ∧ the per-project "discussions" bridge toggle.
               comments_enabled: comments?,
@@ -586,7 +581,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       editing_duration_uuid: nil,
       start_modal_open: false,
       start_form: to_form(%{"start_at" => default_start_at_local()}),
-      comments_resource: nil,
       side_panel: %{},
       comments_enabled: false,
       may_comment?: false,
@@ -3092,9 +3086,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:embed_frame_ref, :any, default: nil)
   attr(:socket, :any, required: true)
   attr(:viewer_uuid, :string, default: nil)
+  attr(:wide, :boolean, default: false)
 
   # The panel beside the list on a wide screen: the project's discussion,
-  # its activity, or a second view (Timeline, Calendar). Hidden below 2xl.
+  # its activity, or a second view (Timeline, Calendar). Hidden below 2xl,
+  # and its view is built only once the browser says the screen is that
+  # wide (`PkpWide`, `@wide`): a hidden thread or Gantt was a live process
+  # nobody saw (the boss's review of #63).
   defp side_panel(assigns) do
     views =
       [
@@ -3116,6 +3114,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       id={"project-side-panel-#{@project.uuid}"}
       class="hidden 2xl:flex flex-col gap-3 w-[30rem] shrink-0 sticky top-0 max-h-[calc(100vh-6rem)] min-h-0 rounded-box border border-base-200 bg-base-100 p-3"
       aria-label={gettext("Side panel")}
+      phx-hook="PkpWide"
+      data-event="side_panel_wide"
     >
       <div role="tablist" class="tabs tabs-border tabs-sm">
         <button
@@ -3131,7 +3131,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </button>
       </div>
       <div class="min-h-0 overflow-y-auto overscroll-contain">
-        <%= case @view do %>
+        <%= case @wide && @view do %>
           <% "discussion" -> %>
             <.live_component
               module={PhoenixKitComments.Web.CommentsComponent}
@@ -3511,6 +3511,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   def handle_event("side_panel_view", _params, socket), do: {:noreply, socket}
+
+  # `PkpWide`: whether the screen is wide enough to show the side panel.
+  def handle_event("side_panel_wide", %{"wide" => wide}, socket) when is_boolean(wide),
+    do: {:noreply, assign(socket, side_panel_wide: wide)}
+
+  def handle_event("side_panel_wide", _params, socket), do: {:noreply, socket}
 
   def handle_event("outline_tick", %{"id" => uuid} = params, socket) when is_binary(uuid) do
     event = if params["done"] == true, do: "complete", else: "reopen"
@@ -4786,34 +4792,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # Comments drawer. Opening sets `comments_resource` to the
-  # `(type, uuid, title)` triple of the target so the drawer header
-  # can show context and the embedded `CommentsComponent` is keyed
-  # uniquely per resource. Closing clears the assign — the
-  # component unmounts and any in-flight reply state is dropped
-  # (intended: drawer-close is a "step away" affordance).
-  # The project's own discussion. A task's comments and notes open in the
-  # task's popup on their tab (the boss, 2026-11-18), not here.
-  defp gated_handle_event("open_comments", %{"type" => type, "uuid" => uuid} = params, socket)
-       when type in ["project"] do
-    title = Map.get(params, "title", "")
-
-    # The drawer shows (and posts to) whatever record the uuid names, so the
-    # uuid must be THIS project or one of ITS tasks — never another project's.
-    if comments_target?(socket, type, uuid) do
-      {:noreply,
-       assign(socket,
-         comments_resource: %{type: type, uuid: uuid, title: title}
-       )}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  defp gated_handle_event("close_comments", _params, socket) do
-    {:noreply, assign(socket, comments_resource: nil)}
-  end
-
   defp gated_handle_event(
          "reorder_assignments",
          _params,
@@ -4925,32 +4903,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp parse_start_at(_),
     do: {:error, gettext("Invalid date — please pick a valid date and time.")}
-
-  # True only when the `phoenix_kit_comments` module is loaded AND
-  # admin-enabled. Off-by-default `enabled?/0` rescues any error
-  # (missing tables, sandbox-down) and returns false, so this stays
-  # safe in early-install or test environments.
-  defp comments_target?(socket, "project", uuid), do: uuid == socket.assigns.project.uuid
-
-  defp comments_target?(socket, _task_type, uuid),
-    do: find_displayed_assignment(socket, uuid) != nil
-
-  # A task on this page, by uuid — the displayed set first (no query),
-  # else the store, and only if it belongs to this project.
-  defp find_displayed_assignment(socket, uuid) do
-    displayed =
-      socket.assigns.assignments
-      |> Enum.find(&(&1.uuid == uuid))
-
-    case displayed || Projects.get_assignment(uuid) do
-      %Assignment{project_uuid: project_uuid} = a
-      when project_uuid == socket.assigns.project.uuid ->
-        a
-
-      _ ->
-        nil
-    end
-  end
 
   # The "Use as description" offer: only when the task has no description
   # of its own and a note has a summary to give it.
@@ -7509,6 +7461,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         embed_frame_ref={@embed_frame_ref}
         socket={@socket}
         viewer_uuid={assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid}
+        wide={assigns[:side_panel_wide] == true}
       />
       </div>
       </div>
@@ -8053,6 +8006,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 source_opts={%{project_uuid: @next_up.project_uuid, source: "next_up"}}
                 viewer_uuid={viewer}
                 can_edit={@next_up.can_assign and not @next_up.subproject?}
+                can_remove={true}
                 tags={Map.get(@next_up.tags, done_picker_id(@next_up.task_uuid), %{})}
                 placeholder={gettext("Add a person, team or department")}
                 me_label={nil}
@@ -8109,6 +8063,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 source_opts={%{project_uuid: @next_up.project_uuid, source: "next_up"}}
                 viewer_uuid={viewer}
                 can_edit={@next_up.can_assign and is_nil(a.child_project_uuid)}
+                can_remove={true}
                 tags={Map.get(@next_up.tags, row_picker_id(a.uuid), %{})}
                 label={gettext("Send a notification to")}
                 placeholder={gettext("Add a person, team or department")}
@@ -8194,50 +8149,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 </button>
               </div>
             </.form>
-      </.modal>
-
-      <%!-- Slide-in comments drawer. Right-side fixed panel that
-           hosts `PhoenixKitComments.Web.CommentsComponent` for either
-           the project or one of its assignments. The component is
-           keyed on `{type, uuid}` so opening a different resource
-           re-mounts with its own state instead of leaking the
-           previous resource's reply-in-progress / pagination.
-
-           Esc + backdrop click both fire `close_comments`. The
-           component's "comments_updated" message is unhandled here
-           (we don't need to react to project-level comment counts
-           in the timeline yet) — the catch-all `handle_info` clause
-           logs it at debug and moves on. --%>
-      <%!-- A core drawer (`placement={:end}`): the dialog's top layer paints
-           over the admin header without z-index tricks, and PkDialog owns
-           Esc, the backdrop and focus. --%>
-      <.modal
-        :if={@comments_resource}
-        show
-        on_close="close_comments"
-        id={"project-comments-#{@project.uuid}"}
-        aria-label={gettext("Comments")}
-        max_width="2xl"
-      >
-        <%!-- What the thread is on, beside its title rather than a word
-             on a line of its own above it. --%>
-        <:title>
-          <span class="flex items-center gap-2 min-w-0">
-            <span class="badge badge-ghost badge-sm shrink-0">
-              {gettext("Project")}
-            </span>
-            <span class="truncate">{@comments_resource.title}</span>
-          </span>
-        </:title>
-        <.live_component
-          module={PhoenixKitComments.Web.CommentsComponent}
-          id={"comments-drawer-#{@comments_resource.type}-#{@comments_resource.uuid}"}
-          resource_type={@comments_resource.type}
-          resource_uuid={@comments_resource.uuid}
-          current_user={comment_user(assigns)}
-          title=""
-          show_likes={false}
-        />
       </.modal>
 
       <%!-- The page's own drawer host (`:popup` mode — a router mount; an

@@ -413,6 +413,39 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
              )
     end
 
+    test "without the right to assign, someone can still be taken off the list", ctx do
+      scope = fake_scope(user_uuid: ctx.actor_uuid, permissions: ["projects"])
+
+      {:ok, _} =
+        PhoenixKitProjects.Members.add_member(ctx.project, ctx.actor_uuid, role: "member")
+
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(ctx.project, %{"assign_tasks" => "managers"})
+
+      {:ok, view, _html} =
+        live(put_test_scope(ctx.conn, scope), "/en/admin/projects/#{ctx.project.uuid}")
+
+      html = render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+
+      # The chips keep their × (core's `can_remove`) though nobody can be added.
+      {"person", bob_uuid} = person_key(ctx.bob)
+      assert html =~ ~s(id="#{row_picker(ctx.measure)}-remove-person-#{bob_uuid}")
+
+      send(
+        view.pid,
+        {PhoenixKitWeb.Components.PeoplePicker, row_picker(ctx.measure),
+         {:changed, [person_key(ctx.alice)]}}
+      )
+
+      refute render(view) =~ "You may not assign people here."
+
+      render_submit(view, "next_up_confirm", %{"uuid" => ctx.measure.uuid})
+
+      assert status(ctx.measure) == "todo"
+      assert [_] = notices("projects.assignment_ready", ctx.alice)
+      assert notices("projects.assignment_ready", ctx.bob) == []
+    end
+
     test "with comments on, the comment is kept on the task without a second notice", ctx do
       :ok = PhoenixKitProjects.DataCase.with_comments_module()
       {:ok, view, _html} = show(ctx)
