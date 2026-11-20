@@ -1790,6 +1790,18 @@
       };
       window.addEventListener("popstate", this.onPop, true);
 
+      // Back over unsaved changes: the host asks first and hands the task
+      // back, so the address names it again while the question is up (and
+      // after "Stay"). "Discard" then closes it like any Back.
+      this.handleEvent("pkp_url_restore", function (payload) {
+        var task = payload && payload.task;
+        if (!task) return;
+        self.ref = task;
+        try {
+          window.history.pushState({ pkpTask: task, back: window.history.state }, "", withTask(window.location, task, self.param));
+        } catch (_e) {}
+      });
+
       if (wanted && wanted !== this.ref) {
         // A reload or a link: the address already says it, so nothing is
         // pushed when the frame opens.

@@ -137,6 +137,36 @@ defmodule PhoenixKitProjects.Web.TaskInUrlTest do
     refute render(view) =~ "<dialog"
   end
 
+  test "Back over unsaved changes asks first and puts the task back in the address", ctx do
+    {view, topic} = host(ctx)
+    ref = Assignment.row_ref(ctx.a)
+
+    ProjectsPubSub.broadcast_embed(topic, :opened, %{
+      lv: PhoenixKitProjects.Web.AssignmentViewLive,
+      session: ProjectShowLive.view_session(%{project_uuid: ctx.project.uuid, uuid: ctx.a.uuid}),
+      frame_ref: nil
+    })
+
+    [_, frame_ref] = Regex.run(~r/data-frame-ref="(\d+)"/, render(view))
+    send(view.pid, {:projects, :dirty, %{frame_ref: String.to_integer(frame_ref), dirty: true}})
+
+    render_hook(view, "pkp_url_task", %{"task" => ""})
+
+    assert_push_event(view, "pkp_url_restore", %{task: ^ref})
+    html = render(view)
+    assert html =~ "Close without saving?"
+    assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-task="#{ref}"]))
+
+    # Stay: nothing closes.
+    render_click(view, "confirm_action_cancel", %{})
+    assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-task="#{ref}"]))
+
+    # Back again, then Discard: the frame closes like a clean Back.
+    render_hook(view, "pkp_url_task", %{"task" => ""})
+    render_click(view, "confirm_action_ok", %{})
+    assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-task=""]))
+  end
+
   test "a ?task= in the address when the page loads opens that task", ctx do
     {view, _topic} = host(ctx)
     ref = Assignment.row_ref(ctx.a)

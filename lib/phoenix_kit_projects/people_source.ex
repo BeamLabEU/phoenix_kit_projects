@@ -200,6 +200,9 @@ defmodule PhoenixKitProjects.PeopleSource do
       name: if(kind in ~w(person user), do: label),
       # A team's or department's people follow it in a search, indented.
       member?: is_binary(r[:id]) and String.contains?(r[:id], "-person-"),
+      # The row's own id: a person under two teams of a search is two rows
+      # of one key, and core keys the list on this (the boss, 2026-11-19).
+      id: r[:id],
       faces: faces(r[:faces])
     }
   end

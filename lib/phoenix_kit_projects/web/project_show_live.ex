@@ -8053,6 +8053,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 source_opts={%{project_uuid: @next_up.project_uuid, source: "next_up"}}
                 viewer_uuid={viewer}
                 can_edit={@next_up.can_assign and not @next_up.subproject?}
+                can_remove={true}
                 tags={Map.get(@next_up.tags, done_picker_id(@next_up.task_uuid), %{})}
                 placeholder={gettext("Add a person, team or department")}
                 me_label={nil}
@@ -8109,6 +8110,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 source_opts={%{project_uuid: @next_up.project_uuid, source: "next_up"}}
                 viewer_uuid={viewer}
                 can_edit={@next_up.can_assign and is_nil(a.child_project_uuid)}
+                can_remove={true}
                 tags={Map.get(@next_up.tags, row_picker_id(a.uuid), %{})}
                 label={gettext("Send a notification to")}
                 placeholder={gettext("Add a person, team or department")}
