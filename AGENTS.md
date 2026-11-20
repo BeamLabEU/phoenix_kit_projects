@@ -1912,8 +1912,8 @@ reference:
   its session or `?tab=` — `comments`, `history`, `notes` — and focuses the
   activity section). The notes tab carries "Change the direction" and "Use
   as description" (`save_redirect` / `adopt_summary`, `:edit_tasks` asked
-  again at the write). The page's own comments popup is for the PROJECT's
-  thread only (`open_comments` accepts `type: "project"`).
+  again at the write). The PROJECT's own thread is the side panel's
+  Discussion; the page's old comments popup (`open_comments`) is gone.
 - **A task's title opens it.** On the cards, a title is a text box only
   while it is the row being typed (`OutlineList`'s `outline_focus`: after a
   Tab or a split line); `outline_blur` turns it back into the link. Renaming
