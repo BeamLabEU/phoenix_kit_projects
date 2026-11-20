@@ -119,8 +119,15 @@ defmodule PhoenixKitProjects.Web.PopupsPanelReviewTest do
 
     query(view, "assignment-assignee", "zzz-nobody-#{System.unique_integer()}")
 
-    assert has_element?(view, "#assignment-assignee-none")
-    refute has_element?(view, "#assignment-assignee-options #assignment-assignee-none")
+    assert has_element?(
+             view,
+             "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-none"
+           )
+
+    refute has_element?(
+             view,
+             "##{PhoenixKitProjects.PickerHelpers.picker_id(view, "assignment-assignee")}-options #assignment-assignee-none"
+           )
   end
 
   test "7: a one-pick picker's list row follows the choice", ctx do
