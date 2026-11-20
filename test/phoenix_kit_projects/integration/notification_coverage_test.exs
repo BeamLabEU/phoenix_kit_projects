@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Activity, Actor, History, Notices, Projects, TaskNotes}
+  alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitStaff.Schemas.{Department, Person, Team, TeamMembership}
 
   setup do
@@ -125,7 +126,7 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     log!("projects.assignment_created", a, alice.user)
 
     assert [n] = notices("projects.assignment_created", bob.user)
-    ref = PhoenixKitProjects.Schemas.Assignment.row_ref(a)
+    ref = Assignment.row_ref(a)
     assert n.metadata["notification_title"] == if(ref, do: "#{ref} · Measure", else: "Measure")
     assert n.metadata["notification_action"] == "Open task"
   end
