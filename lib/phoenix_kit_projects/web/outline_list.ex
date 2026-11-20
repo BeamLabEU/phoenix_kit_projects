@@ -608,22 +608,23 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       |> Enum.reject(&(&1 == ""))
       |> Enum.take(200)
 
-    if socket.assigns.outline_can.edit and titles != [] do
-      created =
-        Enum.reduce_while(titles, [], fn title, acc ->
-          case create_at(socket, %{"title" => title, "ad_hoc" => true}, nil, :last) do
-            {:ok, a} -> {:cont, [{a, title} | acc]}
-            _ -> {:halt, acc}
-          end
-        end)
-        |> Enum.reverse()
+    cond do
+      not socket.assigns.outline_can.edit or titles == [] ->
+        {:reply, %{added: 0}, socket}
 
-      socket = remember_created(socket, Enum.map(created, &elem(&1, 0).uuid))
-      last = created |> List.last() |> then(&(&1 && elem(&1, 1)))
+      match?([_], titles) ->
+        [title] = titles
 
-      {:reply, %{added: length(created), last: last}, reload.(socket)}
-    else
-      {:reply, %{added: 0}, socket}
+        case create_at(socket, %{"title" => title, "ad_hoc" => true}, nil, :last) do
+          {:ok, a} ->
+            {:reply, %{added: 1, last: title}, socket |> remember_created([a.uuid]) |> reload.()}
+
+          _ ->
+            {:reply, %{added: 0}, socket}
+        end
+
+      true ->
+        quick_add_lines(socket, titles, reload)
     end
   end
 
@@ -886,6 +887,36 @@ defmodule PhoenixKitProjects.Web.OutlineList do
         )
 
         {:noreply, put_flash(socket, :error, sync_error(reason))}
+    end
+  end
+
+  # A pasted list in the quick-add line: every title a task at the end of
+  # the top level, in ONE `Outline.sync` — one write and one broadcast, as
+  # the outline's own paste (the boss's review of #63: one task per line,
+  # each with its own broadcasts).
+  defp quick_add_lines(socket, titles, reload) do
+    existing =
+      for {a, depth} <- Outline.walk(socket.assigns.assignments),
+          do: %{"id" => a.uuid, "text" => line_text(a), "depth" => depth}
+
+    added =
+      for {title, i} <- Enum.with_index(titles),
+          do: %{"id" => nil, "tmp" => "q#{i}", "text" => title, "depth" => 0, "done" => false}
+
+    case Outline.sync(socket.assigns.project.uuid, existing ++ added, [],
+           actor_uuid: Activity.actor_uuid(socket),
+           rename: false
+         ) do
+      {:ok, summary} ->
+        log_sync(socket, summary)
+        created = Enum.map(summary.created, fn {_tmp, %{uuid: uuid}} -> uuid end)
+
+        {:reply, %{added: length(created), last: List.last(titles)},
+         socket |> remember_created(created) |> reload.()}
+
+      {:error, reason} ->
+        audit_failed(socket, "projects.task_list_edited", socket.assigns.project.uuid, "project")
+        {:reply, %{added: 0}, put_flash(socket, :error, sync_error(reason))}
     end
   end
 

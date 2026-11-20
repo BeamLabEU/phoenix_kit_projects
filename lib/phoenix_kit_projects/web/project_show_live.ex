@@ -3092,9 +3092,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:embed_frame_ref, :any, default: nil)
   attr(:socket, :any, required: true)
   attr(:viewer_uuid, :string, default: nil)
+  attr(:wide, :boolean, default: false)
 
   # The panel beside the list on a wide screen: the project's discussion,
-  # its activity, or a second view (Timeline, Calendar). Hidden below 2xl.
+  # its activity, or a second view (Timeline, Calendar). Hidden below 2xl,
+  # and its view is built only once the browser says the screen is that
+  # wide (`PkpWide`, `@wide`): a hidden thread or Gantt was a live process
+  # nobody saw (the boss's review of #63).
   defp side_panel(assigns) do
     views =
       [
@@ -3116,6 +3120,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       id={"project-side-panel-#{@project.uuid}"}
       class="hidden 2xl:flex flex-col gap-3 w-[30rem] shrink-0 sticky top-0 max-h-[calc(100vh-6rem)] min-h-0 rounded-box border border-base-200 bg-base-100 p-3"
       aria-label={gettext("Side panel")}
+      phx-hook="PkpWide"
+      data-event="side_panel_wide"
     >
       <div role="tablist" class="tabs tabs-border tabs-sm">
         <button
@@ -3131,7 +3137,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </button>
       </div>
       <div class="min-h-0 overflow-y-auto overscroll-contain">
-        <%= case @view do %>
+        <%= case @wide && @view do %>
           <% "discussion" -> %>
             <.live_component
               module={PhoenixKitComments.Web.CommentsComponent}
@@ -3511,6 +3517,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   def handle_event("side_panel_view", _params, socket), do: {:noreply, socket}
+
+  # `PkpWide`: whether the screen is wide enough to show the side panel.
+  def handle_event("side_panel_wide", %{"wide" => wide}, socket) when is_boolean(wide),
+    do: {:noreply, assign(socket, side_panel_wide: wide)}
+
+  def handle_event("side_panel_wide", _params, socket), do: {:noreply, socket}
 
   def handle_event("outline_tick", %{"id" => uuid} = params, socket) when is_binary(uuid) do
     event = if params["done"] == true, do: "complete", else: "reopen"
@@ -7509,6 +7521,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         embed_frame_ref={@embed_frame_ref}
         socket={@socket}
         viewer_uuid={assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid}
+        wide={assigns[:side_panel_wide] == true}
       />
       </div>
       </div>
