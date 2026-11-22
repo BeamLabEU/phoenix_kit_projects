@@ -2715,6 +2715,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp link_error_message(_), do: gettext("Could not nest that project.")
 
+  # The form's own record in its element ids: a subtask's form opened over
+  # its parent's is a second LiveView on the same page, and two pickers (or
+  # two "waits on" rows) with one id broke both (the boss's review of #63).
+  # The task's uuid, or "new".
+  defp form_key(%{assignment: %Assignment{uuid: uuid}}) when is_binary(uuid), do: uuid
+  defp form_key(_assigns), do: "new"
+
   # ── Held until Save (the boss, 2026-11-18) ──────────────────────
 
   attr(:rows, :list, required: true)
@@ -2722,6 +2729,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   attr(:lang, :string, default: nil)
   attr(:prompt, :string, required: true)
   attr(:empty, :string, required: true)
+  attr(:form_key, :string, default: "new")
 
   # "Waits on" in an edit form: what is saved, what Save adds (marked) and
   # what it removes (struck through, with an undo).
@@ -2730,7 +2738,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     <ul :if={@rows != []} class="flex flex-col gap-1">
       <li
         :for={{uuid, a, state} <- @rows}
-        id={"waits-on-#{uuid}"}
+        id={"waits-on-#{@form_key}-#{uuid}"}
         class="flex items-center gap-2 text-sm"
         data-held={if state != :saved, do: to_string(state)}
       >
@@ -3609,7 +3617,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       }
       |> maybe_add_default_assignee(attrs)
 
-    case Projects.create_task_with_assignment(project.uuid, task_attrs, attrs) do
+    case Projects.create_task_with_assignment(project.uuid, task_attrs, attrs,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, %{assignment: assignment}} ->
         {:ok, _} =
           Projects.stamp_assignment(assignment, %{created_by_uuid: Activity.actor_uuid(socket)})
@@ -3864,7 +3874,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp save_new_simple(socket, attrs) do
-    case Projects.create_assignment(attrs) do
+    case Projects.create_assignment(attrs, actor_uuid: Activity.actor_uuid(socket)) do
       {:ok, assignment} ->
         apply_pending_labels(socket, assignment)
 
@@ -4838,7 +4848,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                |> library_attrs(project)
                |> strip_gated_attrs(fx)
                |> strip_unassignable(socket),
-             {:ok, a} <- Projects.create_assignment(attrs) do
+             {:ok, a} <-
+               Projects.create_assignment(attrs, actor_uuid: Activity.actor_uuid(socket)) do
           Activity.log("projects.assignment_created",
             actor_uuid: Activity.actor_uuid(socket),
             resource_type: "assignment",
@@ -5151,7 +5162,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                  assignees, any number, live on the child project). --%>
             <.assignee_field
               :if={@fx.assignees}
-              id="subproject-assignee"
+              id={"subproject-assignee-#{form_key(assigns)}"}
               name="subproject[assignees][]"
               label={gettext("Assignees")}
               selected={@assignee_selected}
@@ -5189,6 +5200,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </p>
               <%= if @live_action == :edit do %>
                 <.held_waits_on
+                  form_key={form_key(assigns)}
                   rows={shown_deps(assigns)}
                   choices={dep_choices(assigns)}
                   lang={sp_lang}
@@ -5520,7 +5532,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                chips. Posted as the form's `assignees` list. --%>
           <.assignee_field
             :if={@fx.assignees}
-            id="assignment-assignee"
+            id={"assignment-assignee-#{form_key(assigns)}"}
             name="assignment[assignees][]"
             label={gettext("Assignees")}
             selected={@assignee_selected}
@@ -5807,6 +5819,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
             <%= if @live_action == :edit do %>
               <.held_waits_on
+                form_key={form_key(assigns)}
                 rows={shown_deps(assigns)}
                 choices={dep_choices(assigns)}
                 lang={lang}
