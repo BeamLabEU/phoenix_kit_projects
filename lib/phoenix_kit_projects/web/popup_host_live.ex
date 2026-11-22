@@ -596,9 +596,6 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     end
   end
 
-  def handle_event("pkp_url_discard", _params, socket),
-    do: {:noreply, close_task_frames(socket)}
-
   # The address may name the task another way than the frame does (its
   # uuid, a former project key): the TASK is compared, not the spelling, so
   # a link the page already opened is not opened a second time on top.

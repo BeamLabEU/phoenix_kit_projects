@@ -90,7 +90,10 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
     assert Ledger.list_entries(project.uuid) == []
   end
 
-  test "the comments drawer opens only on this project or one of its tasks", %{conn: conn} do
+  # The page's comments popup is gone (#64): the project's thread is the
+  # side panel's Discussion, a task's is its popup. Its old event, crafted,
+  # must draw no thread at all, least of all another project's.
+  test "the removed comments popup's event opens nothing", %{conn: conn} do
     project = fixture_project(%{"name" => "Mine"})
     other = fixture_project(%{"name" => "Theirs"})
     task = fixture_task(%{"title" => "Foreign"})
@@ -104,23 +107,11 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
 
     {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}")
 
-    # A task's comments and notes no longer open here at all.
-    for type <- ["assignment", "notes"] do
-      {:ok, mine} =
-        Projects.create_assignment(%{
-          "project_uuid" => project.uuid,
-          "task_uuid" => task.uuid,
-          "status" => "todo"
-        })
-
-      for uuid <- [foreign.uuid, mine.uuid] do
-        html = render_hook(view, "open_comments", %{"type" => type, "uuid" => uuid})
-        refute html =~ ~s|aria-label="Comments"|
-      end
+    for {type, uuid} <- [{"project", other.uuid}, {"assignment", foreign.uuid}] do
+      html = render_hook(view, "open_comments", %{"type" => type, "uuid" => uuid})
+      refute html =~ uuid
+      refute html =~ "comments-drawer-"
     end
-
-    html = render_hook(view, "open_comments", %{"type" => "project", "uuid" => other.uuid})
-    refute html =~ ~s|aria-label="Comments"|
   end
 
   # ── An ordinary member, with the project's floors restricted ──────────────

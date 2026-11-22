@@ -161,6 +161,10 @@ defmodule PhoenixKitProjects.Web.TaskInUrlTest do
     render_click(view, "confirm_action_cancel", %{})
     assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-task="#{ref}"]))
 
+    # The discard is only ever the dialog's answer: sent bare, it closes nothing.
+    render_hook(view, "pkp_url_discard", %{})
+    assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-task="#{ref}"]))
+
     # Back again, then Discard: the frame closes like a clean Back.
     render_hook(view, "pkp_url_task", %{"task" => ""})
     render_click(view, "confirm_action_ok", %{})
