@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.35.0 - 2026-11-23
+
+The boss's fourth list (#63) and its follow-ups (#64), with their reviews
+(`dev_docs/pull_requests/2026/63-boss-list-1118/`, `64-picker-faces/`,
+`release-review-0340-to-head/`).
+
+No new chain version (still V30), so `mix phoenix_kit.update` has nothing to apply.
+
+### Requirements
+
+- **`phoenix_kit` `>= 3.7.0 and < 4.0.0`** (was `>= 3.3.0`): the assignee fields and the Done / next-up dialogs use core's `PeoplePicker`, first released in 3.7.0. The lock also moves to `phoenix_kit_ai` 0.30.0 and `phoenix_kit_comments` 0.6.0, both inside the existing requirements.
+
+### Added
+
+- **People picker.** Every assignee field and the Done / next-up dialogs' "who to tell" use core's `PeoplePicker`, fed by `PhoenixKitProjects.PeopleSource` (teams, departments, people, and accounts without a staff record behind a "Create a staff record?" question). Rows show each person's photo or two letters from the name. A person listed under two teams of a search shows under both.
+- **Quick add at the top of a task list.** Enter adds the task at the end and keeps the cursor. A pasted list adds one task per line in a single write.
+- **A side panel on wide screens** (Discussion, Activity, Timeline, Calendar), collapsed by default and remembered per viewer. Its view is built only on a screen wide enough to show it (`PkpWide` hook). It replaces the project page's comments popup.
+- **Done always asks**, from the status menu, ⋮, a board drop, the outline tick and the slider at 100. The dialog has a comment box and a "who to tell" picker, with each person tagged (You, Project owner, Created this task, Assigned, through a team, Commented here, Can't open the project, No login yet). People added there become assignees. Anyone may take people off the list. Only someone who may assign can add.
+- **Assigning someone admits them.** A person assigned to a task who cannot open its project becomes a member and is told so. The `member_added` row names who assigned, and an API assignment carries `source: "api"`.
+- **The comment travels.** A dialog's comment and a reopen reason go into the notification as a quote (inbox, email, Telegram), held to 4,000 characters and 16 KB, the copy kept beside it too.
+- **@ mentions in a task's comments** offer the project's people first and warn about someone who cannot open the project. A picked mention shows as a chip in the task editors (Leaf 0.12+).
+
+### Changed
+
+- **One centred popup per task.** The title opens it, and the comment and notes buttons open it on their tab. Renaming is the pencil in the popup.
+- **The task form writes nothing before Save**: "Depends on", "Sits under", the subtasks box and file removals are held until then. Close, and Back over the popup, ask before discarding them.
+- **Card menus** (status, deadline, assignee) are native popovers, so no faded card can cover them.
+- **Destructive ×'s ask first** (a dependency chip, "stop tracking progress"). "Allow to start" is "Can be started" everywhere. Notification types read plainly, each with an example.
+- **Leaf** is the editor of the Can be started comment, the reopen reason, the redirect reason and an event's description.
+- **The task list keeps a readable width**, and a row highlights on hover.
+- **The task form's element ids carry their task**, so a subtask's form opened over its parent's no longer repeats them.
+
+### Fixed
+
+- **Admission never runs inside a transaction:** the API's task PATCH and the Done / next-up dialog admitted new members before their write committed.
+- A task still waiting for review (a portal request) admitted its assignees. Rows kept idle in the next-up dialog were still assigned. The dialog's assigning step did not vet each key itself.
+- "Use as description" could overwrite an existing description, and held dependency changes skipped the feature check at Save.
+- A crafted rename crashed the task popup. The "Added" note mangled titles containing `%{count}` or `$&`. The AI-time chip opened an empty Notes tab while discussions are off.
+- A dialog comment's @ mentions told nobody.
+- Translations for every new string, in all seven languages.
+
 ## 0.34.0 - 2026-11-08
 
 A whole-module audit and its fixes

@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.34.0"
+  @version "0.35.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -113,8 +113,7 @@ defmodule PhoenixKitProjects.MixProject do
     [
       # Floor 3.7.0, ceiling open through every core 3.x: the assignee fields
       # and the next-up dialogs are core's `PeoplePicker` (with
-      # `PhoenixKitProjects.PeopleSource`), first released in the core version
-      # after 3.6.1 — set this to the version that release carries.
+      # `PhoenixKitProjects.PeopleSource`), first released in core 3.7.0.
       # `Web.Helpers.assign_embed_user/2` and the notification fan-outs call core
       # directly, with no fallback for an older one.
       #
