@@ -1897,7 +1897,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         end)
 
     Enum.reduce_while(pickers, :ok, fn {task, keys, defaults}, :ok ->
-      admit_kept(project, keys -- (keys -- defaults), actor, task)
+      # Both admissions write, log and notify, so they wait for the
+      # transaction around this write to commit (hold_admission/1) — a
+      # rollback admits nobody.
+      hold_admission(fn -> admit_kept(project, keys -- (keys -- defaults), actor, task) end)
 
       case assign_added(task, keys -- defaults, actor) do
         :ok -> {:cont, :ok}
@@ -1922,16 +1925,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          %Assignment{} = fresh <- Projects.get_assignment(task.uuid),
          current = AssigneeSet.keys(fresh),
          wanted when wanted != current <- Enum.uniq(current ++ added) do
-      case Projects.update_assignment_form(fresh, %{"assignees" => wanted}, actor_uuid: actor) do
+      case Projects.update_assignment_form(fresh, %{"assignees" => wanted},
+             actor_uuid: actor,
+             admit: false
+           ) do
         {:ok, updated} ->
+          # The admission writes, logs and notifies, so it waits for the
+          # transaction around this write to commit (hold_admission/1).
+          hold_admission(fn -> Members.admit_assignees(updated, current, actor_uuid: actor) end)
+
           # The change in the task's history, as the form's save records it.
-          Activity.log("projects.assignment_updated",
-            actor_uuid: actor,
-            resource_type: "assignment",
-            resource_uuid: updated.uuid,
-            tell: false,
-            metadata: %{"changes" => PhoenixKitProjects.Changes.assignment(fresh, updated)}
-          )
+          log_activity(:ok, fn ->
+            Activity.log("projects.assignment_updated",
+              actor_uuid: actor,
+              resource_type: "assignment",
+              resource_uuid: updated.uuid,
+              tell: false,
+              metadata: %{"changes" => PhoenixKitProjects.Changes.assignment(fresh, updated)}
+            )
+          end)
 
           :ok
 
@@ -2090,9 +2102,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # far are dropped (`Handoffs.discard/0`): nobody hears of what did not
   # happen. `fun` answers `{:ok, socket, value}` or `{:error, socket, msg}`.
   @held_logs :pkp_show_held_activity
+  @held_admissions :pkp_show_held_admissions
 
   defp in_one_write(socket, fun) do
     Process.put(@held_logs, [])
+    Process.put(@held_admissions, [])
 
     result =
       try do
@@ -2105,10 +2119,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       catch
         kind, reason ->
           Process.delete(@held_logs)
+          Process.delete(@held_admissions)
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
 
     committed? = match?({:ok, _}, result)
+
+    # Admissions held while the write ran go first: they write, log and
+    # notify, so they run only now that the transaction has committed —
+    # and before the held logs, whose notices reach the people just
+    # admitted. A rollback drops everything.
+    for fun <- Enum.reverse(Process.delete(@held_admissions) || []),
+        committed?,
+        do: fun.()
 
     for {kind, log} <- Enum.reverse(Process.delete(@held_logs) || []),
         committed? or kind == :failed,
@@ -2132,6 +2155,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp log_activity(kind, fun) when kind in [:ok, :failed] do
     case Process.get(@held_logs) do
       held when is_list(held) -> Process.put(@held_logs, [{kind, fun} | held])
+      _ -> fun.()
+    end
+
+    :ok
+  end
+
+  # An admission (a new seat, its history row, its "you were added" notice),
+  # held while `in_one_write/1` runs: it writes, logs and notifies, none of
+  # which belongs inside a transaction that can still roll back. Flushed
+  # once the write has committed — a rollback drops it.
+  defp hold_admission(fun) do
+    case Process.get(@held_admissions) do
+      held when is_list(held) -> Process.put(@held_admissions, [fun | held])
       _ -> fun.()
     end
 

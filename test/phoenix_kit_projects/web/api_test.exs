@@ -1158,4 +1158,63 @@ defmodule PhoenixKitProjects.Web.ApiTest do
       assert Projects.get_assignment(a.uuid).status == "in_progress"
     end
   end
+
+  describe "PATCHing a task's assignees (admission, 2026-11-19)" do
+    test "the people the write adds are admitted after it commits, marked as the API's", %{
+      conn: conn,
+      project: project,
+      assignment: a
+    } do
+      # The first account a database gets is its Owner, who opens everything:
+      # made here so the helper below is an ordinary account.
+      {:ok, _owner} =
+        Auth.register_user(%{
+          "email" => "site-owner-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      {:ok, helper} =
+        Auth.register_user(%{
+          "email" => "helper-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      person =
+        Repo.insert!(%PhoenixKitStaff.Schemas.Person{
+          user_uuid: helper.uuid,
+          status: "active",
+          name: "Hal Helper"
+        })
+
+      {:ok, _key, manager_token} =
+        ApiKeys.create(project, %{"name" => "Assigner", "role" => "manager"})
+
+      refute Members.get_member(project.uuid, helper.uuid)
+
+      # The core activity topic: the admission's row is announced on it.
+      Phoenix.PubSub.subscribe(:phoenix_kit_internal_pubsub, "phoenix_kit:activity")
+
+      %{"task" => %{"assignees" => assignees}} =
+        conn
+        |> api(manager_token)
+        |> patch_json("#{@base}/tasks/#{a.uuid}", %{"assignees" => [%{"person" => person.uuid}]})
+        |> json_response(200)
+
+      assert %{"kind" => "person", "uuid" => uuid} =
+               Enum.find(assignees, &(&1["kind"] == "person"))
+
+      assert uuid == person.uuid
+
+      # Admitted now that the PATCH's transaction has committed: a seat, and
+      # the history row naming the key's person and the API as the source.
+      assert Members.get_member(project.uuid, helper.uuid)
+
+      entry = assert_activity_logged("projects.member_added", resource_uuid: project.uuid)
+      assert Ecto.UUID.cast!(entry.target_uuid) == helper.uuid
+      assert entry.metadata["via"] == "assignment"
+      assert entry.metadata["source"] == "api"
+
+      assert_receive {:activity_logged, %{action: "projects.member_added"}}, 500
+    end
+  end
 end

@@ -1961,7 +1961,8 @@ reference:
   or API-only account, or an existing seat — `add_member(only_new: true)`),
   which the Done / next-up dialogs use too. **Admission writes, logs and
   notifies, so it never runs inside a transaction:** a caller inside one
-  (template clone, closure pull) passes `admit: false` and admits after
+  (template clone, closure pull, the API's PATCH, the Done / next-up
+  dialog's `in_one_write`) passes `admit: false` and admits after
   the commit. `Members.assignee_reach/2` labels people
   `:ok | :cannot_open | :no_login | :inactive` for the dialogs. A
   sub-project's own assignees (`Projects.update_project/2`) admit nobody. The notification types read plainly, each with an

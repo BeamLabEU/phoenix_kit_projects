@@ -28,11 +28,13 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   alias PhoenixKitProjects.{
     Activity,
     ApiKeys,
+    AssigneeSet,
     Authz,
     Extensions,
     Features,
     Labels,
     Ledger,
+    Members,
     Notices,
     Outline,
     Projects,
@@ -362,6 +364,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp do_update(conn, %Assignment{} = a, params) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
     content = Map.take(params, ["title", "description"])
+    was_keys = AssigneeSet.keys(a)
 
     with :ok <- not_subproject_row(a),
          :ok <- content_editable(a, content),
@@ -385,6 +388,18 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
                {:ok, :written}
              end
            end) do
+      # The PATCH's transaction has committed (write_update answers only
+      # then): the people this write added are admitted now. Admission
+      # writes, logs and notifies, so it never ran inside it (`admit:
+      # false` on the write) — a rolled-back PATCH admits nobody.
+      updated = Projects.get_assignment(a.uuid)
+
+      _ =
+        Members.admit_assignees(updated, was_keys,
+          actor_uuid: ApiKey.accountable_uuid(key),
+          source: "api"
+        )
+
       changed =
         Map.keys(Map.merge(content, assignment_attrs)) ++
           Enum.filter(["labels", "interaction", "parent"], &Map.has_key?(params, &1))
@@ -392,7 +407,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       reassigned? =
         Notices.reassigned(
           a,
-          Projects.get_assignment(a.uuid),
+          updated,
           ApiKey.accountable_uuid(key),
           api_metadata(key, %{})
         )
@@ -410,7 +425,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       if Map.has_key?(content, "description"),
         do: sync_mentions(a.uuid, content["description"], key)
 
-      {200, %{task: Json.task(Projects.get_assignment(a.uuid))}}
+      {200, %{task: Json.task(updated)}}
     else
       {:error, {status, _} = pair} when is_integer(status) -> pair
       {:error, %Ecto.Changeset{} = cs} -> Json.changeset_error(cs)
@@ -792,12 +807,16 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp update_fields(_a, attrs, _key) when map_size(attrs) == 0, do: {:ok, nil}
 
   # The key's accountable person is the actor of any admission an
-  # assignee change makes, marked as the API's.
+  # assignee change makes, marked as the API's. The admission itself runs
+  # after the PATCH's transaction commits (see do_update): it writes, logs
+  # and notifies, none of which belongs inside a transaction that can
+  # still roll back.
   defp update_fields(a, attrs, key),
     do:
       Projects.update_assignment_form(a, attrs,
         actor_uuid: ApiKey.accountable_uuid(key),
-        source: "api"
+        source: "api",
+        admit: false
       )
 
   def transition(conn, %{"id" => id} = params) do
