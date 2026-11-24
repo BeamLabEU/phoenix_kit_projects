@@ -2183,8 +2183,11 @@
     var from = (editorId && document.getElementById(editorId)) || document.activeElement;
     var dialog = from && from.closest ? from.closest("dialog[open]") : null;
     if (!dialog) return null;
+    // The editor's own view, inside the dialog (a task popup's frame) or
+    // around it (a page's own dialog): LiveView keeps a node that names a
+    // view through a patch, and sends its events there.
     var view = from.closest("[data-phx-session]");
-    return { dialog: dialog, viewId: view && dialog.contains(view) ? view.id : null };
+    return { dialog: dialog, viewId: view ? view.id : null };
   }
 
   function adoptLeafNode(node, host) {
