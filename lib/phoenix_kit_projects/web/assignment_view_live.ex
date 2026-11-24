@@ -1006,7 +1006,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
             phx-value-uuid={row.uuid}
             class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-base-200/60"
           >
-            <.assignment_status_badge status={row.status} size="xs" class="shrink-0" />
+            <.assignment_status_badge status={row.status} class="shrink-0" />
             <.ref_chip ref={Refs.task_ref(@project.key, row.number)} />
             <span class={["min-w-0 truncate", row.status == "done" && "text-base-content/60"]}>
               {Assignment.label(row, @lang)}

@@ -1749,7 +1749,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             <div class="flex items-baseline justify-between gap-2 text-sm">
               <span class="truncate min-w-0">
                 {row.label}
-                <span :if={row.ai} class="badge badge-ghost badge-xs ml-1">{gettext("AI")}</span>
+                <span :if={row.ai} class="badge badge-ghost badge-sm ml-1">{gettext("AI")}</span>
               </span>
               <span class="shrink-0 tabular-nums font-medium">
                 {Format.duration(row.minutes)}

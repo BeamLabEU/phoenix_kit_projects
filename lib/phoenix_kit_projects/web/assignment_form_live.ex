@@ -2742,7 +2742,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         class="flex items-center gap-2 text-sm"
         data-held={if state != :saved, do: to_string(state)}
       >
-        <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+        <.assignment_status_badge status={a.status} class="shrink-0" />
         <span class={["truncate flex-1", state == :removing && "line-through text-base-content/50"]}>
           {Assignment.label(a, @lang)}
         </span>
@@ -2786,7 +2786,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # The small mark on something Save will write.
   defp not_saved(assigns) do
     ~H"""
-    <span class="badge badge-warning badge-outline badge-xs shrink-0" title={gettext("Saved when you press Save")}>
+    <span class="badge badge-warning badge-outline badge-sm shrink-0" title={gettext("Saved when you press Save")}>
       {gettext("not saved")}
     </span>
     """
@@ -5212,7 +5212,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 <% pending = for u <- @pending_dep_uuids, a = Map.get(by_uuid, u), a, do: {u, a} %>
                 <ul :if={pending != []} class="flex flex-col gap-1">
                   <li :for={{dep_uuid, a} <- pending} class="flex items-center gap-2 text-sm">
-                    <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+                    <.assignment_status_badge status={a.status} class="shrink-0" />
                     <span class="truncate flex-1">{Assignment.label(a, sp_lang)}</span>
                     <button
                       type="button"
@@ -5831,7 +5831,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <% pending = for u <- @pending_dep_uuids, a = Map.get(by_uuid, u), a, do: {u, a} %>
               <ul :if={pending != []} class="flex flex-col gap-1">
                 <li :for={{dep_uuid, a} <- pending} class="flex items-center gap-2 text-sm">
-                  <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+                  <.assignment_status_badge status={a.status} class="shrink-0" />
                   <span class="truncate flex-1">{Assignment.label(a, lang)}</span>
                   <button
                     type="button"
@@ -5865,7 +5865,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <p class="text-xs text-base-content/60">{gettext("Tasks that wait for this one to finish.")}</p>
             <ul :if={@unlocks != []} class="flex flex-col gap-1">
               <li :for={u <- @unlocks} class="flex items-center gap-2 text-sm">
-                <.assignment_status_badge status={u.status} size="xs" class="shrink-0" />
+                <.assignment_status_badge status={u.status} class="shrink-0" />
                 <span class="truncate">{Assignment.label(u, lang)}</span>
               </li>
             </ul>

@@ -72,10 +72,10 @@ defmodule PhoenixKitProjects.Web.Components.DayPopupModal do
                   {row.subtitle}
                 </span>
               </span>
-              <span :if={row.late} class="badge badge-xs badge-error">
+              <span :if={row.late} class="badge badge-sm badge-error">
                 {gettext("late")}
               </span>
-              <.assignment_status_badge :if={row.status} status={row.status} size="xs" />
+              <.assignment_status_badge :if={row.status} status={row.status} />
             </button>
           </div>
         <% end %>

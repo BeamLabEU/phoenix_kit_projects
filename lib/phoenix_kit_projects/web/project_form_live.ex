@@ -3797,7 +3797,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       </p>
       <ul :if={@deps != []} class="flex flex-col gap-1">
         <li :for={dep <- @deps} class="flex items-center gap-2 text-sm">
-          <.assignment_status_badge status={dep.depends_on.status} size="xs" class="shrink-0" />
+          <.assignment_status_badge status={dep.depends_on.status} class="shrink-0" />
           <span class="truncate flex-1">{Assignment.label(dep.depends_on, @lang)}</span>
           <button
             type="button"

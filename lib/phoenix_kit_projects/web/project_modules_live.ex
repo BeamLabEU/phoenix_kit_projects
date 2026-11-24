@@ -594,7 +594,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                 <div class="min-w-0 grow">
                   <div class="flex items-center gap-2">
                     <span class="font-semibold">{WebHelpers.translate_catalog(ext.name)}</span>
-                    <span :if={ext.source == PhoenixKitProjects and ext.key == "tasks"} class="badge badge-ghost badge-xs">
+                    <span :if={ext.source == PhoenixKitProjects and ext.key == "tasks"} class="badge badge-ghost badge-sm">
                       {gettext("built-in")}
                     </span>
                   </div>

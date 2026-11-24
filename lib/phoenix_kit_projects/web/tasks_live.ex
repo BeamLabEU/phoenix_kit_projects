@@ -735,11 +735,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                         </.smart_link>
                         <span
                           :if={task.uuid == group.root.uuid}
-                          class="badge badge-primary badge-xs shrink-0"
+                          class="badge badge-primary badge-sm shrink-0"
                         >
                           {gettext("root")}
                         </span>
-                        <span class="badge badge-ghost badge-xs shrink-0">
+                        <span class="badge badge-ghost badge-sm shrink-0">
                           {format_duration(task)}
                         </span>
                       </li>
@@ -774,7 +774,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                     >
                       {TaskSchema.localized_title(task, lang)}
                     </.smart_link>
-                      <span class="badge badge-ghost badge-xs shrink-0">
+                      <span class="badge badge-ghost badge-sm shrink-0">
                         {format_duration(task)}
                       </span>
                     </li>
@@ -1100,14 +1100,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             >
               {TaskSchema.localized_title(task, @lang)}
             </.smart_link>
-            <span :if={task.ad_hoc} class="badge badge-outline badge-xs ml-1 align-middle">
+            <span :if={task.ad_hoc} class="badge badge-outline badge-sm ml-1 align-middle">
               {gettext("one-off")}
             </span>
             <% desc = TaskSchema.localized_description(task, @lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md font-normal">{desc}</div>
             <% deps = Map.get(@deps_by_task, task.uuid, []) %>
             <div :if={deps != []} class="flex flex-wrap gap-1 mt-1.5">
-              <span :for={dep <- deps} class="badge badge-outline badge-xs gap-1 font-normal">
+              <span :for={dep <- deps} class="badge badge-outline badge-sm gap-1 font-normal">
                 <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
                 {TaskSchema.localized_title(dep, @lang)}
               </span>

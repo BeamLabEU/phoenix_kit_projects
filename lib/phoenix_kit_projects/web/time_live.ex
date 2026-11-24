@@ -584,10 +584,10 @@ defmodule PhoenixKitProjects.Web.TimeLive do
             />
           <% end %>
           <span class="font-semibold truncate" title={@row.name}>{@row.name}</span>
-          <span :if={not @idle?} class="badge badge-ghost badge-xs shrink-0">{length(@row.lines)}</span>
+          <span :if={not @idle?} class="badge badge-ghost badge-sm shrink-0">{length(@row.lines)}</span>
           <span
             :if={@unscheduled != []}
-            class="badge badge-outline badge-xs shrink-0"
+            class="badge badge-outline badge-sm shrink-0"
             title={gettext("Assigned, no clock")}
           >
             {ngettext("%{count} unscheduled", "%{count} unscheduled", length(@unscheduled))}

@@ -2878,7 +2878,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <div :if={@fx.dependencies and deps != []} class="flex flex-wrap gap-1 mt-1">
             <%= for dep <- deps do %>
               <span class={[
-                "badge badge-outline badge-xs gap-1",
+                "badge badge-outline badge-sm gap-1",
                 match?(%{depends_on: %{status: "done"}}, dep) && "opacity-60"
               ]}>
                 <.icon
@@ -7376,7 +7376,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       <% sp_deps = Map.get(@deps_by_assignment, a.uuid, []) %>
                       <div :if={sp_deps != []} class="flex flex-wrap gap-1 mt-1">
                         <%= for dep <- sp_deps do %>
-                          <span class="badge badge-outline badge-xs gap-1">
+                          <span class="badge badge-outline badge-sm gap-1">
                             <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
                             {gettext("depends on:")} {Assignment.label(dep.depends_on, sp_lang)}
                             <.dependency_remove_button
@@ -7410,7 +7410,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                 <%!-- A nested sub-project: a compact link (open it to drill in). --%>
                                 <div class="flex items-center gap-2 text-xs">
                                   <.assignment_status_badge status={ct.status} subproject />
-                                  <span class="badge badge-secondary badge-xs shrink-0">{gettext("Sub-project")}</span>
+                                  <span class="badge badge-secondary badge-sm shrink-0">{gettext("Sub-project")}</span>
                                   <.smart_link
                                     navigate={Paths.project(ct.child_project.uuid)}
                                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => ct.child_project.uuid}}}
@@ -7670,31 +7670,30 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <.deadline_chip
                       :if={@fx[:dates] != false}
                       a={a}
-                      size="xs"
                       tone="outline"
                       class="max-w-full"
                     />
                     <% sub = Map.get(@outline_counts, a.uuid) %>
-                    <span :if={sub} class="badge badge-xs badge-outline gap-1" title={gettext("Subtasks done")}>
+                    <span :if={sub} class="badge badge-sm badge-outline gap-1" title={gettext("Subtasks done")}>
                       <.icon name="hero-list-bullet" class="w-3 h-3" /> {sub.done}/{sub.total}
                     </span>
                     <span
                       :if={@fx.priorities and a.priority != "normal"}
-                      class={["badge badge-xs gap-1", priority_class(a.priority)]}
+                      class={["badge badge-sm gap-1", priority_class(a.priority)]}
                     >
                       <.icon name="hero-flag" class="w-3 h-3" /> {priority_label(a.priority)}
                     </span>
                     <span
                       :for={label <- Enum.take(Map.get(@assignment_labels, a.uuid, []), 2)}
                       :if={@fx.labels}
-                      class={["badge badge-xs max-w-full min-w-0", label.color]}
+                      class={["badge badge-sm max-w-full min-w-0", label.color]}
                       title={label.name}
                     >
                       <span class="truncate">{label.name}</span>
                     </span>
                     <span
                       :if={@fx.labels and length(Map.get(@assignment_labels, a.uuid, [])) > 2}
-                      class="badge badge-ghost badge-xs"
+                      class="badge badge-ghost badge-sm"
                     >
                       +{length(Map.get(@assignment_labels, a.uuid, [])) - 2}
                     </span>
