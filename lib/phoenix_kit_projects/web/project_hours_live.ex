@@ -254,7 +254,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         from: period.from,
         until: period.until,
         workers: if(a.worker == "", do: [], else: [a.worker]),
-        assignment_uuid: if(a.mode == :project and a.task != "", do: a.task),
+        assignment_uuid:
+          if(a.mode == :project and a.task != "", do: task_filter(a.task, project_uuids)),
         billable: billable_filter(a.billable),
         who: who_filter(a.who),
         offset_seconds: Period.offset_seconds(offset)
@@ -356,6 +357,23 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       Hours.project_uuids(chosen, a.subprojects)
     else
       visible
+    end
+  end
+
+  # The task filter's uuid. The address may carry a ref (`ACME-42`), which
+  # the chip resolves: the filter must too, or the page said "Task: ACME-42"
+  # over every task's hours. A task it cannot resolve, or one outside the
+  # projects read, matches nothing rather than everything.
+  @no_task "00000000-0000-0000-0000-000000000000"
+  defp task_filter(value, project_uuids) do
+    case Hours.task_option(value) do
+      %{uuid: uuid, project_uuid: p} ->
+        if project_uuids == :all or (is_list(project_uuids) and p in project_uuids),
+          do: uuid,
+          else: @no_task
+
+      _ ->
+        @no_task
     end
   end
 
