@@ -1961,7 +1961,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               </.table_default_cell>
               <.table_default_cell class="whitespace-nowrap">
                 <.person name={row.worker.name} kind={row.worker.kind}>
-                  <span :if={row.worker.kind == "ai_agent"} class="badge badge-ghost badge-xs">{gettext("AI")}</span>
+                  <span :if={row.worker.kind == "ai_agent"} class="badge badge-ghost badge-sm">{gettext("AI")}</span>
                 </.person>
               </.table_default_cell>
               <.table_default_cell :if={@multi?} class="whitespace-nowrap">
@@ -1990,8 +1990,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               </.table_default_cell>
               <.table_default_cell class="text-right whitespace-nowrap tabular-nums">
                 {Format.duration(Decimal.to_float(row.entry.amount))}
-                <span :if={row.entry.billable} class="badge badge-primary badge-outline badge-xs ml-1">{gettext("billable")}</span>
-                <span :if={row.entry.uuid in @invoiced} class="badge badge-ghost badge-xs ml-1">{gettext("invoiced")}</span>
+                <span :if={row.entry.billable} class="badge badge-primary badge-outline badge-sm ml-1">{gettext("billable")}</span>
+                <span :if={row.entry.uuid in @invoiced} class="badge badge-ghost badge-sm ml-1">{gettext("invoiced")}</span>
               </.table_default_cell>
               <.table_default_cell :if={@notes?} class="text-base-content/70 max-w-md">
                 <span class="line-clamp-2">{row.entry.note}</span>
