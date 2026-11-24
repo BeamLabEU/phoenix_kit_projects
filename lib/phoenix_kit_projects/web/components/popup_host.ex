@@ -144,6 +144,19 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       .pkp-frame.pkp-center > *:has([data-pkp-tabs]) {
         flex: none; height: 70dvh;
       }
+      /* A task's view: its header (and the frame's ✕) stay, the part under
+         it scrolls. The box keeps its natural height up to its maximum;
+         only then does the body scroll. */
+      .pkp-frame:has([data-pkp-view-body]) { overflow: hidden; }
+      .pkp-frame *:has([data-pkp-view-body]) {
+        display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0;
+      }
+      .pkp-frame *:has([data-pkp-view-body]) > *:not(:has([data-pkp-view-body])):not([data-pkp-view-body]) {
+        flex-shrink: 0;
+      }
+      .pkp-frame [data-pkp-view-body] {
+        flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+      }
       /* A long hint wraps; nothing in a pane scrolls sideways. */
       .pkp-frame [role="tabpanel"] { overflow-x: hidden; }
       .pkp-frame [role="tabpanel"] .label { white-space: normal; }

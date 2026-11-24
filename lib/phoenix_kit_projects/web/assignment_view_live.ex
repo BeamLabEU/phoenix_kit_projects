@@ -655,7 +655,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
         </div>
       </header>
 
-      <div class="grid gap-6 @2xl:grid-cols-[minmax(0,1fr)_15rem]">
+      <%!-- In a popup the header stays and only this part scrolls (Max,
+           2026-11-24: on a long thread the title and the ✕ went out of
+           sight); `PopupHost`'s rules read `data-pkp-view-body`. --%>
+      <div data-pkp-view-body class="grid gap-6 @2xl:grid-cols-[minmax(0,1fr)_15rem]">
         <%!-- Details: beside the main column when the drawer is wide,
              above it when it is narrow. Blank optional fields are left
              out, never "None". --%>
