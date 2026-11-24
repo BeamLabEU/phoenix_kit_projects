@@ -494,8 +494,19 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     {:noreply, socket}
   end
 
+  # The record is gone, so its frame goes wherever it sits in the stack: a
+  # covered frame left behind would show the deleted task again once the
+  # frame above it closes (codex).
   def handle_info({:projects, :deleted, %{frame_ref: ref, close: true}}, socket) do
-    {:noreply, pop_if_top_matches(socket, ref)}
+    stack = socket.assigns.modal_stack
+
+    case List.last(stack) do
+      %{frame_ref: ^ref} ->
+        {:noreply, pop_top(socket)}
+
+      _ ->
+        {:noreply, assign(socket, modal_stack: Enum.reject(stack, &(&1.frame_ref == ref)))}
+    end
   end
 
   def handle_info({:projects, :deleted, _payload}, socket) do
@@ -524,8 +535,8 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   def handle_event("confirm_action_ok", _params, socket) do
     case ConfirmAction.take(socket) do
-      {%{event: "close_top_modal" = event, params: params}, socket} ->
-        handle_event(event, params, socket)
+      {%{event: "close_top_modal", params: params}, socket} ->
+        close_top(socket, params, :confirmed)
 
       {%{event: "pkp_url_discard"}, socket} ->
         {:noreply, close_task_frames(socket)}
@@ -535,33 +546,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     end
   end
 
-  def handle_event("close_top_modal", params, socket) do
-    # Backdrop click + ESC keypress both fire `close_top_modal`. Each
-    # element passes `phx-value-frame-ref={frame.frame_ref}` so the
-    # handler can route through `pop_if_top_matches/2` — guards against
-    # a race where the user clicks a lower frame's backdrop or where ESC
-    # somehow fires for a non-top frame. ESC binding only attaches to
-    # the topmost dialog (see popup_host.ex), so the ESC path almost
-    # always matches; the frame-ref check is the belt-and-suspenders.
-    case normalize_frame_ref(Map.get(params, "frame-ref")) do
-      ref when is_integer(ref) ->
-        {:noreply, pop_if_top_matches(socket, ref)}
-
-      nil ->
-        # The component always emits `phx-value-frame-ref` (see
-        # popup_host.ex backdrop button + ESC binding). Missing or
-        # malformed value here means the event is stale (frame already
-        # popped) or adversarial. Treat as no-op rather than blindly
-        # popping the current top — otherwise a delayed event could
-        # close the wrong modal.
-        Logger.debug(
-          "[PopupHostLive] dropping close_top_modal without valid frame-ref " <>
-            "(params=#{inspect(params)})"
-        )
-
-        {:noreply, socket}
-    end
-  end
+  def handle_event("close_top_modal", params, socket), do: close_top(socket, params, :direct)
 
   # The address bar's `?task=` (`PkpDrawerUrl`): "" — Back went over the
   # entry the frame pushed, so the task's frames close (and whatever was
@@ -613,6 +598,39 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # A frame holding unsaved edits closes only through its ✕'s confirmation
+  # (`:confirmed`): Esc and the backdrop are ignored on it in the browser,
+  # and a bare `close_top_modal` for it is refused here too (codex).
+  defp close_top(socket, params, how) do
+    # Backdrop click + ESC keypress both fire `close_top_modal`. Each
+    # element passes `phx-value-frame-ref={frame.frame_ref}` so the
+    # handler can route through `pop_if_top_matches/2` — guards against
+    # a race where the user clicks a lower frame's backdrop or where ESC
+    # somehow fires for a non-top frame. ESC binding only attaches to
+    # the topmost dialog (see popup_host.ex), so the ESC path almost
+    # always matches; the frame-ref check is the belt-and-suspenders.
+    case normalize_frame_ref(Map.get(params, "frame-ref")) do
+      ref when is_integer(ref) ->
+        if how == :direct and dirty_top?(socket, ref),
+          do: {:noreply, socket},
+          else: {:noreply, pop_if_top_matches(socket, ref)}
+
+      nil ->
+        # The component always emits `phx-value-frame-ref` (see
+        # popup_host.ex backdrop button + ESC binding). Missing or
+        # malformed value here means the event is stale (frame already
+        # popped) or adversarial. Treat as no-op rather than blindly
+        # popping the current top — otherwise a delayed event could
+        # close the wrong modal.
+        Logger.debug(
+          "[PopupHostLive] dropping close_top_modal without valid frame-ref " <>
+            "(params=#{inspect(params)})"
+        )
+
+        {:noreply, socket}
+    end
+  end
 
   # A ref from the address bar, as any link names a task: `ACME-12` or a
   # uuid. Who may see it is the view's own check when it mounts.
@@ -718,6 +736,10 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     }
 
     assign(socket, modal_stack: socket.assigns.modal_stack ++ [frame])
+  end
+
+  defp dirty_top?(socket, frame_ref) do
+    match?(%{frame_ref: ^frame_ref, closeable: false}, List.last(socket.assigns.modal_stack))
   end
 
   defp pop_if_top_matches(socket, frame_ref) do

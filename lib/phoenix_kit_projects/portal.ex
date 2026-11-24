@@ -834,6 +834,70 @@ defmodule PhoenixKitProjects.Portal do
 
   def delete_attachments_for(_), do: :ok
 
+  @doc """
+  The storage files of every submission on a task of these projects —
+  read BEFORE the projects are deleted (the submissions cascade with them),
+  removed with `delete_files/1` after the commit. A whole project going
+  leaves no screenshots behind either.
+  """
+  @spec attachment_files_for_projects([binary()]) :: [binary()]
+  def attachment_files_for_projects([]), do: []
+
+  def attachment_files_for_projects(project_uuids) when is_list(project_uuids) do
+    from(sub in PortalSubmission,
+      join: a in PhoenixKitProjects.Schemas.Assignment,
+      on: a.uuid == sub.assignment_uuid,
+      where: a.project_uuid in ^project_uuids,
+      select: sub.file_uuids
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.flat_map(&(&1 || []))
+  rescue
+    e ->
+      Logger.warning("[Portal] could not read attachments: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  @doc "The storage files of the submissions on these tasks (read before they go)."
+  @spec attachment_files_for_assignments([binary()]) :: [binary()]
+  def attachment_files_for_assignments([]), do: []
+
+  def attachment_files_for_assignments(assignment_uuids) when is_list(assignment_uuids) do
+    from(sub in PortalSubmission,
+      where: sub.assignment_uuid in ^assignment_uuids,
+      select: sub.file_uuids
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.flat_map(&(&1 || []))
+  rescue
+    e ->
+      Logger.warning("[Portal] could not read attachments: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  @doc "Deletes these storage files; never raises (see `delete_attachments_for/1`)."
+  @spec delete_files([binary()]) :: :ok
+  def delete_files(file_uuids) when is_list(file_uuids) do
+    Enum.each(file_uuids, fn uuid ->
+      case Storage.get_file(uuid) do
+        %{} = file -> Storage.delete_file(file)
+        _ -> :ok
+      end
+    end)
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("[Portal] could not clean up attachments: #{Exception.message(e)}")
+      :ok
+  catch
+    :exit, _ -> :ok
+  end
+
   # ── Participation ───────────────────────────────────────────────
 
   @doc """

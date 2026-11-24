@@ -500,12 +500,35 @@ defmodule PhoenixKitProjects.Outline do
       end)
     end
 
-    for {uuid, _parent, position} <- current,
-        {_, new_position} = Map.fetch!(wanted, uuid),
-        new_position != position do
-      from(a in Assignment, where: a.uuid == ^uuid)
-      |> repo().update_all(set: [position: new_position])
-    end
+    moved =
+      for {uuid, _parent, position} <- current,
+          {_, new_position} = Map.fetch!(wanted, uuid),
+          new_position != position,
+          do: {uuid, new_position}
+
+    write_positions(moved)
+
+    :ok
+  end
+
+  # Every moved row in ONE statement (zai: a line added at the top of a
+  # 500-task list was 500 updates, each inside the project lock).
+  defp write_positions([]), do: :ok
+
+  defp write_positions(moved) do
+    {uuids, positions} = Enum.unzip(moved)
+
+    from(a in Assignment,
+      join:
+        v in fragment(
+          "SELECT * FROM unnest(?::uuid[], ?::integer[]) AS v(uuid, position)",
+          type(^uuids, {:array, Ecto.UUID}),
+          type(^positions, {:array, :integer})
+        ),
+      on: a.uuid == v.uuid,
+      update: [set: [position: v.position]]
+    )
+    |> repo().update_all([])
 
     :ok
   end

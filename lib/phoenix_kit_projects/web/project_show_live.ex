@@ -626,6 +626,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              :dependency_added,
              :dependency_removed
            ] do
+    drain_list_changes()
     {:noreply, socket |> load_assignments() |> load_labels()}
   end
 
@@ -1109,8 +1110,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     merged
   end
 
+  # Public submissions are requests nobody has agreed to yet: shown only to
+  # whoever may accept or reject them (`:edit_tasks`, which both ask), never
+  # to every viewer of the page.
   defp assign_pending_reviews(socket, project_uuid) do
-    pending = Projects.list_pending_reviews(project_uuid)
+    pending =
+      if Authz.can?(
+           socket.assigns[:phoenix_kit_current_scope],
+           socket.assigns.project,
+           :edit_tasks
+         ),
+         do: Projects.list_pending_reviews(project_uuid),
+         else: []
 
     assign(socket,
       pending_reviews: pending,
@@ -2502,6 +2513,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 phx-value-uuid={@a.uuid}
                 class="btn btn-ghost btn-xs btn-circle shrink-0"
                 title={if @ol.folded, do: gettext("Show subtasks"), else: gettext("Hide subtasks")}
+                aria-label={if @ol.folded, do: gettext("Show subtasks"), else: gettext("Hide subtasks")}
+                aria-expanded={to_string(not @ol.folded)}
               >
                 <.icon name={if @ol.folded, do: "hero-chevron-right", else: "hero-chevron-down"} class="w-4 h-4" />
               </button>
@@ -4434,7 +4447,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           # Merge the child's dependencies so the inset child tasks' badges
           # render (they read `@deps_by_assignment`, keyed by assignment uuid).
           child_deps =
-            child_uuid |> Projects.list_all_dependencies() |> Enum.group_by(& &1.assignment_uuid)
+            child_uuid
+            |> Projects.list_all_dependencies()
+            |> Enum.group_by(& &1.assignment_uuid)
 
           deps_by_assignment = Map.merge(socket.assigns.deps_by_assignment, child_deps)
 
@@ -4969,10 +4984,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp post_reopen_reason(socket, a, reason) do
     actor = Activity.actor_uuid(socket)
 
+    # The task's own project: an expanded sub-project's task is commented
+    # on under that project's rights, not the page's.
     if socket.assigns.comments_enabled and is_binary(actor) and
          Authz.can?(
            socket.assigns[:phoenix_kit_current_scope],
-           socket.assigns.project,
+           record_project(socket, a),
            :comment,
            a
          ) do
@@ -5480,12 +5497,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
      |> put_flash(:info, gettext("Project started!"))}
   end
 
-  defp parse_pct(pct_str) do
+  # A slider posts a string; a number or anything else from a crafted event
+  # is clamped or read as 0, never a crash of the page.
+  defp parse_pct(n) when is_integer(n), do: max(0, min(n, 100))
+
+  defp parse_pct(pct_str) when is_binary(pct_str) do
     case Integer.parse(pct_str) do
       {n, _} -> max(0, min(n, 100))
       :error -> 0
     end
   end
+
+  defp parse_pct(_), do: 0
 
   # Only reached for an open task below 100, or a done one (100 on an open
   # task completes through `complete_or_ask/3`). The status follows the
@@ -6701,6 +6724,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            has no Tasks tab and none of this. --%>
       <div :if={@fx.tasks} class={["flex flex-col gap-4", top_tab != :tasks && "hidden"]}>
 
+      <%!-- Everything above the list shares the list's column: centred, the
+           list's width, and with the side panel open a spacer of the panel's
+           width beside it, so the controls stay over the list (Max,
+           2026-11-24: the list sat left with Add task at the far right). --%>
+      <div
+        id={"project-task-chrome-#{@project.uuid}"}
+        class="mx-auto w-full max-w-6xl 2xl:max-w-none 2xl:flex 2xl:justify-center 2xl:items-start 2xl:gap-6"
+      >
+      <div id={"project-task-chrome-col-#{@project.uuid}"} class="min-w-0 flex-1 max-w-6xl flex flex-col gap-4">
       <%!-- The template bar: how to USE a template. A project's start,
            its "since" and how it stands against its plan sit on the header
            line (`header_progress/1`) instead of a full-width bar. --%>
@@ -6852,6 +6884,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </.smart_link>
         </div>
       </div>
+      </div>
+      <div
+        :if={not @is_template and @active_tab == :list and @side_panel["open"] == true}
+        id={"project-task-chrome-spacer-#{@project.uuid}"}
+        class="hidden 2xl:block w-[30rem] shrink-0"
+        aria-hidden="true"
+      ></div>
+      </div>
 
       <%!-- Tabs never jump (the panel, 2026-10-31): the views are ONE
            scroll area under their strip, filling the window from where it
@@ -6869,7 +6909,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            other, and the eye lost the row); beside it, on a wide screen,
            an optional side panel — collapsed until the viewer opens it. --%>
       <div id={"project-list-tab-#{@project.uuid}"} class={if(@active_tab != :list, do: "hidden")}>
-      <div class="2xl:flex 2xl:items-start 2xl:gap-6">
+      <div class="mx-auto w-full max-w-6xl 2xl:max-w-none 2xl:flex 2xl:justify-center 2xl:items-start 2xl:gap-6">
       <div class="min-w-0 flex-1 max-w-6xl">
       <div :if={not @is_template} class="hidden 2xl:flex justify-end mb-1">
         <button
@@ -7155,7 +7195,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             phx-click="toggle_subproject"
                             phx-value-uuid={a.uuid}
                             class="btn btn-ghost btn-xs btn-circle"
-                            title={gettext("Show sub-project tasks")}
+                            title={
+                              if sp_expanded?,
+                                do: gettext("Hide sub-project tasks"),
+                                else: gettext("Show sub-project tasks")
+                            }
+                            aria-label={
+                              if sp_expanded?,
+                                do: gettext("Hide sub-project tasks"),
+                                else: gettext("Show sub-project tasks")
+                            }
+                            aria-expanded={to_string(sp_expanded?)}
                           >
                             <.icon name={if sp_expanded?, do: "hero-chevron-down", else: "hero-chevron-right"} class="w-4 h-4" />
                           </button>
@@ -8283,5 +8333,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       </button>
     </li>
     """
+  end
+
+  @list_events [
+    :assignment_created,
+    :assignment_updated,
+    :assignment_deleted,
+    :assignment_reordered,
+    :dependency_added,
+    :dependency_removed
+  ]
+
+  # A burst of list changes already waiting (a deleted branch announces
+  # each of its rows) is one reload, not one per message: the reload reads
+  # the whole list, so the ones taken here have nothing left to add.
+  defp drain_list_changes do
+    receive do
+      {:projects, event, _payload} when event in @list_events -> drain_list_changes()
+    after
+      0 -> :ok
+    end
   end
 end

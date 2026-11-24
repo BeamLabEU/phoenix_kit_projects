@@ -1522,9 +1522,13 @@ defmodule PhoenixKitProjects.Projects do
     if subproject_link_exists?(p.uuid) do
       {:error, :still_a_subproject}
     else
+      files = PhoenixKitProjects.Portal.attachment_files_for_projects(subtree_uuids(p.uuid))
+
       repo().transaction(fn -> delete_project_tree_in_tx(p) end)
       |> case do
         {:ok, [top | _] = deleted_projects} ->
+          PhoenixKitProjects.Portal.delete_files(files)
+
           # Broadcast AFTER the transaction commits — a rollback must not leak
           # a `:project_deleted` for a project that still exists.
           Enum.each(deleted_projects, fn d ->
@@ -5110,7 +5114,7 @@ defmodule PhoenixKitProjects.Projects do
         :ok
 
       :ok ->
-        case write_assignment_positions(unique_uuids) do
+        case locked_assignment_positions(project_uuid, unique_uuids) do
           {:ok, count} ->
             log_reorder_success(
               "assignment",
@@ -5152,6 +5156,18 @@ defmodule PhoenixKitProjects.Projects do
       rows == [] -> :empty
       Enum.all?(rows, &(&1 == project_uuid)) -> :ok
       true -> {:error, :not_in_project}
+    end
+  end
+
+  # Under the project lock the typed list's saves take, so the two writers
+  # of `position` never interleave (zai).
+  defp locked_assignment_positions(project_uuid, unique_uuids) do
+    case PhoenixKitProjects.Outline.with_project_lock(project_uuid, fn _project ->
+           write_assignment_positions(unique_uuids)
+         end) do
+      {:ok, {:ok, count}} -> {:ok, count}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -5281,20 +5297,70 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp delete_task_branch(%Assignment{} = a) do
-    # What sits under it goes with it, deepest first — through this same
-    # function, so a sub-project row among them takes its project along
-    # and every row's portal files are cleaned up. (The database would
-    # cascade the rows; it would not do either of those.)
     below =
       from(x in Assignment,
         where: x.project_uuid == ^a.project_uuid,
-        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid}
+        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid, child: x.child_project_uuid}
       )
       |> repo().all()
       |> PhoenixKitProjects.Outline.descendants(a.uuid)
-      |> Enum.reverse()
 
-    Enum.each(below, fn %{uuid: uuid} ->
+    if Enum.any?(below, &(not is_nil(&1.child))),
+      do: delete_branch_row_by_row(a, below),
+      else: delete_branch_at_once(a, Enum.map(below, & &1.uuid))
+  end
+
+  # A branch of plain tasks: one transaction, whatever its size (zai: a
+  # hundred subtasks were a few hundred statements and a hundred reloads).
+  # Portal files and one-off tasks are read first and removed after the
+  # commit, as the single delete does; each row is still announced, so an
+  # open view of any of them closes.
+  defp delete_branch_at_once(%Assignment{} = a, below_uuids) do
+    uuids = [a.uuid | below_uuids]
+    files = PhoenixKitProjects.Portal.attachment_files_for_assignments(uuids)
+
+    one_offs =
+      from(x in Assignment,
+        join: t in assoc(x, :task),
+        where: x.uuid in ^uuids and t.ad_hoc == true,
+        select: x.task_uuid
+      )
+      |> repo().all()
+
+    repo().transaction(fn ->
+      from(x in Assignment, where: x.uuid in ^below_uuids) |> repo().delete_all()
+
+      case repo().delete(a, stale_error_field: :uuid) do
+        {:ok, deleted} -> deleted
+        {:error, cs} -> repo().rollback(cs)
+      end
+    end)
+    |> case do
+      {:ok, deleted} ->
+        PhoenixKitProjects.Portal.delete_files(files)
+        Enum.each(one_offs, &delete_one_off_task/1)
+
+        Enum.each(Enum.reverse(below_uuids) ++ [deleted.uuid], fn uuid ->
+          ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+            uuid: uuid,
+            project_uuid: deleted.project_uuid
+          })
+        end)
+
+        {:ok, deleted}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # A sub-project somewhere below: each row through `delete_assignment/1`,
+  # deepest first, so the sub-project row takes its project along (the
+  # screens refuse this case; the API's cascade can reach it).
+  defp delete_branch_row_by_row(%Assignment{} = a, below) do
+    below
+    |> Enum.reverse()
+    |> Enum.each(fn %{uuid: uuid} ->
       case repo().get(Assignment, uuid) do
         nil -> :ok
         %Assignment{child_project_uuid: nil} = row -> delete_one_assignment(row)
@@ -5306,6 +5372,8 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp delete_subproject_row(%Assignment{} = a, child_uuid) do
+    files = PhoenixKitProjects.Portal.attachment_files_for_projects(subtree_uuids(child_uuid))
+
     repo().transaction(fn ->
       deleted =
         case repo().delete(a) do
@@ -5323,6 +5391,8 @@ defmodule PhoenixKitProjects.Projects do
     end)
     |> case do
       {:ok, {deleted, deleted_projects}} ->
+        PhoenixKitProjects.Portal.delete_files(files)
+
         # Broadcast AFTER commit (mirrors `delete_project/1`): the linking-row
         # delete and the child subtree both have to survive the transaction
         # before any subscriber is told they're gone.
@@ -5348,6 +5418,8 @@ defmodule PhoenixKitProjects.Projects do
     PhoenixKitProjects.Portal.delete_attachments_for(a.uuid)
 
     with {:ok, deleted} <- repo().delete(a, stale_error_field: :uuid) do
+      delete_one_off_task(deleted.task_uuid)
+
       ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
         uuid: deleted.uuid,
         project_uuid: deleted.project_uuid
@@ -5355,6 +5427,22 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, deleted}
     end
+  end
+
+  # A one-off task exists only for its row (the typed list removes it the
+  # same way): once no row uses it, it goes. A library task stays.
+  defp delete_one_off_task(nil), do: :ok
+
+  defp delete_one_off_task(task_uuid) do
+    from(t in Task,
+      as: :task,
+      where: t.uuid == ^task_uuid and t.ad_hoc == true,
+      where:
+        not exists(from(a in Assignment, where: a.task_uuid == parent_as(:task).uuid, select: 1))
+    )
+    |> repo().delete_all()
+
+    :ok
   end
 
   @doc "Marks an assignment done, stamping `completed_by_uuid` and `completed_at`."

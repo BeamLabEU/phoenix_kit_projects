@@ -141,6 +141,8 @@
       this.root.setAttribute("role", "textbox");
       this.root.setAttribute("aria-multiline", "true");
       this.root.setAttribute("aria-label", this.el.dataset.label || "Tasks");
+      // Announced to screen readers: open a line, tick it.
+      this.root.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter Control+Shift+Enter Meta+Shift+Enter");
       this.root.spellcheck = true;
       if (this.canEdit) this.root.contentEditable = "true";
       else this.root.dataset.readonly = "1";
@@ -684,6 +686,13 @@
       if (mod && !e.altKey && (e.key === "y" || e.key === "Y")) {
         e.preventDefault();
         this.undo(true);
+        return;
+      }
+      // Ctrl/⌘ + Shift + Enter ticks the line (the box in the gutter is
+      // otherwise a mouse target only); Ctrl/⌘ + Enter opens it.
+      if (mod && e.shiftKey && e.key === "Enter") {
+        e.preventDefault();
+        if (c.collapsed) this.tick(c.start.line);
         return;
       }
       if (mod && e.key === "Enter") {
@@ -2142,6 +2151,84 @@
       else if (this.mq.removeListener) this.mq.removeListener(this.send);
     }
   };
+
+  // ---------------------------------------------------------------------
+  // Leaf's floating parts inside a task popup. Leaf (the rich editor) puts
+  // its `@`/`#` suggestion list, its image menu, its image-address box and
+  // their backdrops on <body>. A task popup is a <dialog> opened with
+  // showModal(): it sits in the browser's top layer, above everything on
+  // <body> whatever its z-index, and makes the rest of the page inert — so
+  // the list showed UNDER the popup and took no click (Max, 2026-11-24).
+  // Core's own mention menu moves into the open dialog for the same reason.
+  //
+  // Here: a Leaf part that appears on <body> while the editor being used
+  // sits in an open dialog is moved into that dialog. These parts are
+  // `position: fixed` in viewport coordinates, and the dialog is not a
+  // containing block (unlike its scaled .modal-box), so they stay where
+  // Leaf puts them. LiveView keeps a node marked `data-phx-teleported` (its
+  // own portals use it) through a patch of the dialog and sends its events
+  // to the view it names, so the moved node carries the id of the view
+  // that holds the editor. Leaf's own removals still remove it.
+  // The selection toolbar is left alone: it is positioned in document
+  // coordinates, which inside a dialog would be off by the page's scroll.
+  // ---------------------------------------------------------------------
+  var LEAF_FLOATING =
+    ".leaf-suggest-popup, .leaf-suggest-sr, .leaf-image-url-backdrop, " +
+    ".leaf-image-url-dialog, .leaf-grip-tooltip, [data-image-dropdown-menu]";
+
+  function leafHost(node) {
+    // The suggestion list names its editor; everything else follows the
+    // editor being used (focus stays in it: Leaf's menus keep it there).
+    var editorId = node.dataset && node.dataset.leafSuggestPopup;
+    var from = (editorId && document.getElementById(editorId)) || document.activeElement;
+    var dialog = from && from.closest ? from.closest("dialog[open]") : null;
+    if (!dialog) return null;
+    var view = from.closest("[data-phx-session]");
+    return { dialog: dialog, viewId: view && dialog.contains(view) ? view.id : null };
+  }
+
+  function adoptLeafNode(node, host) {
+    if (!host || node.parentNode === host.dialog) return;
+    if (host.viewId) node.setAttribute("data-phx-teleported", host.viewId);
+    host.dialog.appendChild(node);
+  }
+
+  function moveLeafFloats(nodes) {
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (node.nodeType !== 1 || node.parentNode !== document.body) continue;
+      if (!node.matches(LEAF_FLOATING)) continue;
+      adoptLeafNode(node, leafHost(node));
+    }
+  }
+
+  if (!window.__pkpLeafLayer && typeof MutationObserver === "function") {
+    window.__pkpLeafLayer = true;
+
+    var startLeafLayer = function () {
+      new MutationObserver(function (records) {
+        for (var i = 0; i < records.length; i++) moveLeafFloats(records[i].addedNodes);
+      }).observe(document.body, { childList: true });
+
+      // The image menu is moved to <body> when its editor MOUNTS, before
+      // anyone uses it; it is adopted when its button is clicked inside a
+      // dialog (after Leaf's own handler has shown it).
+      document.addEventListener("click", function (e) {
+        var trigger = e.target.closest && e.target.closest("[data-image-dropdown-trigger]");
+        var dialog = trigger && trigger.closest("dialog[open]");
+        if (!dialog) return;
+        var view = trigger.closest("[data-phx-session]");
+        var host = { dialog: dialog, viewId: view ? view.id : null };
+        var open = document.body.querySelectorAll(
+          ":scope > [data-image-dropdown-menu]:not(.hidden), :scope > .leaf-image-url-backdrop"
+        );
+        for (var i = 0; i < open.length; i++) adoptLeafNode(open[i], host);
+      });
+    };
+
+    if (document.body) startLeafLayer();
+    else document.addEventListener("DOMContentLoaded", startLeafLayer);
+  }
 
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,

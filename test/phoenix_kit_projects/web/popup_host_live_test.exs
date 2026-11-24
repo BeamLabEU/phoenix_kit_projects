@@ -365,6 +365,51 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       assert [] = :sys.get_state(view.pid).socket.assigns.modal_stack
     end
 
+    # The review sweep, 2026-11-24 (codex): the ✕'s confirmation is the
+    # only way a dirty frame closes; a bare event for it is refused.
+    test "a bare close_top_modal does not close a dirty frame", %{conn: conn} do
+      topic = unique_topic()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic}
+        )
+
+      push_n_frames(topic, view, 1)
+      [%{frame_ref: ref}] = :sys.get_state(view.pid).socket.assigns.modal_stack
+      send(view.pid, {:projects, :dirty, %{frame_ref: ref, dirty: true}})
+      _ = render(view)
+
+      render_click(view, "close_top_modal", %{"frame-ref" => to_string(ref)})
+      assert [_] = :sys.get_state(view.pid).socket.assigns.modal_stack
+    end
+
+    # A deleted record's frame goes even when another frame covers it: it
+    # would otherwise show the deleted task again once the top one closed.
+    test "a deleted record's covered frame is taken out of the stack", %{conn: conn} do
+      topic = unique_topic()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic}
+        )
+
+      push_n_frames(topic, view, 2)
+
+      [%{frame_ref: lower}, %{frame_ref: upper}] =
+        :sys.get_state(view.pid).socket.assigns.modal_stack
+
+      send(
+        view.pid,
+        {:projects, :deleted,
+         %{kind: :assignment, uuid: Ecto.UUID.generate(), frame_ref: lower, close: true}}
+      )
+
+      _ = render(view)
+
+      assert [%{frame_ref: ^upper}] = :sys.get_state(view.pid).socket.assigns.modal_stack
+    end
+
     test "close_top_modal with non-top frame-ref is a no-op", %{conn: conn} do
       topic = unique_topic()
 
