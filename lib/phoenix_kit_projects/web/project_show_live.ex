@@ -3185,6 +3185,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <.live_component
               module={PhoenixKitComments.Web.CommentsComponent}
               id={"side-panel-comments-#{@project.uuid}"}
+              composer_start_open={true}
               resource_type="project"
               resource_uuid={@project.uuid}
               current_user={@comment_user}
@@ -7914,6 +7915,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <.live_component
             module={PhoenixKitComments.Web.CommentsComponent}
             id={"comments-tab-project-#{@project.uuid}"}
+            composer_start_open={true}
             resource_type="project"
             resource_uuid={@project.uuid}
             current_user={comment_user(assigns)}

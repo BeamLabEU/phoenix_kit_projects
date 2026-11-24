@@ -852,6 +852,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               :if={@threads && @activity_tab == "comments"}
               module={PhoenixKitComments.Web.CommentsComponent}
               id={"task-view-comments-#{@assignment.uuid}"}
+              composer_start_open={true}
               resource_type="assignment"
               resource_uuid={@assignment.uuid}
               current_user={if @may_comment?, do: assigns[:phoenix_kit_current_user]}
