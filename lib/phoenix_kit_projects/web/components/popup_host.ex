@@ -150,6 +150,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       .pkp-frame:has([data-pkp-view-body]) { overflow: hidden; }
       .pkp-frame *:has([data-pkp-view-body]) {
         display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0;
+        overflow: hidden;
       }
       .pkp-frame *:has([data-pkp-view-body]) > *:not(:has([data-pkp-view-body])):not([data-pkp-view-body]) {
         flex-shrink: 0;
