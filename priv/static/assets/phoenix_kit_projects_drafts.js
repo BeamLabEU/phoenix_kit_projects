@@ -189,12 +189,12 @@
         if (oy === "auto" || oy === "scroll" || oy === "hidden") break;
         area = area.parentNode;
       }
-      var limit = area && area !== document.body
-        ? area.getBoundingClientRect().bottom
-        : window.innerHeight;
+      var inArea = area && area !== document.body;
+      var bounds = inArea ? area.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
       var box = menu.getBoundingClientRect();
       var above = menu.parentNode.getBoundingClientRect().top;
-      if (box.bottom > limit && above - box.height > 0) {
+      // Up only when it fits there, inside the same area.
+      if (box.bottom > bounds.bottom && above - box.height >= bounds.top) {
         menu.style.top = "auto";
         menu.style.bottom = "100%";
       }

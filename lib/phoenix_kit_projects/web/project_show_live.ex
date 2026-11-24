@@ -8347,9 +8347,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # A burst of list changes already waiting (a deleted branch announces
   # each of its rows) is one reload, not one per message: the reload reads
   # the whole list, so the ones taken here have nothing left to add.
-  defp drain_list_changes do
+  # At most a few hundred at once: a steady stream must not keep the
+  # reload (or the other messages queued behind it) waiting (codex).
+  defp drain_list_changes(left \\ 500)
+  defp drain_list_changes(0), do: :ok
+
+  defp drain_list_changes(left) do
     receive do
-      {:projects, event, _payload} when event in @list_events -> drain_list_changes()
+      {:projects, event, _payload} when event in @list_events -> drain_list_changes(left - 1)
     after
       0 -> :ok
     end

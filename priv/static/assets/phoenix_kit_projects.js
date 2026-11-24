@@ -2172,9 +2172,12 @@
   // The selection toolbar is left alone: it is positioned in document
   // coordinates, which inside a dialog would be off by the page's scroll.
   // ---------------------------------------------------------------------
+  // Parts made while their editor is in use. The image menu is not here:
+  // Leaf puts it on <body> when an editor MOUNTS, so the editor in use is
+  // not necessarily its own; it is adopted when its button is clicked.
   var LEAF_FLOATING =
     ".leaf-suggest-popup, .leaf-suggest-sr, .leaf-image-url-backdrop, " +
-    ".leaf-image-url-dialog, .leaf-grip-tooltip, [data-image-dropdown-menu]";
+    ".leaf-image-url-dialog, .leaf-grip-tooltip";
 
   function leafHost(node) {
     // The suggestion list names its editor; everything else follows the

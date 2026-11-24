@@ -882,18 +882,17 @@ defmodule PhoenixKitProjects.Portal do
   @doc "Deletes these storage files; never raises (see `delete_attachments_for/1`)."
   @spec delete_files([binary()]) :: :ok
   def delete_files(file_uuids) when is_list(file_uuids) do
-    Enum.each(file_uuids, fn uuid ->
-      case Storage.get_file(uuid) do
-        %{} = file -> Storage.delete_file(file)
-        _ -> :ok
-      end
-    end)
+    # One at a time: a file that fails leaves the others to go.
+    Enum.each(file_uuids, &delete_file/1)
+  end
 
-    :ok
+  defp delete_file(uuid) do
+    case Storage.get_file(uuid) do
+      %{} = file -> Storage.delete_file(file)
+      _ -> :ok
+    end
   rescue
-    e ->
-      Logger.warning("[Portal] could not clean up attachments: #{Exception.message(e)}")
-      :ok
+    e -> Logger.warning("[Portal] could not clean up an attachment: #{Exception.message(e)}")
   catch
     :exit, _ -> :ok
   end

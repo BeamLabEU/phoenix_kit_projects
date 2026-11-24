@@ -5297,25 +5297,41 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp delete_task_branch(%Assignment{} = a) do
-    below =
-      from(x in Assignment,
-        where: x.project_uuid == ^a.project_uuid,
-        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid, child: x.child_project_uuid}
-      )
-      |> repo().all()
-      |> PhoenixKitProjects.Outline.descendants(a.uuid)
+    # Read and deleted under the project lock the task writers take, so a
+    # row or a submission added meanwhile is either seen here or added
+    # after the delete (codex) — never cascaded away unseen.
+    PhoenixKitProjects.Outline.with_project_lock(a.project_uuid, fn _project ->
+      below = branch_below(a)
 
-    if Enum.any?(below, &(not is_nil(&1.child))),
-      do: delete_branch_row_by_row(a, below),
-      else: delete_branch_at_once(a, Enum.map(below, & &1.uuid))
+      if Enum.any?(below, &(not is_nil(&1.child))),
+        do: {:row_by_row, below},
+        else: delete_branch_in_lock(a, Enum.map(below, & &1.uuid))
+    end)
+    |> case do
+      {:ok, {:row_by_row, below}} ->
+        delete_branch_row_by_row(a, below)
+
+      {:ok, {:deleted, deleted, below_uuids, files, one_offs}} ->
+        after_branch_delete(deleted, below_uuids, files, one_offs)
+
+      {:error, _} = error ->
+        error
+    end
   end
 
-  # A branch of plain tasks: one transaction, whatever its size (zai: a
-  # hundred subtasks were a few hundred statements and a hundred reloads).
-  # Portal files and one-off tasks are read first and removed after the
-  # commit, as the single delete does; each row is still announced, so an
-  # open view of any of them closes.
-  defp delete_branch_at_once(%Assignment{} = a, below_uuids) do
+  defp branch_below(%Assignment{} = a) do
+    from(x in Assignment,
+      where: x.project_uuid == ^a.project_uuid,
+      select: %{uuid: x.uuid, parent_uuid: x.parent_uuid, child: x.child_project_uuid}
+    )
+    |> repo().all()
+    |> PhoenixKitProjects.Outline.descendants(a.uuid)
+  end
+
+  # A branch of plain tasks in one write, whatever its size (zai: a hundred
+  # subtasks were a few hundred statements and a hundred reloads). Portal
+  # files and one-off tasks are read here and removed after the commit.
+  defp delete_branch_in_lock(%Assignment{} = a, below_uuids) do
     uuids = [a.uuid | below_uuids]
     files = PhoenixKitProjects.Portal.attachment_files_for_assignments(uuids)
 
@@ -5327,31 +5343,28 @@ defmodule PhoenixKitProjects.Projects do
       )
       |> repo().all()
 
-    repo().transaction(fn ->
-      from(x in Assignment, where: x.uuid in ^below_uuids) |> repo().delete_all()
+    from(x in Assignment, where: x.uuid in ^below_uuids) |> repo().delete_all()
 
-      case repo().delete(a, stale_error_field: :uuid) do
-        {:ok, deleted} -> deleted
-        {:error, cs} -> repo().rollback(cs)
-      end
-    end)
-    |> case do
-      {:ok, deleted} ->
-        PhoenixKitProjects.Portal.delete_files(files)
-        Enum.each(one_offs, &delete_one_off_task/1)
-
-        Enum.each(Enum.reverse(below_uuids) ++ [deleted.uuid], fn uuid ->
-          ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
-            uuid: uuid,
-            project_uuid: deleted.project_uuid
-          })
-        end)
-
-        {:ok, deleted}
-
-      {:error, _} = error ->
-        error
+    case repo().delete(a, stale_error_field: :uuid) do
+      {:ok, deleted} -> {:deleted, deleted, below_uuids, files, one_offs}
+      {:error, cs} -> repo().rollback(cs)
     end
+  end
+
+  # After the commit: the files, the one-off tasks, and each row announced
+  # (deepest first, the task last), so an open view of any of them closes.
+  defp after_branch_delete(deleted, below_uuids, files, one_offs) do
+    PhoenixKitProjects.Portal.delete_files(files)
+    Enum.each(one_offs, &delete_one_off_task/1)
+
+    Enum.each(Enum.reverse(below_uuids) ++ [deleted.uuid], fn uuid ->
+      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+        uuid: uuid,
+        project_uuid: deleted.project_uuid
+      })
+    end)
+
+    {:ok, deleted}
   end
 
   # A sub-project somewhere below: each row through `delete_assignment/1`,
