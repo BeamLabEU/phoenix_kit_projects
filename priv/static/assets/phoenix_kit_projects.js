@@ -2332,11 +2332,17 @@
         style.textContent = LIST_CSS;
         document.head.appendChild(style);
       }
+      // A refused drop: only the moved card goes back where it was picked
+      // up (next to the row it sat before), so a row another session added
+      // meanwhile keeps its place.
       this.handleEvent("pkp-list:revert", function (payload) {
-        var last = self.lastOrder;
+        var last = self.lastMove;
         if (!payload || !last || last.id !== payload.uuid) return;
-        self.lastOrder = null;
-        last.nodes.forEach(function (n) { if (n.isConnected) self.el.appendChild(n); });
+        self.lastMove = null;
+        var item = last.item;
+        if (!item || !item.isConnected) return;
+        if (last.next && last.next.isConnected && last.next !== item) self.el.insertBefore(item, last.next);
+        else if (last.prev && last.prev.isConnected) last.prev.after(item);
       });
       loadSortable().then(function () {
         if (!self.gone) self.init();
@@ -2352,11 +2358,25 @@
       var self = this;
       var el = this.el;
       var pointerX = 0;
+      var downX = 0;
+      var xOf = function (e) {
+        var t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+        return t ? t.clientX : e.clientX;
+      };
       var track = function (e) {
-        var t = e.touches && e.touches[0];
-        pointerX = t ? t.clientX : e.clientX;
+        pointerX = xOf(e);
         if (self.dragging) self.preview();
       };
+      // The press itself is the origin of the sideways distance: SortableJS
+      // starts a drag from inside its own move handler, so a listener added
+      // in onStart never saw where the pointer began (every first drag read
+      // as hundreds of pixels sideways — the panel, 2026-11-25).
+      this.onDown = function (e) {
+        downX = xOf(e);
+        pointerX = downX;
+      };
+      el.addEventListener("pointerdown", this.onDown, true);
+      el.addEventListener("touchstart", this.onDown, true);
 
       this.sortable = window.Sortable.create(el, {
         draggable: ".sortable-item",
@@ -2373,8 +2393,6 @@
           var item = evt.item;
           var nest = el.dataset.nest === "true";
           var start = rowInfo(item);
-          // The order before, to put back on a refusal.
-          self.lastOrder = { id: start.id, nodes: Array.prototype.slice.call(el.children) };
           // The branch moves together: its rows leave the list meanwhile.
           var lifted = [];
           if (nest) {
@@ -2385,9 +2403,19 @@
               n = n.nextElementSibling;
             }
           }
+          // Where it stands now, to tell a real move from a drop in place,
+          // and its neighbours, to put it back on a refusal.
+          var startRows = listRows(el).map(rowInfo);
+          var startIdx = startRows.findIndex(function (r) { return r.id === start.id; });
+          self.lastMove = {
+            id: start.id, item: item,
+            // Its own subtasks stay in place while it moves: back before them.
+            prev: item.previousElementSibling, next: item.nextElementSibling
+          };
           self.dragging = {
             item: item, nest: nest, start: start, lifted: lifted,
-            startX: pointerX, margin: item.style.marginLeft
+            startX: downX, margin: item.style.marginLeft,
+            from: startIdx >= 0 ? listDropTarget(startRows, startIdx, start.depth, 0, self.indentPx()) : null
           };
           el.classList.add("pkp-list-dragging");
           document.addEventListener("pointermove", track, true);
@@ -2402,21 +2430,24 @@
           el.classList.remove("pkp-list-dragging");
           self.clearParentMark();
           if (!d) return;
-          d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
           var id = d.start.id;
+          // Measured while the branch's subtasks are still out of the list,
+          // as the preview was (unhiding them first put the row below back
+          // and undid the level the card had shown).
+          var target = d.nest ? self.target(d) : null;
+          d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
+          d.item.style.marginLeft = d.margin;
 
           if (!d.nest) {
-            d.item.style.marginLeft = d.margin;
             if (evt.oldIndex === evt.newIndex) return;
             var ids = listRows(el).map(function (n) { return n.dataset.id; });
             self.pushEvent(el.dataset.sortableEvent || "reorder_assignments", { ordered_ids: ids, moved_id: id });
             return;
           }
 
-          var target = self.target(d);
-          d.item.style.marginLeft = d.margin;
-          var unchanged = evt.oldIndex === evt.newIndex && target.depth === d.start.depth;
-          if (unchanged) return;
+          // The row vanished under the drag (a patch replaced it): no guess.
+          if (!target) return;
+          if (d.from && d.from.parent === target.parent && d.from.after === target.after) return;
           self.pushEvent(el.dataset.dropEvent || "list_drop", {
             id: id, parent: target.parent, after: target.after
           });
@@ -2426,6 +2457,7 @@
       this.target = function (d) {
         var rows = listRows(el).map(rowInfo);
         var idx = rows.findIndex(function (r) { return r.id === d.start.id; });
+        if (idx < 0) return null;
         return listDropTarget(rows, idx, d.start.depth, pointerX - d.startX, self.indentPx());
       };
     },
@@ -2436,6 +2468,7 @@
       var d = this.dragging;
       if (!d || !d.nest) return;
       var t = this.target(d);
+      if (!t) return;
       d.item.style.marginLeft = (t.depth * 2) + "rem";
       this.clearParentMark();
       if (t.parent) {
@@ -2452,6 +2485,10 @@
 
     destroyed: function () {
       this.gone = true;
+      if (this.onDown) {
+        this.el.removeEventListener("pointerdown", this.onDown, true);
+        this.el.removeEventListener("touchstart", this.onDown, true);
+      }
       if (this.sortable) { this.sortable.destroy(); this.sortable = null; }
     }
   };

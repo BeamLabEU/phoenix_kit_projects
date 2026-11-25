@@ -84,3 +84,12 @@ test("between deeper rows, the sibling it goes after is found at its own level",
   const rows = [r("A", 0), r("A1", 1), r("A1a", 2), r("X", 2)];
   assert.deepEqual(target(rows, 3, 2, -40, I), { depth: 1, parent: "A", after: "A1" });
 });
+
+test("a dragged row's own subtasks are left out: dropping it in place changes nothing", () => {
+  // The hook measures with the branch lifted out of the list.
+  const rows = [r("A", 0), r("X", 0), r("B", 0)];
+  assert.deepEqual(target(rows, 1, 0, 0, I), { depth: 0, parent: null, after: "A" });
+  // With X's subtask X1 still in the list the row below would force a level.
+  const unlifted = [r("A", 0), r("X", 0), r("X1", 1), r("B", 0)];
+  assert.equal(target(unlifted, 1, 0, 0, I).depth, 1);
+});

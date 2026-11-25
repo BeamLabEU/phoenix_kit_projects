@@ -4941,9 +4941,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp gated_handle_event("list_drop", %{"id" => id} = params, socket) when is_binary(id) do
     own = fn uuid -> Enum.find(socket.assigns.assignments, &(&1.uuid == uuid)) end
+    # The typed list's write rights, as `outline_nest` asks them (edit AND
+    # create tasks, a live project); a change of level also needs subtasks
+    # switched on and the whole list on screen, which is what the hook
+    # offers it under (the panel, 2026-11-25: the handler alone was looser).
+    can = socket.assigns[:outline_can] || %{}
 
-    with %Assignment{} = a <- own.(id),
+    whole? =
+      length(socket.assigns[:visible_assignments] || []) == length(socket.assigns.assignments)
+
+    with true <- can[:edit] == true,
+         %Assignment{} = a <- own.(id),
          {:ok, parent} <- drop_parent(params["parent"], own),
+         true <- parent == a.parent_uuid or (can[:nest] == true and whole?),
          {:ok, after_uuid} <- drop_after(params["after"], own),
          {:ok, moved} <- Outline.move(a, parent, after_uuid) do
       Activity.log("projects.assignment_moved",
@@ -4953,15 +4963,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         metadata: %{"parent" => moved.parent_uuid}
       )
 
-      folded = assigns_folded(socket)
+      # The new parent and everything above it unfold: a row moved into a
+      # folded branch would otherwise vanish behind the success flash.
+      shown =
+        if parent,
+          do: [
+            parent
+            | socket.assigns.assignments |> Outline.ancestors(parent) |> Enum.map(& &1.uuid)
+          ],
+          else: []
+
+      folded = Enum.reduce(shown, assigns_folded(socket), &MapSet.delete(&2, &1))
 
       {:noreply,
        socket
-       |> assign(:outline_folded, if(parent, do: MapSet.delete(folded, parent), else: folded))
+       |> assign(:outline_folded, folded)
        |> push_event("sortable:flash", %{uuid: id, status: "ok"})
        |> load_assignments()}
     else
       _ ->
+        Activity.log_failed("projects.assignment_moved",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: id
+        )
+
         {:noreply,
          socket
          |> put_flash(:error, gettext("The task cannot go there."))

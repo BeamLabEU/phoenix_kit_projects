@@ -125,6 +125,34 @@ defmodule PhoenixKitProjects.Web.ListDropTest do
       live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{holder.uuid}/edit")
 
     assert html =~ "Parent task"
-    assert has_element?(view, ~s(button[type="submit"][id^="assignment-subtask-add-"]))
+    # The button posts the subtask form (its own form, drawn after the task's).
+    [_, form_id] =
+      Regex.run(
+        ~r/<button[^>]*form="(assignment-subtask-form-[^"]+)"[^>]*id="assignment-subtask-add-/s,
+        html
+      ) ||
+        Regex.run(
+          ~r/<button[^>]*id="assignment-subtask-add-[^"]*"[^>]*form="(assignment-subtask-form-[^"]+)"/s,
+          html
+        )
+
+    assert has_element?(view, ~s(form##{form_id}[phx-submit="subtask_add"]))
+
+    view |> element("form##{form_id}") |> render_submit(%{"title" => "Measure"})
+    assert render(view) =~ "Measure"
+  end
+
+  test "a change of level is refused while subtasks are switched off", %{conn: conn} do
+    p = project()
+    {:ok, _} = Outline.sync(p.uuid, [%{"text" => "One"}, %{"text" => "Two"}], [])
+    {:ok, p} = PhoenixKitProjects.Features.set_flags(p, %{"subtasks" => false})
+    one = by_title(p, "One")
+    two = by_title(p, "Two")
+    {view, _html} = page(conn, p)
+
+    assert render_hook(view, "list_drop", %{"id" => two.uuid, "parent" => one.uuid}) =~
+             "The task cannot go there."
+
+    assert is_nil(by_title(p, "Two").parent_uuid)
   end
 end

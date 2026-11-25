@@ -398,12 +398,16 @@ defmodule PhoenixKitProjects.Authz do
   # every other action follows the sub-project's own roles, so a parent's
   # viewer seat (which the default floors let edit) never becomes one here.
   defp member_can?(subject, project, :view, record) do
-    own_can?(subject, project, :view, record) or inherited_view?(subject, project)
+    own_can?(subject, project, :view, record) or
+      (not template?(project) and inherited_view?(subject, project))
   end
 
   defp member_can?(subject, project, action, record),
     do: own_can?(subject, project, action, record)
 
+  # Never through a template: a real project cannot sit under one by the
+  # app's own paths, but an update that turned a live parent into a
+  # template would otherwise hand its old members a way in (codex).
   defp inherited_view?(subject, project) do
     case project_uuid_of(project) do
       nil ->
@@ -412,13 +416,16 @@ defmodule PhoenixKitProjects.Authz do
       uuid ->
         uuid
         |> PhoenixKitProjects.Projects.parent_chain()
-        |> Enum.any?(&own_can?(subject, &1, :view, nil))
+        |> Enum.any?(&(&1.is_template != true and own_can?(subject, &1, :view, nil)))
     end
   rescue
     _ -> false
   catch
     :exit, _ -> false
   end
+
+  defp template?(%{is_template: true}), do: true
+  defp template?(_), do: false
 
   defp project_uuid_of(%{uuid: uuid}) when is_binary(uuid), do: uuid
   defp project_uuid_of(uuid) when is_binary(uuid), do: uuid

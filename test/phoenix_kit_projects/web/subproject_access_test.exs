@@ -63,6 +63,7 @@ defmodule PhoenixKitProjects.Web.SubprojectAccessTest do
 
   test "the listing with sub-projects includes the nested ones for a parent's member", ctx do
     {:ok, _} = Members.add_member(ctx.parent, ctx.user.uuid, role: "member")
+    _other = fixture_project(%{"name" => "Elsewhere"})
 
     names =
       [viewer: ctx.user.uuid, include_subprojects: true]
@@ -70,9 +71,14 @@ defmodule PhoenixKitProjects.Web.SubprojectAccessTest do
       |> Enum.map(& &1.name)
       |> Enum.sort()
 
+    # "Elsewhere" exists but is nobody's here: never listed.
     assert names == ["Child", "Grandchild", "Parent"]
+  end
 
-    other = fixture_project(%{"name" => "Elsewhere"})
-    assert other.name not in names
+  test "nothing is inherited through a template", ctx do
+    {:ok, _} = Members.add_member(ctx.parent, ctx.user.uuid, role: "member")
+    {:ok, _} = Projects.update_project(ctx.parent, %{"is_template" => true})
+
+    refute Authz.can?(ctx.scope, Projects.get_project(ctx.child.uuid), :view)
   end
 end
