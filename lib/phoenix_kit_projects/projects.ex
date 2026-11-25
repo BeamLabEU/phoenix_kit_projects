@@ -308,7 +308,9 @@ defmodule PhoenixKitProjects.Projects do
   that project is moved or deleted on its own first.
   """
   @spec delete_task(Task.t()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t() | atom()}
-  def delete_task(%Task{} = t) do
+  def delete_task(%Task{} = t), do: delete_task(t, 3)
+
+  defp delete_task(%Task{} = t, attempts) do
     rows = from(a in Assignment, where: a.task_uuid == ^t.uuid) |> repo().all()
 
     if Enum.any?(rows, &subproject_below?/1) do
@@ -323,19 +325,25 @@ defmodule PhoenixKitProjects.Projects do
         case repo().get(Assignment, row.uuid) do
           %Assignment{task_uuid: task_uuid, child_project_uuid: nil} = fresh
           when task_uuid == t.uuid ->
-            delete_assignment(fresh)
+            # Decided again under the lock: a sub-project put under it since
+            # the check above is refused, never taken along (vibe).
+            delete_assignment(fresh, refuse_subproject: true)
 
           _ ->
             :ok
         end
       end)
 
-      # A one-off task went with its last row.
-      case repo().get(Task, t.uuid) do
-        nil -> {:ok, t}
-        task -> repo().delete(task)
-      end
+      # A one-off task went with its last row. The task row is locked
+      # before it goes: a row added meanwhile (its insert holds the task
+      # for its foreign key) is waited for and then seen, and taken through
+      # its own delete on another pass, instead of cascaded away unannounced
+      # (vibe). A task that keeps gaining rows is refused.
+      delete_task_row(t, attempts)
       |> case do
+        {:retried, result} ->
+          result
+
         {:ok, deleted} ->
           ProjectsPubSub.broadcast_task(:task_deleted, %{uuid: deleted.uuid, title: deleted.title})
 
@@ -5453,7 +5461,11 @@ defmodule PhoenixKitProjects.Projects do
   def delete_assignment(a, opts \\ [])
 
   def delete_assignment(%Assignment{child_project_uuid: nil} = a, opts) do
-    delete_task_branch(a, Keyword.get(opts, :expect_below))
+    delete_task_branch(
+      a,
+      Keyword.get(opts, :expect_below),
+      Keyword.get(opts, :refuse_subproject, false)
+    )
   end
 
   def delete_assignment(%Assignment{child_project_uuid: child_uuid} = a, _opts)
@@ -5478,17 +5490,23 @@ defmodule PhoenixKitProjects.Projects do
     |> Enum.any?(&(not is_nil(&1.child)))
   end
 
-  defp delete_task_branch(%Assignment{} = a, expect_below) do
-    # Read and deleted under the project lock the task writers take, so a
-    # row or a submission added meanwhile is either seen here or added
-    # after the delete (codex) — never cascaded away unseen.
+  defp delete_task_branch(%Assignment{} = a, expect_below, refuse_subproject \\ false) do
+    # Read and deleted under the project lock the task writers take. The
+    # project lock alone does not stop an insert (its foreign keys only
+    # share the rows), so the task and every row of its branch are locked
+    # FOR UPDATE too, and the branch is read again until it holds still: a
+    # subtask added meanwhile is either seen here or waits and then fails
+    # its foreign key — never cascaded away unseen (codex, vibe).
     PhoenixKitProjects.Outline.with_project_lock(a.project_uuid, fn _project ->
-      below = branch_below(a)
+      below = lock_branch(a)
 
       cond do
         is_list(expect_below) and
             MapSet.new(below, & &1.uuid) != MapSet.new(expect_below) ->
           repo().rollback(:branch_changed)
+
+        refuse_subproject and Enum.any?(below, &(not is_nil(&1.child))) ->
+          repo().rollback(:subproject_below)
 
         Enum.any?(below, &(not is_nil(&1.child))) ->
           {:row_by_row, below}
@@ -5506,6 +5524,22 @@ defmodule PhoenixKitProjects.Projects do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  defp lock_branch(%Assignment{} = a), do: lock_branch(a, [a.uuid], 5)
+
+  defp lock_branch(%Assignment{} = a, locked, tries) do
+    from(x in Assignment, where: x.uuid in ^locked, lock: "FOR UPDATE", select: x.uuid)
+    |> repo().all()
+
+    below = branch_below(a)
+    now = [a.uuid | Enum.map(below, & &1.uuid)]
+
+    cond do
+      MapSet.subset?(MapSet.new(now), MapSet.new(locked)) -> below
+      tries <= 0 -> repo().rollback(:branch_changed)
+      true -> lock_branch(a, Enum.uniq(locked ++ now), tries - 1)
     end
   end
 
@@ -5571,7 +5605,10 @@ defmodule PhoenixKitProjects.Projects do
       end
     end)
 
-    delete_one_assignment(a)
+    # The task itself under the lock, and only with nothing left below: a
+    # subtask moved under it while the rows above were deleted one by one
+    # is refused (:branch_changed), not cascaded away unseen (vibe).
+    delete_task_branch(a, [])
   end
 
   defp delete_subproject_row(%Assignment{} = a, child_uuid) do
@@ -5634,6 +5671,37 @@ defmodule PhoenixKitProjects.Projects do
 
   # A one-off task exists only for its row (the typed list removes it the
   # same way): once no row uses it, it goes. A library task stays.
+  defp delete_task_row(%Task{} = t, attempts) do
+    repo().transaction(fn ->
+      task =
+        from(x in Task, where: x.uuid == ^t.uuid, lock: "FOR UPDATE")
+        |> repo().one()
+
+      cond do
+        is_nil(task) ->
+          :gone
+
+        repo().exists?(from(a in Assignment, where: a.task_uuid == ^t.uuid)) ->
+          repo().rollback(:in_use)
+
+        true ->
+          case repo().delete(task) do
+            {:ok, deleted} -> deleted
+            {:error, cs} -> repo().rollback(cs)
+          end
+      end
+    end)
+    |> case do
+      {:ok, :gone} -> {:ok, t}
+      {:error, :in_use} when attempts > 1 -> delete_task(t, attempts - 1) |> unwrap_task_retry()
+      {:error, :in_use} -> {:error, :in_use}
+      other -> other
+    end
+  end
+
+  # A retry already announced and returned its own result.
+  defp unwrap_task_retry(result), do: {:retried, result}
+
   defp delete_one_off_task(nil), do: :ok
 
   defp delete_one_off_task(task_uuid) do
@@ -5709,8 +5777,9 @@ defmodule PhoenixKitProjects.Projects do
   handles the `A == B` case; this function handles multi-hop cycles
   (`A → B`, then `B → A`).
 
-  The cycle check and the insert run under a per-project advisory lock
-  (`pkp_deps:<project>`), held to the end of the transaction. Without it
+  The cycle check and the insert run holding the project row lock
+  (`FOR NO KEY UPDATE`, the one `Outline.with_project_lock/2` and a task
+  conversion take), held to the end of the transaction. Without it
   two concurrent calls — `add_dependency(A, B)` and `add_dependency(B, A)`
   — could each read an acyclic graph, both pass the check and both insert
   a cycle (the unique pair index rejects only identical edges). An earlier
@@ -6298,6 +6367,22 @@ defmodule PhoenixKitProjects.Projects do
           extra
         )
     })
+  end
+
+  @doc """
+  Runs `fun` in a transaction holding the sub-project link lock that
+  `link_subproject/2`, `move_project/2` and `create_subproject/3` take —
+  for another writer that puts a project under another (a task turned into
+  a sub-project) and must check the depth against the same tree. The lock
+  is taken FIRST, before any row lock, as everywhere: one order, no
+  deadlock. Answers `{:ok, value}` or `{:error, reason}` (a `rollback`).
+  """
+  @spec with_subproject_links_lock((-> term())) :: {:ok, term()} | {:error, term()}
+  def with_subproject_links_lock(fun) when is_function(fun, 0) do
+    repo().transaction(fn ->
+      lock_subproject_links()
+      fun.()
+    end)
   end
 
   # The link lock `link_subproject/2` and `move_project/2` take (see
