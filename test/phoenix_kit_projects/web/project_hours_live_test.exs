@@ -802,4 +802,62 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
     {ib, _} = :binary.match(html, b)
     ia < ib
   end
+
+  describe "review fixes (2026-11-24)" do
+    test "a task ref in the filter filters, as the chip says", %{
+      conn: conn,
+      project: project,
+      admin: admin
+    } do
+      ann = user("Ann", "Able")
+      cut = task(project, "Cut the panels")
+      fit = task(project, "Fit the doors")
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      log(project, 90,
+        actor_uuid: ann.uuid,
+        assignment_uuid: cut.uuid,
+        ended_at: now,
+        note: "Cutting"
+      )
+
+      log(project, 30,
+        actor_uuid: ann.uuid,
+        assignment_uuid: fit.uuid,
+        ended_at: now,
+        note: "Fitting"
+      )
+
+      project = PhoenixKitProjects.Projects.get_project(project.uuid)
+      ref = PhoenixKitProjects.Refs.task_ref(project.key, cut.number)
+      {:ok, view, _html} = mount_tab(conn, project, admin)
+
+      html = render_change(view, "filter", %{"task" => ref, "period" => "all"})
+      assert html =~ "Cutting"
+      refute html =~ "Fitting"
+
+      # One it cannot resolve matches nothing, never everything.
+      html = render_change(view, "filter", %{"task" => "NOPE-999", "period" => "all"})
+      refute html =~ "Cutting"
+      refute html =~ "Fitting"
+    end
+
+    test "tomorrow is refused as a day in the future", %{
+      conn: conn,
+      project: project,
+      admin: admin
+    } do
+      own = task(project, "Here")
+      {:ok, view, _html} = mount_tab(conn, project, admin)
+      render_click(view, "open_log", %{})
+
+      assert render_submit(view, "save_log", %{
+               "project" => project.uuid,
+               "date" => Date.to_iso8601(Date.add(Date.utc_today(), 1)),
+               "duration" => %{"amount" => "45", "unit" => "minutes"},
+               "person" => "me",
+               "task" => own.uuid
+             }) =~ "cannot be in the future"
+    end
+  end
 end

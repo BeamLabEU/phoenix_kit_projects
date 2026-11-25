@@ -40,6 +40,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Date, as: KitDate
 
+  alias PhoenixKit.Utils.TimeZone
+
   alias PhoenixKitProjects.{
     Activity,
     Authz,
@@ -254,7 +256,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         from: period.from,
         until: period.until,
         workers: if(a.worker == "", do: [], else: [a.worker]),
-        assignment_uuid: if(a.mode == :project and a.task != "", do: a.task),
+        assignment_uuid:
+          if(a.mode == :project and a.task != "", do: task_filter(a.task, project_uuids)),
         billable: billable_filter(a.billable),
         who: who_filter(a.who),
         offset_seconds: Period.offset_seconds(offset)
@@ -356,6 +359,23 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       Hours.project_uuids(chosen, a.subprojects)
     else
       visible
+    end
+  end
+
+  # The task filter's uuid. The address may carry a ref (`ACME-42`), which
+  # the chip resolves: the filter must too, or the page said "Task: ACME-42"
+  # over every task's hours. A task it cannot resolve, or one outside the
+  # projects read, matches nothing rather than everything.
+  @no_task "00000000-0000-0000-0000-000000000000"
+  defp task_filter(value, project_uuids) do
+    case Hours.task_option(value) do
+      %{uuid: uuid, project_uuid: p} ->
+        if project_uuids == :all or (is_list(project_uuids) and p in project_uuids),
+          do: uuid,
+          else: @no_task
+
+      _ ->
+        @no_task
     end
   end
 
@@ -1142,7 +1162,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     with {:ok, date} <- Date.from_iso8601(params["date"] || ""),
          {:ok, start} <- start_time(date, params["time"], offset) do
       cond do
-        DateTime.compare(start, DateTime.add(DateTime.utc_now(), 86_400)) == :gt ->
+        # The viewer's own today, not "now + 24 h": tomorrow's date passed
+        # most of the day under the old window.
+        Date.compare(date, TimeZone.local_date(DateTime.utc_now(), offset)) ==
+            :gt ->
           {:error, gettext("The day cannot be in the future.")}
 
         params["time"] in [nil, ""] ->
@@ -1749,7 +1772,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             <div class="flex items-baseline justify-between gap-2 text-sm">
               <span class="truncate min-w-0">
                 {row.label}
-                <span :if={row.ai} class="badge badge-ghost badge-xs ml-1">{gettext("AI")}</span>
+                <span :if={row.ai} class="badge badge-ghost badge-sm ml-1">{gettext("AI")}</span>
               </span>
               <span class="shrink-0 tabular-nums font-medium">
                 {Format.duration(row.minutes)}
@@ -1961,7 +1984,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               </.table_default_cell>
               <.table_default_cell class="whitespace-nowrap">
                 <.person name={row.worker.name} kind={row.worker.kind}>
-                  <span :if={row.worker.kind == "ai_agent"} class="badge badge-ghost badge-xs">{gettext("AI")}</span>
+                  <span :if={row.worker.kind == "ai_agent"} class="badge badge-ghost badge-sm">{gettext("AI")}</span>
                 </.person>
               </.table_default_cell>
               <.table_default_cell :if={@multi?} class="whitespace-nowrap">
@@ -1990,8 +2013,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               </.table_default_cell>
               <.table_default_cell class="text-right whitespace-nowrap tabular-nums">
                 {Format.duration(Decimal.to_float(row.entry.amount))}
-                <span :if={row.entry.billable} class="badge badge-primary badge-outline badge-xs ml-1">{gettext("billable")}</span>
-                <span :if={row.entry.uuid in @invoiced} class="badge badge-ghost badge-xs ml-1">{gettext("invoiced")}</span>
+                <span :if={row.entry.billable} class="badge badge-primary badge-outline badge-sm ml-1">{gettext("billable")}</span>
+                <span :if={row.entry.uuid in @invoiced} class="badge badge-ghost badge-sm ml-1">{gettext("invoiced")}</span>
               </.table_default_cell>
               <.table_default_cell :if={@notes?} class="text-base-content/70 max-w-md">
                 <span class="line-clamp-2">{row.entry.note}</span>

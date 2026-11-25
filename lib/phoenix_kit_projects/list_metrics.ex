@@ -266,17 +266,41 @@ defmodule PhoenixKitProjects.ListMetrics do
       )
       |> repo().all()
 
-    viewable =
-      rows
-      |> Enum.map(&elem(&1, 1))
-      |> Enum.uniq_by(& &1.uuid)
-      |> Enum.filter(&PhoenixKitProjects.Authz.can?(scope, &1, :view))
-      |> MapSet.new(& &1.uuid)
+    # Which of the parents the viewer may open, in one batch (`Authz.can?/3`
+    # per parent walked each one's ancestry once `:view` became inherited —
+    # codex, 2026-11-25): an admin opens all, anyone else what they hold a
+    # seat on and everything nested under it.
+    viewable = viewable_parents(scope, rows |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.uuid))
 
     for {child, parent} <- rows,
         MapSet.member?(viewable, parent.uuid),
         into: %{},
         do: {child, parent}
+  end
+
+  defp viewable_parents(scope, parents) do
+    cond do
+      parents == [] ->
+        MapSet.new()
+
+      PhoenixKitProjects.Authz.admin_all?(scope) ->
+        MapSet.new(parents, & &1.uuid)
+
+      user_uuid = PhoenixKitProjects.Authz.subject_user_uuid_of(scope) ->
+        open =
+          user_uuid
+          |> PhoenixKitProjects.Projects.visible_project_uuids()
+          |> MapSet.new()
+
+        for p <- parents,
+            p.is_template != true,
+            MapSet.member?(open, p.uuid),
+            into: MapSet.new(),
+            do: p.uuid
+
+      true ->
+        MapSet.new()
+    end
   end
 
   defp assignee_of([], _names), do: nil

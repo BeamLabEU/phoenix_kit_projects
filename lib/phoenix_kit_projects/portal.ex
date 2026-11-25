@@ -664,15 +664,12 @@ defmodule PhoenixKitProjects.Portal do
 
   def store_attachments(_files, _project_uuid), do: {:error, :invalid}
 
-  defp discard_stored(uuids) do
-    Enum.each(uuids, fn uuid ->
-      try do
-        Storage.delete_file(uuid)
-      rescue
-        _ -> :ok
-      end
-    end)
-  end
+  # The files of a submission that failed half way. `Storage.delete_file/1`
+  # takes a struct and only removes the row, so given a uuid it raised and
+  # every stored screenshot stayed, bytes and all (codex): core's
+  # `delete_file_completely/2` removes the row and the objects no other file
+  # still uses.
+  defp discard_stored(uuids), do: Enum.each(uuids, &delete_file/1)
 
   defp project_owner_uuid(nil), do: nil
 
@@ -816,14 +813,7 @@ defmodule PhoenixKitProjects.Portal do
     from(sub in PortalSubmission, where: sub.assignment_uuid == ^assignment_uuid)
     |> RepoHelper.repo().all()
     |> Enum.flat_map(&(&1.file_uuids || []))
-    |> Enum.each(fn uuid ->
-      case Storage.get_file(uuid) do
-        %{} = file -> Storage.delete_file(file)
-        _ -> :ok
-      end
-    end)
-
-    :ok
+    |> delete_files()
   rescue
     e ->
       Logger.warning("[Portal] could not clean up attachments: #{Exception.message(e)}")
@@ -833,6 +823,67 @@ defmodule PhoenixKitProjects.Portal do
   end
 
   def delete_attachments_for(_), do: :ok
+
+  @doc """
+  The storage files of every submission on a task of these projects —
+  read BEFORE the projects are deleted (the submissions cascade with them),
+  removed with `delete_files/1` after the commit. A whole project going
+  leaves no screenshots behind either.
+  """
+  @spec attachment_files_for_projects([binary()]) :: [binary()]
+  def attachment_files_for_projects([]), do: []
+
+  def attachment_files_for_projects(project_uuids) when is_list(project_uuids) do
+    from(sub in PortalSubmission,
+      join: a in PhoenixKitProjects.Schemas.Assignment,
+      on: a.uuid == sub.assignment_uuid,
+      where: a.project_uuid in ^project_uuids,
+      select: sub.file_uuids
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.flat_map(&(&1 || []))
+  rescue
+    e ->
+      Logger.warning("[Portal] could not read attachments: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  @doc "The storage files of the submissions on these tasks (read before they go)."
+  @spec attachment_files_for_assignments([binary()]) :: [binary()]
+  def attachment_files_for_assignments([]), do: []
+
+  def attachment_files_for_assignments(assignment_uuids) when is_list(assignment_uuids) do
+    from(sub in PortalSubmission,
+      where: sub.assignment_uuid in ^assignment_uuids,
+      select: sub.file_uuids
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.flat_map(&(&1 || []))
+  rescue
+    e ->
+      Logger.warning("[Portal] could not read attachments: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  @doc "Deletes these storage files; never raises (see `delete_attachments_for/1`)."
+  @spec delete_files([binary()]) :: :ok
+  def delete_files(file_uuids) when is_list(file_uuids) do
+    # One at a time: a file that fails leaves the others to go.
+    Enum.each(file_uuids, &delete_file/1)
+  end
+
+  defp delete_file(uuid) do
+    _ = Storage.delete_file_completely(uuid)
+    :ok
+  rescue
+    e -> Logger.warning("[Portal] could not clean up an attachment: #{Exception.message(e)}")
+  catch
+    :exit, _ -> :ok
+  end
 
   # ── Participation ───────────────────────────────────────────────
 

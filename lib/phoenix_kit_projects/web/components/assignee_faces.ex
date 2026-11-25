@@ -67,17 +67,69 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
   attr(:size, :string, default: "xs", values: ~w(xs sm))
   attr(:class, :any, default: nil)
 
+  # One person with an account is core's person chip (Max, 2026-11-25: a
+  # tag in a description and an assignee read the same; a click opens their
+  # card). Several people (a team, a department, a set) keep the stack and
+  # carry `data-people`, so a click opens the side drawer with each of them.
   def assignee_shown(assigns) do
-    assigns = assign(assigns, :kind, kind(assigns.a))
+    kind = kind(assigns.a)
+
+    assigns =
+      assigns
+      |> assign(:kind, kind)
+      |> assign(:single, single_user(kind, assigns.faces))
+      |> assign(:people, people_uuids(assigns.faces))
 
     ~H"""
-    <span :if={@kind} class={["inline-flex items-center gap-1.5 min-w-0", @class]}>
+    <span :if={@kind && @single} class={["inline-flex min-w-0", @class]}>
+      <.single_chip face={@single} />
+    </span>
+    <span
+      :if={@kind && !@single}
+      class={["inline-flex items-center gap-1.5 min-w-0", @people != "" && "cursor-pointer", @class]}
+      data-people={@people != "" && @people}
+    >
       <.assignee_faces faces={@faces} size={@size} />
       <.icon :if={no_faces?(@faces)} name={kind_icon(@kind)} class="w-3.5 h-3.5 shrink-0 opacity-70" />
       <span class="truncate">{PhoenixKitProjects.Web.Helpers.assignee_label(@a)}</span>
     </span>
     """
   end
+
+  # Core releases before the shared chip expose the avatar and mention markup.
+  if Code.ensure_loaded?(PhoenixKitWeb.Components.Core.UserInfo) and
+       function_exported?(PhoenixKitWeb.Components.Core.UserInfo, :person_chip, 1) do
+    defp single_chip(assigns) do
+      ~H"""
+      <PhoenixKitWeb.Components.Core.UserInfo.person_chip
+        person={@face.user}
+        name={@face.name}
+        uuid={@face.user.uuid}
+        title={@face.name}
+      />
+      """
+    end
+  else
+    defp single_chip(assigns) do
+      ~H"""
+      <span
+        class="pk-person-chip inline-flex items-center gap-1 rounded-full bg-base-200 pr-2"
+        data-mention-user={@face.user.uuid}
+        title={@face.name}
+      >
+        <.user_avatar user={@face.user} name={@face.name} size="xs" />
+        <span class="truncate">{@face.name}</span>
+      </span>
+      """
+    end
+  end
+
+  defp single_user(:person, %{faces: [%{user: %{uuid: _} = _user} = face], extra: 0}), do: face
+  defp single_user(_kind, _faces), do: nil
+
+  defp people_uuids(%{user_uuids: uuids}), do: Enum.join(uuids, ",")
+
+  defp people_uuids(_), do: ""
 
   # From the keys, never from a translated label: the kind picks the icon
   # in every language. Several assignees show the people icon.

@@ -16,8 +16,9 @@ defmodule PhoenixKitProjects.ProjectEvents do
   alias PhoenixKitProjects.Schemas.ProjectEvent
 
   @doc """
-  Events for a project ordered by start. Options: `:from`/`:until`
-  (DateTime bounds on `starts_at`), `:limit`.
+  Events for a project ordered by start. Options: `:from` (`starts_at` at
+  or after), `:until` (at or before), `:before` (strictly before — the
+  API's `until`), `:limit`.
   """
   @spec list_for_project(binary(), keyword()) :: [ProjectEvent.t()]
   def list_for_project(project_uuid, opts \\ []) do
@@ -27,6 +28,7 @@ defmodule PhoenixKitProjects.ProjectEvents do
     )
     |> maybe_bound(:from, Keyword.get(opts, :from))
     |> maybe_bound(:until, Keyword.get(opts, :until))
+    |> maybe_bound(:before, Keyword.get(opts, :before))
     |> maybe_limit(Keyword.get(opts, :limit))
     |> RepoHelper.repo().all()
   rescue
@@ -155,6 +157,7 @@ defmodule PhoenixKitProjects.ProjectEvents do
   defp maybe_bound(query, _key, nil), do: query
   defp maybe_bound(query, :from, dt), do: where(query, [e], e.starts_at >= ^dt)
   defp maybe_bound(query, :until, dt), do: where(query, [e], e.starts_at <= ^dt)
+  defp maybe_bound(query, :before, dt), do: where(query, [e], e.starts_at < ^dt)
 
   defp maybe_limit(query, nil), do: query
   defp maybe_limit(query, n) when is_integer(n) and n > 0, do: limit(query, ^n)

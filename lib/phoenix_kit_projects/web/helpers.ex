@@ -912,6 +912,25 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
+  The view's OWN record was deleted: in emit mode its frame goes from the
+  host's stack wherever it sits (`:deleted` with `close: true`); otherwise
+  `close_or_navigate/2`. `:closed` would pop only the TOP frame, so a covered
+  view of a deleted record stayed and came back when the frame above it
+  closed.
+  """
+  @spec close_deleted(Phoenix.LiveView.Socket.t(), atom(), binary(), String.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def close_deleted(socket, kind, uuid, fallback_path)
+      when is_atom(kind) and is_binary(uuid) and is_binary(fallback_path) do
+    if socket.assigns[:embed_mode] == :emit do
+      emit_deleted(socket, kind, uuid, true)
+      socket
+    else
+      close_or_navigate(socket, fallback_path)
+    end
+  end
+
+  @doc """
   Emits `{:projects, :deleted, %{kind, uuid, close: false, frame_ref}}`
   on the host topic when in emit mode, no-ops in navigate mode.
 

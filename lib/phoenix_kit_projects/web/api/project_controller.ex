@@ -97,7 +97,7 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
   end
 
   defp insert_subproject(key, parent, attrs) do
-    case Projects.create_subproject(parent.uuid, attrs) do
+    case Projects.create_subproject(parent.uuid, attrs, actor_uuid: ApiKey.accountable_uuid(key)) do
       {:ok, %{child_project: child, assignment: link}} ->
         Activity.log("projects.subproject_created",
           actor_uuid: ApiKey.accountable_uuid(key),

@@ -1000,7 +1000,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                     embed_mode={@embed_mode}
                     class="flex items-start gap-2 p-2 rounded hover:bg-base-200 transition"
                   >
-                    <.assignment_status_badge status={a.status} size="xs" class="mt-1" />
+                    <.assignment_status_badge status={a.status} class="mt-1" />
                     <div class="flex-1 min-w-0">
                       <div class="text-sm font-medium truncate">{Assignment.label_under(a, L10n.current_content_lang())}</div>
                       <div class="text-xs text-base-content/60 truncate">{Project.localized_name(a.project, L10n.current_content_lang())}</div>

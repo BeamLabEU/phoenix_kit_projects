@@ -20,7 +20,8 @@ defmodule PhoenixKitProjects.CommentMentions do
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
-  alias PhoenixKitProjects.{Members, Notices, People}
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{Authz, Members, Notices, People}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @type person :: %{uuid: binary(), title: String.t(), subtitle: String.t() | nil}
@@ -69,7 +70,12 @@ defmodule PhoenixKitProjects.CommentMentions do
       if Notices.may_view?(user_uuid, project) do
         nil
       else
-        name = Map.get(People.user_display_names([user_uuid]), user_uuid) || gettext("Someone")
+        name =
+          if mentionable?(user_uuid),
+            do: Map.get(People.user_display_names([user_uuid]), user_uuid),
+            else: nil
+
+        name = name || gettext("Someone")
 
         gettext(
           "%{name} can't open this project, so they won't be told about this comment. Add them to the project's members, or assign them a task here.",
@@ -77,5 +83,16 @@ defmodule PhoenixKitProjects.CommentMentions do
         )
       end
     end
+  end
+
+  # The token comes from the draft, so it can name anyone: a name is shown
+  # only for a confirmed account that can reach the Projects module — people
+  # core's `@` search offers the writer anyway (it lists accounts reaching
+  # the admin area), never one it hides.
+  defp mentionable?(user_uuid) do
+    match?(%{confirmed_at: %DateTime{}}, Auth.get_user(user_uuid)) and
+      Authz.module_reacher?(user_uuid)
+  rescue
+    _ -> false
   end
 end

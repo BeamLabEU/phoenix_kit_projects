@@ -128,6 +128,10 @@ defmodule PhoenixKitProjects.PubSub do
   @spec subscribe(String.t()) :: :ok | {:error, term()}
   def subscribe(topic), do: Manager.subscribe(topic)
 
+  @doc "Unsubscribes the calling process from the given PubSub topic."
+  @spec unsubscribe(String.t()) :: :ok
+  def unsubscribe(topic), do: Manager.unsubscribe(topic)
+
   @doc "Broadcasts a project event. Templates also fan out to the templates topic."
   @spec broadcast_project(atom(), map()) :: :ok | {:error, term()}
   def broadcast_project(event, %{uuid: uuid, is_template: true} = payload) do

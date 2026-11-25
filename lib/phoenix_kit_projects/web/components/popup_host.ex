@@ -144,6 +144,43 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       .pkp-frame.pkp-center > *:has([data-pkp-tabs]) {
         flex: none; height: 70dvh;
       }
+      /* A task's view: its header (and the frame's ✕) stay, the part under
+         it scrolls. The box keeps its natural height up to its maximum;
+         only then does the body scroll. */
+      /* The ✕, pinned by its own rule as well as its utility classes: when
+         a stylesheet lacked right-6/top-6 (a rebuild still running after a
+         restart) the button fell to its natural place, over the title on
+         the left (Max, 2026-11-25). */
+      .pkp-frame .pkp-frame-close {
+        position: absolute; right: 1.5rem; top: 1.5rem; left: auto; z-index: 20;
+      }
+      /* A task view's header row is a line of text, not buttons: centred on
+         it the ✕ sat a few pixels low. */
+      .pkp-frame:has([data-pkp-view-body]) .pkp-frame-close { top: 1.25rem; }
+      /* Offline (LiveView marks each view's root .phx-disconnected / .phx-error
+         while the connection is down): say so, and keep the save buttons
+         from looking pressable (Max, 2026-11-25: "I clicked add and close
+         and nothing happened … I shouldn't be left guessing"). */
+      .pkp-frame .pkp-offline { display: none; }
+      .phx-disconnected .pkp-frame .pkp-offline,
+      .phx-error .pkp-frame .pkp-offline,
+      .pkp-frame .phx-disconnected .pkp-offline,
+      .pkp-frame .phx-error .pkp-offline { display: flex; }
+      .phx-disconnected .pkp-frame button[type="submit"],
+      .phx-error .pkp-frame button[type="submit"],
+      .pkp-frame .phx-disconnected button[type="submit"],
+      .pkp-frame .phx-error button[type="submit"] { pointer-events: none; opacity: .5; }
+      .pkp-frame:has([data-pkp-view-body]) { overflow: hidden; }
+      .pkp-frame *:has([data-pkp-view-body]) {
+        display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0;
+        overflow: hidden;
+      }
+      .pkp-frame *:has([data-pkp-view-body]) > *:not(:has([data-pkp-view-body])):not([data-pkp-view-body]) {
+        flex-shrink: 0;
+      }
+      .pkp-frame [data-pkp-view-body] {
+        flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+      }
       /* A long hint wraps; nothing in a pane scrolls sideways. */
       .pkp-frame [role="tabpanel"] { overflow-x: hidden; }
       .pkp-frame [role="tabpanel"] .label { white-space: normal; }
@@ -206,13 +243,20 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
              and the header's buttons are 2rem high. --%>
         <button
           type="button"
-          class="btn btn-ghost btn-sm btn-circle absolute right-6 top-6 z-20"
+          class="pkp-frame-close btn btn-ghost btn-sm btn-circle absolute right-6 top-6 z-20"
           {close_attrs(@on_close, frame)}
           aria-label={gettext("Close")}
           title={gettext("Close")}
         >
           <.icon name="hero-x-mark" class="w-5 h-5" />
         </button>
+        <div
+          class="pkp-offline absolute inset-x-6 bottom-3 z-30 items-center justify-center gap-2 rounded-box bg-warning/90 text-warning-content text-sm py-1.5 px-3"
+          role="status"
+        >
+          <span class="loading loading-spinner loading-xs"></span>
+          {gettext("Connection lost — reconnecting. Saving works again once it is back.")}
+        </div>
         {render_slot(@frame, frame)}
       </.modal>
     </div>

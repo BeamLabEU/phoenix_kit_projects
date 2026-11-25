@@ -33,7 +33,7 @@ defmodule PhoenixKitProjects.Web.Components.TierPill do
       assign(assigns, pill_class: pill_class, pill_icon: pill_icon, pill_label: pill_label)
 
     ~H"""
-    <span class={"badge badge-xs gap-1 shrink-0 #{@pill_class}"}>
+    <span class={"badge badge-sm gap-1 shrink-0 #{@pill_class}"}>
       <.icon name={@pill_icon} class="w-3 h-3" /> {@pill_label}
     </span>
     """

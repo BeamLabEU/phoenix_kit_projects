@@ -254,6 +254,13 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
   defp threads(_project, _a), do: nil
 
+  defp recount_threads(
+         %{assigns: %{project: %Project{} = project, assignment: %Assignment{} = a}} = socket
+       ),
+       do: assign(socket, :threads, threads(project, a))
+
+  defp recount_threads(socket), do: socket
+
   # The pencil beside the title (the boss, 2026-11-18: the title on the
   # list only opens the task, so renaming moved in here). The same rules as
   # renaming a card's title: a one-off task with `:edit_tasks`, a library
@@ -509,7 +516,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   @impl true
   def handle_info({:projects, :assignment_deleted, %{uuid: uuid}}, socket) do
     if match?(%Assignment{uuid: ^uuid}, socket.assigns[:assignment]),
-      do: {:noreply, WebHelpers.close_or_navigate(socket, project_path(socket))},
+      do: {:noreply, WebHelpers.close_deleted(socket, :assignment, uuid, project_path(socket))},
       else: {:noreply, reload(socket)}
   end
 
@@ -540,6 +547,18 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
            ] do
     {:noreply, reload(socket)}
   end
+
+  # A comment added or removed on this task — here (the component tells its
+  # host) or anywhere else (the project topic): the tabs' counts follow.
+  def handle_info({:projects, event, %{resource_uuid: uuid}}, socket)
+      when event in [:comment_added, :comment_deleted] do
+    if match?(%Assignment{uuid: ^uuid}, socket.assigns[:assignment]),
+      do: {:noreply, recount_threads(socket)},
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:comments_updated, _payload}, socket),
+    do: {:noreply, recount_threads(socket)}
 
   # `@` and `#` in the redirect's editor.
   def handle_info({:leaf_suggest, %{editor_id: "pkp-dialog-" <> _}} = msg, socket),
@@ -655,7 +674,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
         </div>
       </header>
 
-      <div class="grid gap-6 @2xl:grid-cols-[minmax(0,1fr)_15rem]">
+      <%!-- In a popup the header stays and only this part scrolls (Max,
+           2026-11-24: on a long thread the title and the ✕ went out of
+           sight); `PopupHost`'s rules read `data-pkp-view-body`. --%>
+      <div data-pkp-view-body class="grid gap-6 @2xl:grid-cols-[minmax(0,1fr)_15rem]">
         <%!-- Details: beside the main column when the drawer is wide,
              above it when it is narrow. Blank optional fields are left
              out, never "None". --%>
@@ -849,6 +871,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
               :if={@threads && @activity_tab == "comments"}
               module={PhoenixKitComments.Web.CommentsComponent}
               id={"task-view-comments-#{@assignment.uuid}"}
+              composer_start_open={true}
               resource_type="assignment"
               resource_uuid={@assignment.uuid}
               current_user={if @may_comment?, do: assigns[:phoenix_kit_current_user]}
@@ -1003,7 +1026,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
             phx-value-uuid={row.uuid}
             class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-base-200/60"
           >
-            <.assignment_status_badge status={row.status} size="xs" class="shrink-0" />
+            <.assignment_status_badge status={row.status} class="shrink-0" />
             <.ref_chip ref={Refs.task_ref(@project.key, row.number)} />
             <span class={["min-w-0 truncate", row.status == "done" && "text-base-content/60"]}>
               {Assignment.label(row, @lang)}

@@ -266,10 +266,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
              :project_archived,
              :project_unarchived
            ] do
-    case Projects.get_project_with_assignee(socket.assigns.project.uuid) do
-      nil -> {:noreply, socket}
-      project -> {:noreply, socket |> assign(project: project) |> load_calendar()}
-    end
+    reload(socket)
   end
 
   # This tab listens on every project of the tree it draws: only THIS
@@ -286,10 +283,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   end
 
   def handle_info({:projects, :project_deleted, _payload}, socket) do
-    case Projects.get_project_with_assignee(socket.assigns.project.uuid) do
-      nil -> {:noreply, socket}
-      project -> {:noreply, socket |> assign(project: project) |> load_calendar()}
-    end
+    reload(socket)
   end
 
   # Announced for consumers outside the page; its own reloads follow
@@ -929,4 +923,24 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   # default is UTC (`Time.utc_now()`), which put the line hours off.
   defp local_today, do: L10n.local_date(DateTime.utc_now())
   defp local_now, do: DateTime.utc_now() |> L10n.local() |> DateTime.to_time()
+
+  # Asked again on every reload, as the Hours tab does: somebody taken off
+  # the project stops seeing its schedule with the next change, not with
+  # the next visit.
+  defp reload(socket) do
+    case Projects.get_project_with_assignee(socket.assigns.project.uuid) do
+      nil ->
+        {:noreply, socket}
+
+      project ->
+        if WebHelpers.template_or_viewable?(project, socket.assigns[:phoenix_kit_current_scope]) do
+          {:noreply, socket |> assign(project: project) |> load_calendar()}
+        else
+          {:noreply,
+           socket
+           |> put_flash(:error, gettext("You no longer have access to this project."))
+           |> WebHelpers.close_or_navigate(Paths.projects())}
+        end
+    end
+  end
 end

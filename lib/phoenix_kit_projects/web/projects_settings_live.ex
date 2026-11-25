@@ -160,18 +160,14 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
   defp settings_write("select_default_status_entity", %{"entity_uuid" => uuid}, socket) do
     uuid = if uuid in [nil, ""], do: nil, else: uuid
-    Statuses.set_default_status_entity(uuid)
 
-    Activity.log("projects.default_status_entity_set",
-      actor_uuid: Activity.actor_uuid(socket),
-      resource_type: "projects_settings",
-      metadata: %{"entity_uuid" => uuid}
-    )
-
-    {:noreply,
-     socket
-     |> assign(default_status_entity_uuid: uuid)
-     |> put_flash(:info, gettext("Default status list updated."))}
+    # Only a list the page offered: the value is read back into a query, and
+    # a malformed one broke the projects list for everyone.
+    if is_nil(uuid) or uuid in offered_entity_uuids(socket) do
+      save_default_status_entity(uuid, socket)
+    else
+      {:noreply, put_flash(socket, :error, gettext("Pick one of the offered lists."))}
+    end
   end
 
   defp settings_write("generate_default_status_list", _params, socket) do
@@ -1353,5 +1349,26 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
+  end
+
+  defp save_default_status_entity(uuid, socket) do
+    Statuses.set_default_status_entity(uuid)
+
+    Activity.log("projects.default_status_entity_set",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "projects_settings",
+      metadata: %{"entity_uuid" => uuid}
+    )
+
+    {:noreply,
+     socket
+     |> assign(default_status_entity_uuid: uuid)
+     |> put_flash(:info, gettext("Default status list updated."))}
+  end
+
+  defp offered_entity_uuids(socket) do
+    for {_group, items} <- socket.assigns[:status_entities] || [],
+        {_label, uuid} <- items,
+        do: uuid
   end
 end

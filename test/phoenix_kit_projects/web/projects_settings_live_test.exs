@@ -78,6 +78,24 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       )
     end
 
+    test "select_default_status_entity refuses a list the page did not offer", %{
+      conn: conn,
+      entity: entity
+    } do
+      Statuses.set_default_status_entity(entity.uuid)
+      {:ok, view, _html} = live(conn, @path)
+
+      for bad <- ["zzz", Ecto.UUID.generate()] do
+        html =
+          view
+          |> element(~s(form[phx-change="select_default_status_entity"]))
+          |> render_change(%{"entity_uuid" => bad})
+
+        assert html =~ "Pick one of the offered lists."
+        assert Statuses.global_default_status_entity_uuid() == entity.uuid
+      end
+    end
+
     test "generate_default_status_list creates + selects an entity, logs provision", %{
       conn: conn,
       actor_uuid: actor_uuid

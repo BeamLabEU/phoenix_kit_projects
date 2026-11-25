@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Activity, Actor, History, Notices, Projects, TaskNotes}
+  alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitStaff.Schemas.{Department, Person, Team, TeamMembership}
 
   setup do
@@ -118,6 +119,35 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     assert notices("projects.assignment_created", alice.user) == []
   end
 
+  test "a task's notice carries a title and a button label (item 20)", ctx do
+    %{alice: alice, bob: bob} = ctx.people
+    a = task!(ctx.project, "Measure", %{"assigned_person_uuid" => bob.person})
+
+    log!("projects.assignment_created", a, alice.user)
+
+    assert [n] = notices("projects.assignment_created", bob.user)
+    ref = Assignment.row_ref(a)
+    assert n.metadata["notification_title"] == if(ref, do: "#{ref} · Measure", else: "Measure")
+    assert n.metadata["notification_action"] == "Open task"
+  end
+
+  test "a notice stays visible while its reader can open the project, not after", ctx do
+    %{alice: alice, bob: bob} = ctx.people
+    a = task!(ctx.project, "Measure", %{"assigned_person_uuid" => bob.person})
+    log!("projects.assignment_created", a, alice.user)
+    [n] = notices("projects.assignment_created", bob.user)
+    notification = %{activity: n}
+    reader = Auth.get_user(bob.user)
+
+    assert Notices.still_visible?(notification, reader)
+
+    {:ok, _} = PhoenixKitProjects.Members.remove_member(ctx.project, bob.user)
+    refute Notices.still_visible?(notification, reader)
+
+    # A membership notice is about the reader's own access: always visible.
+    assert Notices.still_visible?(%{activity: %{n | action: "projects.member_removed"}}, reader)
+  end
+
   test "a team's task started, finished, reopened and changed by someone tells each of its people, never the one who did it",
        ctx do
     %{alice: alice, bob: bob, carl: carl} = ctx.people
@@ -211,7 +241,15 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
 
     assert [n] = notices("projects.comment_added", bob.user)
     assert n.metadata["notification_text"] =~ "changed the direction"
-    assert n.metadata["notification_text"] =~ "18 mm"
+    # The words ride the quote block, never the line: the block is withheld
+    # from a reader who lost access by delivery time, the line is not (zai).
+    refute n.metadata["notification_text"] =~ "18 mm"
+    assert n.metadata["quote"]["text"] =~ "18 mm"
+    # It opens the task on its AI notes, where the note is (codex): one
+    # fragment, the note's own anchor.
+    assert n.metadata["notification_link"] =~ "task_tab=notes"
+    assert n.metadata["notification_link"] =~ ~r/#pk-comment-[0-9a-f-]{36}$/
+    assert length(String.split(n.metadata["notification_link"], "#")) == 2
 
     {:ok, agent} = TaskNotes.validate(%{"summary" => "Exported the DXF"}, "agent_note")
     {:ok, _} = TaskNotes.create(a, agent, user_uuid: alice.user)
@@ -245,13 +283,44 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
 
     PhoenixKit.Mentions.notify(new, source_type: "assignment", source_uuid: a.uuid)
 
-    assert [_] = notices("projects.comment_added", carl.user)
+    assert [n] = notices("projects.comment_added", carl.user)
+    # It opens on the comment: one fragment, the comment's own anchor.
+    assert n.metadata["notification_link"] =~ ~r/#pk-comment-#{comment.uuid}$/
+    # …in the task's discussion, the tab the task opens on.
+    assert n.metadata["notification_link"] =~ "/tasks?task="
+    refute n.metadata["notification_link"] =~ "task_tab="
+    assert length(String.split(n.metadata["notification_link"], "#")) == 2
 
     assert Repo.all(
              from(e in Entry,
                where: e.action == "mention.created" and e.target_uuid == ^carl.user
              )
            ) == []
+  end
+
+  test "a project comment's notice opens the project's Comments tab on the comment", ctx do
+    %{alice: alice, carl: carl} = ctx.people
+    {:ok, _} = PhoenixKit.Settings.update_setting("mentions_enabled", "true")
+    on_exit(fn -> PhoenixKit.Settings.update_setting("mentions_enabled", "false") end)
+    {:ok, token} = Token.to_string(:user, "user", carl.user, "Carl")
+
+    Repo.update_all(from(u in Auth.User, where: u.uuid == ^carl.user),
+      set: [custom_fields: %{"preferred_locale" => "et"}]
+    )
+
+    {:ok, _} =
+      Projects.update_project(ctx.project, %{"translations" => %{"et" => %{"name" => "Töökoda"}}})
+
+    {:ok, comment} =
+      PhoenixKitComments.create_comment("project", ctx.project.uuid, alice.user, %{
+        content: "Please look " <> token
+      })
+
+    assert [n] = notices("projects.comment_added", carl.user)
+    # The project page may show no discussion at all; its Comments tab
+    # always mounts the thread, so the anchor has something to land on.
+    assert n.metadata["notification_title"] == "Töökoda"
+    assert n.metadata["notification_link"] =~ ~r{/comments#pk-comment-#{comment.uuid}$}
   end
 
   test "a comment held for moderation tells nobody until it is approved, then tells its people",
@@ -272,7 +341,8 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     PhoenixKitProjects.CommentNotices.on_comment_published("assignment", a.uuid, approved)
 
     assert [n] = notices("projects.comment_added", bob.user)
-    assert n.metadata["notification_text"] =~ "Blum or Hettich?"
+    assert n.metadata["quote"]["text"] =~ "Blum or Hettich?"
+    refute n.metadata["notification_text"] =~ "Blum or Hettich?"
   end
 
   test "a deleted note's words leave the notices that quoted it", ctx do
@@ -286,6 +356,7 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     assert [n] = notices("projects.comment_added", bob.user)
     refute n.metadata["notification_text"] =~ "secret supplier"
     refute Map.has_key?(n.metadata, "excerpt")
+    refute Map.has_key?(n.metadata, "quote")
   end
 
   test "removing a task tells the people of every task it takes with it", ctx do

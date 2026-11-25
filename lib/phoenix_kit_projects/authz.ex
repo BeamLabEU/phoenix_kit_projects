@@ -392,7 +392,59 @@ defmodule PhoenixKitProjects.Authz do
 
   @role_rank %{owner: 0, manager: 1, member: 2, viewer: 3}
 
-  defp member_can?(subject, project, action, record) do
+  # A sub-project is read by whoever can read a project above it (Max,
+  # 2026-11-25: the parent's page already shows its tasks in the inset, and
+  # its Open link led to "Project not found"). Only `:view` is inherited:
+  # every other action follows the sub-project's own roles, so a parent's
+  # viewer seat (which the default floors let edit) never becomes one here.
+  defp member_can?(subject, uuid, :view, record) when is_binary(uuid) do
+    case PhoenixKitProjects.Projects.get_project(uuid) do
+      %Project{} = project -> member_can?(subject, project, :view, record)
+      nil -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp member_can?(subject, project, :view, record) do
+    own_can?(subject, project, :view, record) or
+      (not template?(project) and inherited_view?(subject, project))
+  end
+
+  defp member_can?(subject, project, action, record),
+    do: own_can?(subject, project, action, record)
+
+  # Never through a template: a real project cannot sit under one by the
+  # app's own paths, but an update that turned a live parent into a
+  # template would otherwise hand its old members a way in (codex).
+  defp inherited_view?(subject, project) do
+    case project_uuid_of(project) do
+      nil ->
+        false
+
+      uuid ->
+        # Nearest first, and no further than the first template on the way
+        # up: what sits above a template is not this project's line.
+        uuid
+        |> PhoenixKitProjects.Projects.parent_chain()
+        |> Enum.reverse()
+        |> Enum.take_while(&(&1.is_template != true))
+        |> Enum.any?(&own_can?(subject, &1, :view, nil))
+    end
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
+
+  defp template?(%{is_template: true}), do: true
+  defp template?(_), do: false
+
+  defp project_uuid_of(%{uuid: uuid}) when is_binary(uuid), do: uuid
+  defp project_uuid_of(uuid) when is_binary(uuid), do: uuid
+  defp project_uuid_of(_), do: nil
+
+  defp own_can?(subject, project, action, record) do
     case subject_user_uuid(subject) do
       nil ->
         false

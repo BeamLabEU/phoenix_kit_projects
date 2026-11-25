@@ -39,6 +39,64 @@ defmodule PhoenixKitProjects.L10n do
   end
 
   @doc """
+  The zone this process prints and reads times in (`put_viewer_zone/1`, or
+  `use_browser_zone/2`); nil when none was settled.
+  """
+  @spec viewer_zone() :: String.t() | nil
+  def viewer_zone, do: Process.get(@zone_key)
+
+  @doc "The site's zone (core's `time_zone` setting)."
+  @spec site_zone() :: String.t()
+  def site_zone do
+    Settings.get_setting_cached("time_zone", "0")
+  rescue
+    _ -> "0"
+  catch
+    :exit, _ -> "0"
+  end
+
+  @doc """
+  Takes the BROWSER's zone (an IANA name its page reported) as the viewer's
+  when their profile names none (Max, 2026-11-25: times are typed and shown
+  in each person's own zone). Before this, a viewer without a profile zone
+  had the SITE's, so "In 1 hour" read an hour off for someone a zone away.
+  A profile's zone always wins; anything that is not a zone core knows is
+  ignored. Answers whether the zone changed.
+  """
+  @spec use_browser_zone(term(), term()) :: boolean()
+  def use_browser_zone(viewer, zone) when is_binary(zone) do
+    profile = profile_zone(viewer)
+
+    cond do
+      profile != nil ->
+        false
+
+      not TimeZone.identifier?(zone) ->
+        false
+
+      Process.get(@zone_key) == zone ->
+        false
+
+      true ->
+        Process.put(@zone_key, zone)
+        true
+    end
+  end
+
+  def use_browser_zone(_viewer, _zone), do: false
+
+  defp profile_zone(%PhoenixKit.Users.Auth.Scope{user: user}), do: profile_zone(user)
+
+  defp profile_zone(%{} = user) do
+    case Map.get(user, :user_timezone) do
+      value when is_binary(value) and value != "" -> value
+      _ -> nil
+    end
+  end
+
+  defp profile_zone(_), do: nil
+
+  @doc """
   Forgets the viewer zone: a process that serves the API after a page (a
   reused connection) prints UTC again, not the last viewer's zone.
   """

@@ -1159,7 +1159,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             <%!-- Ongoing work says so beside its name, as on its page. --%>
             <span
               :if={Project.ongoing?(p) and not p.is_template}
-              class="badge badge-xs badge-outline badge-info gap-0.5 ml-1 align-middle whitespace-nowrap"
+              class="badge badge-sm badge-outline badge-info gap-0.5 ml-1 align-middle whitespace-nowrap"
               title={gettext("Ongoing — this project ends only when someone ends it")}
             >
               <span aria-hidden="true">∞</span> {gettext("Ongoing")}

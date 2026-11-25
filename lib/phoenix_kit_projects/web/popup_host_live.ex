@@ -494,8 +494,19 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     {:noreply, socket}
   end
 
+  # The record is gone, so its frame goes wherever it sits in the stack: a
+  # covered frame left behind would show the deleted task again once the
+  # frame above it closes (codex).
   def handle_info({:projects, :deleted, %{frame_ref: ref, close: true}}, socket) do
-    {:noreply, pop_if_top_matches(socket, ref)}
+    stack = socket.assigns.modal_stack
+
+    case List.last(stack) do
+      %{frame_ref: ^ref} ->
+        {:noreply, pop_top(socket)}
+
+      _ ->
+        {:noreply, assign(socket, modal_stack: Enum.reject(stack, &(&1.frame_ref == ref)))}
+    end
   end
 
   def handle_info({:projects, :deleted, _payload}, socket) do
@@ -524,44 +535,27 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   def handle_event("confirm_action_ok", _params, socket) do
     case ConfirmAction.take(socket) do
-      {%{event: "close_top_modal" = event, params: params}, socket} ->
-        handle_event(event, params, socket)
+      {%{event: "close_top_modal", params: params}, socket} ->
+        close_top(socket, params, :confirmed)
 
       {%{event: "pkp_url_discard"}, socket} ->
         {:noreply, close_task_frames(socket)}
+
+      # Back to a task lower in the stack, past frames with unsaved changes.
+      {%{event: "pkp_url_back_to", params: %{"task" => ref}}, socket} ->
+        stack = socket.assigns.modal_stack
+
+        case Enum.find_index(stack, &(&1[:task_ref] == ref)) do
+          i when is_integer(i) -> {:noreply, assign(socket, modal_stack: Enum.take(stack, i + 1))}
+          nil -> {:noreply, socket}
+        end
 
       {_none, socket} ->
         {:noreply, socket}
     end
   end
 
-  def handle_event("close_top_modal", params, socket) do
-    # Backdrop click + ESC keypress both fire `close_top_modal`. Each
-    # element passes `phx-value-frame-ref={frame.frame_ref}` so the
-    # handler can route through `pop_if_top_matches/2` — guards against
-    # a race where the user clicks a lower frame's backdrop or where ESC
-    # somehow fires for a non-top frame. ESC binding only attaches to
-    # the topmost dialog (see popup_host.ex), so the ESC path almost
-    # always matches; the frame-ref check is the belt-and-suspenders.
-    case normalize_frame_ref(Map.get(params, "frame-ref")) do
-      ref when is_integer(ref) ->
-        {:noreply, pop_if_top_matches(socket, ref)}
-
-      nil ->
-        # The component always emits `phx-value-frame-ref` (see
-        # popup_host.ex backdrop button + ESC binding). Missing or
-        # malformed value here means the event is stale (frame already
-        # popped) or adversarial. Treat as no-op rather than blindly
-        # popping the current top — otherwise a delayed event could
-        # close the wrong modal.
-        Logger.debug(
-          "[PopupHostLive] dropping close_top_modal without valid frame-ref " <>
-            "(params=#{inspect(params)})"
-        )
-
-        {:noreply, socket}
-    end
-  end
+  def handle_event("close_top_modal", params, socket), do: close_top(socket, params, :direct)
 
   # The address bar's `?task=` (`PkpDrawerUrl`): "" — Back went over the
   # entry the frame pushed, so the task's frames close (and whatever was
@@ -603,16 +597,119 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     stack = socket.assigns.modal_stack
 
     with false <- top_task_ref(stack) == ref,
-         true <- length(stack) < socket.assigns.max_stack_depth,
          %Assignment{} = a <- url_task(ref),
-         false <- top_task_ref(stack) == (Assignment.row_ref(a) || a.uuid) do
-      {:noreply, push_frame(socket, AssignmentViewLive, task_view(socket, a))}
+         task_ref = Assignment.row_ref(a) || a.uuid,
+         false <- top_task_ref(stack) == task_ref do
+      case Enum.find_index(stack, &(&1[:task_ref] in [ref, task_ref])) do
+        # Already open lower down (Back from a task opened over it): show
+        # that frame again instead of stacking a second copy of the task,
+        # whose thread would repeat every DOM id. Frames holding unsaved
+        # changes are never dropped this way.
+        i when is_integer(i) ->
+          above = Enum.drop(stack, i + 1)
+
+          # Unsaved changes above it: ask first, as Back to no task does, and
+          # give the address its entry back meanwhile, so it never names a
+          # task the drawer is not showing (codex).
+          if Enum.any?(above, &(&1[:closeable] == false)) do
+            socket =
+              ConfirmAction.request(
+                socket,
+                %{
+                  "event" => "pkp_url_back_to",
+                  "task" => task_ref,
+                  "title" => gettext("Close without saving?"),
+                  "message" => gettext("What you changed since the last save is lost."),
+                  "confirm" => gettext("Discard")
+                },
+                ~w(pkp_url_back_to)
+              )
+
+            {:noreply, push_event(socket, "pkp_url_restore", %{task: top_task_ref(stack)})}
+          else
+            {:noreply, assign(socket, modal_stack: Enum.take(stack, i + 1))}
+          end
+
+        nil ->
+          if length(stack) < socket.assigns.max_stack_depth,
+            do: {:noreply, push_frame(socket, AssignmentViewLive, task_view(socket, a))},
+            else: {:noreply, socket}
+      end
     else
       _ -> {:noreply, socket}
     end
   end
 
+  # After a reconnect the stack is rebuilt from the session only (a task in
+  # the address); the browser hands back the frames that were open. Taken
+  # only while nothing is open, each through the same checks an `:opened`
+  # passes: an embeddable LV, a session stripped of the host's own keys,
+  # the depth cap.
+  def handle_event("pkp_restore_stack", %{"frames" => frames}, socket) when is_list(frames) do
+    if socket.assigns.modal_stack == [] and length(frames) <= socket.assigns.max_stack_depth do
+      restored =
+        Enum.reduce_while(frames, socket, fn token, acc ->
+          case verify_frame(acc, token) do
+            {:ok, {lv, session}} -> {:cont, push_frame(acc, lv, session, token)}
+            :error -> {:halt, socket}
+          end
+        end)
+
+      {:noreply, restored}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # Only reopen frames this host actually issued to this viewer.
+  defp verify_frame(socket, token) when is_binary(token) do
+    with {:ok, {owner, lv, session}} <-
+           Phoenix.Token.verify(socket, "projects popup frame", token, max_age: 86_400),
+         true <- owner == frame_owner(socket) and WebHelpers.embeddable_lv?(lv) do
+      {:ok, {lv, session}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp verify_frame(_socket, _token), do: :error
+
+  defp frame_owner(socket), do: {socket.assigns.host_topic, socket.assigns.host_current_user_uuid}
+
+  # A frame holding unsaved edits closes only through its ✕'s confirmation
+  # (`:confirmed`): Esc and the backdrop are ignored on it in the browser,
+  # and a bare `close_top_modal` for it is refused here too (codex).
+  defp close_top(socket, params, how) do
+    # Backdrop click + ESC keypress both fire `close_top_modal`. Each
+    # element passes `phx-value-frame-ref={frame.frame_ref}` so the
+    # handler can route through `pop_if_top_matches/2` — guards against
+    # a race where the user clicks a lower frame's backdrop or where ESC
+    # somehow fires for a non-top frame. ESC binding only attaches to
+    # the topmost dialog (see popup_host.ex), so the ESC path almost
+    # always matches; the frame-ref check is the belt-and-suspenders.
+    case normalize_frame_ref(Map.get(params, "frame-ref")) do
+      ref when is_integer(ref) ->
+        if how == :direct and dirty_top?(socket, ref),
+          do: {:noreply, socket},
+          else: {:noreply, pop_if_top_matches(socket, ref)}
+
+      nil ->
+        # The component always emits `phx-value-frame-ref` (see
+        # popup_host.ex backdrop button + ESC binding). Missing or
+        # malformed value here means the event is stale (frame already
+        # popped) or adversarial. Treat as no-op rather than blindly
+        # popping the current top — otherwise a delayed event could
+        # close the wrong modal.
+        Logger.debug(
+          "[PopupHostLive] dropping close_top_modal without valid frame-ref " <>
+            "(params=#{inspect(params)})"
+        )
+
+        {:noreply, socket}
+    end
+  end
 
   # A ref from the address bar, as any link names a task: `ACME-12` or a
   # uuid. Who may see it is the view's own check when it mounts.
@@ -621,15 +718,30 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   # The session the page's own rows open a view with — under a project
   # page that runs the view's next steps, its `step_intents`.
+  # Only a task of THAT page's project: the page re-scopes a step to its own
+  # project, so a task of another one (an address naming it) was offered
+  # step buttons that did nothing while the drawer closed as if they ran.
   defp task_view(socket, %Assignment{} = a) do
     case socket.assigns.root_view do
-      %{lv: ProjectShowLive} ->
-        ProjectShowLive.view_session(%{project_uuid: a.project_uuid, uuid: a.uuid})
+      %{lv: ProjectShowLive, session: %{"id" => id}} = _root ->
+        if root_project_uuid(id) == a.project_uuid,
+          do: ProjectShowLive.view_session(%{project_uuid: a.project_uuid, uuid: a.uuid}),
+          else: %{"project_id" => a.project_uuid, "id" => a.uuid}
 
       _ ->
         %{"project_id" => a.project_uuid, "id" => a.uuid}
     end
   end
+
+  # The root page's `"id"` may be a key or a uuid.
+  defp root_project_uuid(id) when is_binary(id) do
+    case Projects.get_project(id) do
+      %{uuid: uuid} -> uuid
+      _ -> nil
+    end
+  end
+
+  defp root_project_uuid(_), do: nil
 
   # Every frame from the lowest one showing a task up.
   defp close_task_frames(socket) do
@@ -695,9 +807,11 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # children unless the host explicitly passed one.
   # Compact (the boss, 2026-10-31): the box's own padding is the margin;
   # the wrapper adds none above the header.
-  @child_wrapper_class "flex flex-col w-full px-1 pb-1 gap-3"
+  # `@container`: the task view lays its details beside the discussion on a
+  # wide frame (`@2xl:` variants); without a container they never matched.
+  @child_wrapper_class "@container flex flex-col w-full px-1 pb-1 gap-3"
 
-  defp push_frame(socket, lv, child_session) do
+  defp push_frame(socket, lv, child_session, token \\ nil) do
     frame_ref = System.unique_integer([:positive, :monotonic])
 
     stamped_session =
@@ -713,11 +827,24 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       frame_ref: frame_ref,
       lv: lv,
       session: stamped_session,
+      # What opened it, before the host's own keys were stamped: what the
+      # browser hands back to restore the frame after a reconnect.
+      restore_token:
+        token ||
+          Phoenix.Token.sign(
+            socket,
+            "projects popup frame",
+            {frame_owner(socket), lv, child_session}
+          ),
       id: "embed-#{frame_ref}-#{lv_slug(lv)}",
       task_ref: frame_task_ref(lv, child_session)
     }
 
     assign(socket, modal_stack: socket.assigns.modal_stack ++ [frame])
+  end
+
+  defp dirty_top?(socket, frame_ref) do
+    match?(%{frame_ref: ^frame_ref, closeable: false}, List.last(socket.assigns.modal_stack))
   end
 
   defp pop_if_top_matches(socket, frame_ref) do
@@ -786,6 +913,16 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       </:frame>
     </.popup_host>
     <ConfirmAction.confirm_action_modal confirm={assigns[:confirm_action]} />
+    <%!-- What is open, for the browser to hand back after a dropped
+         connection (`PkpKeepStack`, Max 2026-11-25: the popup closed when
+         his internet flickered, and what he had typed was gone). --%>
+    <div
+      id={"pkp-keep-stack-#{topic_suffix(@host_topic)}"}
+      phx-hook="PkpKeepStack"
+      data-frames={Jason.encode!(Enum.map(@modal_stack, & &1.restore_token))}
+      hidden
+    >
+    </div>
     <%!-- The open task in the page's address (`PkpDrawerUrl`), only
          when the host named the parameter. --%>
     <div

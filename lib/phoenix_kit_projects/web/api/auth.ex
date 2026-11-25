@@ -47,7 +47,7 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
       # — a key must not go on writing tasks and time meanwhile.
       if PhoenixKitProjects.enabled?() do
         case rate_limit(conn, key) do
-          {:ok, conn} -> admit(conn, key)
+          {:ok, conn} -> refuse_nul(conn) || admit(conn, key)
           {:halt, conn} -> count_refused(conn, key)
         end
       else
@@ -57,6 +57,50 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
       _ -> unauthorized(conn)
     end
   end
+
+  # Postgres refuses a NUL byte in `text` and `jsonb`: a title, note or
+  # comment carrying one passed every validator and then raised in the
+  # insert — a 500, and a retry that failed the same way. Refused here, for
+  # every field of every call, as the field error it is.
+  defp refuse_nul(conn) do
+    case nul_field(conn.params, nil) do
+      nil ->
+        nil
+
+      field ->
+        why = "must not contain a NUL byte (\\u0000)"
+
+        conn
+        |> Json.error(
+          :unprocessable_entity,
+          "validation_failed",
+          "#{field} #{why}.",
+          %{field => [why]}
+        )
+        |> halt()
+    end
+  end
+
+  defp nul_field(value, path) when is_binary(value),
+    do: if(String.contains?(value, <<0>>), do: path || "request", else: nil)
+
+  defp nul_field(%{} = map, path) when not is_struct(map) do
+    Enum.find_value(map, fn {k, v} ->
+      key = to_string(k)
+      if String.contains?(key, <<0>>), do: path || "request", else: nul_field(v, join(path, key))
+    end)
+  end
+
+  defp nul_field(list, path) when is_list(list) do
+    list
+    |> Enum.with_index()
+    |> Enum.find_value(fn {v, i} -> nul_field(v, join(path, Integer.to_string(i))) end)
+  end
+
+  defp nul_field(_value, _path), do: nil
+
+  defp join(nil, key), do: key
+  defp join(path, key), do: path <> "." <> key
 
   defp module_disabled(conn) do
     conn

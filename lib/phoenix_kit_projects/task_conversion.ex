@@ -21,8 +21,8 @@ defmodule PhoenixKitProjects.TaskConversion do
   Each runs in one transaction under the parent project's lock
   (`Outline.with_project_lock/2`). A moved task gets the next free number
   of the project it moves to (`KEY-n` is per project), and the time logged
-  on it moves with it. Connections between a moved task and one that
-  stays are kept as they are.
+  on it moves with it. Dependencies move with their endpoints. A dependency that would span
+  two projects is removed.
   """
 
   import Ecto.Query
@@ -30,7 +30,7 @@ defmodule PhoenixKitProjects.TaskConversion do
   alias PhoenixKit.RepoHelper
   alias PhoenixKitProjects.{AssigneeSet, Outline, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.{Assignment, Project, Task, WorkEntry}
+  alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, WorkEntry}
 
   @prefix Application.compile_env(:phoenix_kit, :prefix)
   @counters "phoenix_kit_project_task_counters"
@@ -60,36 +60,15 @@ defmodule PhoenixKitProjects.TaskConversion do
     do: {:error, :subtask}
 
   def to_subproject(%Assignment{} = row, opts) do
+    # The sub-project link lock first (the one order every taker keeps),
+    # then the project lock: the depth is checked against a tree no move
+    # can deepen meanwhile (vibe — a move between the check and the write
+    # put the child past the depth the tree reads walk).
     result =
-      Outline.with_project_lock(row.project_uuid, fn parent ->
-        with %Assignment{child_project_uuid: nil} = row <- fresh(row),
-             :ok <- room_below(parent) do
-          rows = project_rows(parent.uuid)
-          moving = Outline.descendants(rows, row.uuid)
-
-          child = insert_child!(parent, row, opts)
-          move_rows!(moving, child.uuid, under: {row.uuid, nil}, after_position: 0)
-
-          link =
-            row
-            # A sub-project row does not come back as a next occurrence
-            # (`Repeats` copies a task): the rule stays behind, or every
-            # finish of the sub-project would try to repeat it and fail.
-            |> Ecto.Changeset.change(
-              task_uuid: nil,
-              child_project_uuid: child.uuid,
-              repeat_rule: nil
-            )
-            |> Ecto.Changeset.check_constraint(:child_project_uuid,
-              name: :phoenix_kit_project_assignments_task_xor_child
-            )
-            |> repo().update!()
-
-          %{assignment: link, project: child, moved: length(moving)}
-        else
-          {:error, reason} -> repo().rollback(reason)
-          %Assignment{} -> repo().rollback(:not_a_task)
-          nil -> repo().rollback(:not_found)
+      Projects.with_subproject_links_lock(fn ->
+        case convert_in_lock(row, opts) do
+          {:ok, done} -> done
+          {:error, reason} -> RepoHelper.repo().rollback(reason)
         end
       end)
 
@@ -102,6 +81,59 @@ defmodule PhoenixKitProjects.TaskConversion do
       Projects.broadcast_project_updated(child)
       {:ok, %{done | project: child, assignment: Projects.get_assignment(row.uuid)}}
     end
+  end
+
+  defp convert_in_lock(%Assignment{} = row, opts) do
+    Outline.with_project_lock(row.project_uuid, fn parent ->
+      with %Assignment{child_project_uuid: nil, parent_uuid: nil} = row <- fresh(row),
+           :ok <- room_below(parent) do
+        rows = project_rows(parent.uuid)
+        moving = Outline.descendants(rows, row.uuid)
+
+        child = insert_child!(parent, row, opts)
+        move_rows!(moving, child.uuid, under: {row.uuid, nil}, after_position: 0)
+
+        link =
+          row
+          # A sub-project row does not come back as a next occurrence
+          # (`Repeats` copies a task): the rule stays behind, or every
+          # finish of the sub-project would try to repeat it and fail.
+          |> Ecto.Changeset.change(
+            task_uuid: nil,
+            child_project_uuid: child.uuid,
+            repeat_rule: nil
+          )
+          |> Ecto.Changeset.check_constraint(:child_project_uuid,
+            name: :phoenix_kit_project_assignments_task_xor_child
+          )
+          |> repo().update!()
+
+        # A one-off task existed only for this row; the row now links the
+        # sub-project, so the task goes, as the delete paths remove one
+        # (vibe). A library task stays.
+        drop_orphaned_one_off(row.task_uuid)
+
+        %{assignment: link, project: child, moved: length(moving)}
+      else
+        {:error, reason} -> repo().rollback(reason)
+        %Assignment{child_project_uuid: nil} -> repo().rollback(:subtask)
+        %Assignment{} -> repo().rollback(:not_a_task)
+        nil -> repo().rollback(:not_found)
+      end
+    end)
+  end
+
+  defp drop_orphaned_one_off(nil), do: :ok
+
+  defp drop_orphaned_one_off(task_uuid) do
+    from(t in Task,
+      where:
+        t.uuid == ^task_uuid and t.ad_hoc == true and
+          not exists(from(a in Assignment, where: a.task_uuid == ^task_uuid, select: 1))
+    )
+    |> repo().delete_all()
+
+    :ok
   end
 
   # A sub-project one level below the parent must still fit the tree — the
@@ -324,6 +356,17 @@ defmodule PhoenixKitProjects.TaskConversion do
     from(w in WorkEntry, where: w.assignment_uuid in ^uuids)
     |> repo().update_all(set: [project_uuid: project_uuid])
 
+    # A dependency lives in one project (`add_dependency/3` refuses a pair
+    # from two). An edge between a row that moved and one that stayed would
+    # now cross projects — a task waiting on a row it can no longer see — so
+    # it goes; edges among the moved rows move with them (codex).
+    from(d in Dependency,
+      where:
+        (d.assignment_uuid in ^uuids and d.depends_on_uuid not in ^uuids) or
+          (d.depends_on_uuid in ^uuids and d.assignment_uuid not in ^uuids)
+    )
+    |> repo().delete_all()
+
     :ok
   end
 
@@ -348,8 +391,8 @@ defmodule PhoenixKitProjects.TaskConversion do
 
   # ── Helpers ────────────────────────────────────────────────────────
 
-  defp fresh(%Assignment{uuid: uuid}) do
-    Assignment |> preload(:task) |> repo().get(uuid)
+  defp fresh(%Assignment{uuid: uuid, project_uuid: project_uuid}) do
+    Assignment |> preload(:task) |> repo().get_by(uuid: uuid, project_uuid: project_uuid)
   end
 
   # The project's rows in list order — the depth-first walk the outline

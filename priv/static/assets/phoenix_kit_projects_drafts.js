@@ -173,7 +173,31 @@
         menu.appendChild(li);
       });
       menu.classList.remove("hidden");
+      this.placeMenu(menu);
       this.paint();
+    },
+
+    // Below the line, or above it when the list's scroll area has no room
+    // left underneath (the last row of a long list): an absolute menu is
+    // cut off at that area's edge.
+    placeMenu: function (menu) {
+      menu.style.top = "";
+      menu.style.bottom = "";
+      var area = menu.parentNode;
+      while (area && area !== document.body) {
+        var oy = getComputedStyle(area).overflowY;
+        if (oy === "auto" || oy === "scroll" || oy === "hidden") break;
+        area = area.parentNode;
+      }
+      var inArea = area && area !== document.body;
+      var bounds = inArea ? area.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      var box = menu.getBoundingClientRect();
+      var above = menu.parentNode.getBoundingClientRect().top;
+      // Up only when it fits there, inside the same area.
+      if (box.bottom > bounds.bottom && above - box.height >= bounds.top) {
+        menu.style.top = "auto";
+        menu.style.bottom = "100%";
+      }
     },
 
     paint: function () {

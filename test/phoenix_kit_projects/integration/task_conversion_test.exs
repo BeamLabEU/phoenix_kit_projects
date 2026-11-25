@@ -33,6 +33,15 @@ defmodule PhoenixKitProjects.Integration.TaskConversionTest do
     %{project: Projects.get_project!(project.uuid)}
   end
 
+  test "conversion rechecks the task's project and parent under the project lock", %{project: p} do
+    parent = task!(p, "Fit")
+    stale = task!(p, "Cut")
+    {:ok, _} = Outline.move(stale, parent.uuid, :last)
+    assert {:error, :subtask} = TaskConversion.to_subproject(stale)
+    {:ok, _} = TaskConversion.to_subproject(parent)
+    assert {:error, :not_found} = TaskConversion.to_subproject(stale)
+  end
+
   test "a task becomes a sub-project and its subtasks the sub-project's tasks", %{project: p} do
     before = task!(p, "Measure")
     fit = task!(p, "Fit the worktop", description: "Oak, 40 mm")
@@ -129,6 +138,35 @@ defmodule PhoenixKitProjects.Integration.TaskConversionTest do
   # A sub-project row cannot come back as a next occurrence (`Repeats`
   # copies a task), so the rule does not travel with the row: left on it,
   # the sub-project's finish would try to repeat and fail every time.
+  test "a one-off task made a sub-project leaves no task behind", %{project: p} do
+    fit = task!(p, "Fit the worktop")
+    task_uuid = fit.task_uuid
+    assert %PhoenixKitProjects.Schemas.Task{ad_hoc: true} = Projects.get_task(task_uuid)
+
+    assert {:ok, %{project: child}} = TaskConversion.to_subproject(fit)
+
+    # The row now links the sub-project; the one-off task it named is gone (vibe).
+    assert %Assignment{child_project_uuid: cid, task_uuid: nil} =
+             Projects.get_assignment(fit.uuid)
+
+    assert cid == child.uuid
+    assert Projects.get_task(task_uuid) == nil
+  end
+
+  test "a library task made a sub-project stays in the library", %{project: p} do
+    lib = fixture_task(%{"title" => "Library worktop"})
+
+    {:ok, row} =
+      Projects.create_assignment(%{
+        "project_uuid" => p.uuid,
+        "task_uuid" => lib.uuid,
+        "status" => "todo"
+      })
+
+    assert {:ok, _} = TaskConversion.to_subproject(Projects.get_assignment(row.uuid))
+    assert %PhoenixKitProjects.Schemas.Task{} = Projects.get_task(lib.uuid)
+  end
+
   test "a repeating task made a sub-project stops repeating", %{project: p} do
     weekly = task!(p, "Check in", attrs: %{"repeat_rule" => %{"every" => 1, "unit" => "week"}})
     assert weekly.repeat_rule == %{"every" => 1, "unit" => "week"}

@@ -228,12 +228,7 @@ defmodule PhoenixKitProjects.ApiKeys do
       )
       |> RepoHelper.repo().delete_all()
 
-    if key.project_uuid == project_uuid do
-      next = key |> grants() |> Enum.find(&(&1.scopes != []))
-
-      from(k in ApiKey, where: k.uuid == ^key.uuid)
-      |> RepoHelper.repo().update_all(set: [project_uuid: next && next.project_uuid])
-    end
+    move_home_off(key, project_uuid)
 
     if n > 0 do
       Activity.log("projects.api_key_access_removed",
@@ -247,6 +242,71 @@ defmodule PhoenixKitProjects.ApiKeys do
     :ok
   end
 
+  @doc """
+  Takes a project away from a key so that the key has NO access there
+  afterwards — what the API keys page's Remove means. Deleting the row is
+  not always that: a grant on a project above that covers sub-projects
+  would reach this one again, often with more than the row allowed. Then
+  the row becomes "no access" (empty scopes), which stops the parent's
+  grant there and below; otherwise it is deleted. Answers `{:ok, :deleted}`
+  or `{:ok, :blocked}`. Options: `:actor_uuid`.
+  """
+  @spec take_away(ApiKey.t(), binary(), keyword()) ::
+          {:ok, :deleted | :blocked} | {:error, Ecto.Changeset.t()}
+  def take_away(%ApiKey{} = key, project_uuid, opts \\ []) do
+    if reached_from_above?(key, project_uuid) do
+      RepoHelper.repo().transact(fn ->
+        with {:ok, _} <- block_grant(key, project_uuid) do
+          move_home_off(key, project_uuid)
+
+          Activity.log("projects.api_key_access_removed",
+            actor_uuid: Keyword.get(opts, :actor_uuid),
+            resource_type: "project",
+            resource_uuid: project_uuid,
+            metadata: %{"api_key" => key.uuid, "name" => key.name, "blocked" => true}
+          )
+
+          {:ok, :blocked}
+        end
+      end)
+    else
+      :ok = delete_grant(key, project_uuid, opts)
+      {:ok, :deleted}
+    end
+  end
+
+  defp block_grant(key, project_uuid) do
+    %ApiKeyGrant{}
+    |> ApiKeyGrant.changeset(%{
+      "api_key_uuid" => key.uuid,
+      "project_uuid" => project_uuid,
+      "scopes" => [],
+      "role" => key.role || "member"
+    })
+    |> RepoHelper.repo().insert(
+      conflict_target: [:api_key_uuid, :project_uuid],
+      on_conflict: {:replace, [:scopes, :updated_at]}
+    )
+  end
+
+  # Whether, with no row of its own, the project would be reached by a grant
+  # above it: the nearest ancestor's grant, if it opens something and covers
+  # sub-projects.
+  defp reached_from_above?(key, project_uuid) do
+    by_project = Map.new(grants(key.uuid), &{&1.project_uuid, &1})
+
+    ancestors =
+      project_uuid |> Projects.parent_chain() |> Enum.reverse() |> Enum.map(& &1.uuid)
+
+    case Enum.find_value(ancestors, fn uuid -> by_project[uuid] end) do
+      %ApiKeyGrant{scopes: [_ | _], inherit: true} -> true
+      _ -> false
+    end
+  rescue
+    # Unsure: block rather than risk handing the parent's access back.
+    _ -> true
+  end
+
   @doc "Makes `project_uuid` — one the key has a grant on — its home (where a call without `project` acts)."
   @spec set_home(ApiKey.t(), binary()) :: {:ok, ApiKey.t()} | {:error, :no_grant}
   def set_home(%ApiKey{} = key, project_uuid) do
@@ -255,6 +315,19 @@ defmodule PhoenixKitProjects.ApiKeys do
     else
       {:error, :no_grant}
     end
+  end
+
+  # A key whose home was `project_uuid` moves home to another of its grants
+  # that opens something (an empty grant is "no access"), or to none.
+  defp move_home_off(key, project_uuid) do
+    if key.project_uuid == project_uuid do
+      next = key |> grants() |> Enum.find(&(&1.scopes != [] and &1.project_uuid != project_uuid))
+
+      from(k in ApiKey, where: k.uuid == ^key.uuid and k.project_uuid == ^project_uuid)
+      |> RepoHelper.repo().update_all(set: [project_uuid: next && next.project_uuid])
+    end
+
+    :ok
   end
 
   @doc """
@@ -753,7 +826,7 @@ defmodule PhoenixKitProjects.ApiKeys do
              }}
 
           :unavailable ->
-            wrap(fun.())
+            unavailable()
         end
       end,
       timeout: @lock_timeout
@@ -769,8 +842,23 @@ defmodule PhoenixKitProjects.ApiKeys do
     case reserve(key_uuid, idempotency_key) do
       {:reserved, row} -> run_reserved(row, fun)
       {:stored, %ApiIdempotency{status: status, body: body}} -> {:replay, status, body}
-      :unavailable -> wrap(fun.())
+      :unavailable -> unavailable()
     end
+  end
+
+  # The lock or the reservation could not be had (the database refused the
+  # query): the work is NOT run. Running it unprotected let two retries of
+  # one request both write — 24 minutes logged for a 12-minute call. A 503
+  # the agent retries with the same Idempotency-Key is the honest answer.
+  defp unavailable do
+    {:ok, 503,
+     %{
+       error: %{
+         code: "idempotency_unavailable",
+         message:
+           "This write could not be protected against running twice right now, so it was not run. Retry in a moment with the same Idempotency-Key."
+       }
+     }}
   end
 
   @doc false

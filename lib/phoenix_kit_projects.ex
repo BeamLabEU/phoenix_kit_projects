@@ -82,6 +82,10 @@ defmodule PhoenixKitProjects do
         gettext_backend: PhoenixKitProjects.Gettext,
         label: gettext_noop("Projects"),
         description: gettext_noop("Membership, health, and task updates in your projects"),
+        # Asked by core when an email or Telegram message goes out: a reader
+        # who can no longer open the project gets the line only, never the
+        # comment (item 20, 2026-11-20).
+        visible: {PhoenixKitProjects.Notices, :still_visible?},
         actions: [],
         default: true,
         sub_types: [

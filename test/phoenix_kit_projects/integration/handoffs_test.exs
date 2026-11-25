@@ -518,7 +518,10 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
         })
 
       assert [n] = notices("projects.comment_added", bob.user)
-      assert n.metadata["notification_text"] =~ "Wall A does not add up."
+      # The words ride the quote block, the line names the act (zai).
+      assert n.metadata["notification_text"] =~ "commented on"
+      assert n.metadata["quote"]["text"] =~ "Wall A does not add up."
+      refute n.metadata["notification_text"] =~ "Wall A does not add up."
       assert notices("projects.comment_added", alice.user) == []
 
       {:ok, mention} = Token.to_string(:user, "user", dave.user, "Dave")

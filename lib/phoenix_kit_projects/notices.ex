@@ -234,6 +234,7 @@ defmodule PhoenixKitProjects.Notices do
       new_meta =
         meta
         |> Map.delete("excerpt")
+        |> Map.delete("quote")
         |> Map.put("notification_text", text)
         |> Map.put("comment_deleted", true)
 
@@ -324,7 +325,12 @@ defmodule PhoenixKitProjects.Notices do
               # otherwise be the sender's (the dialect of their page).
               "notification_text" => line(action, subject, actor, meta, lang),
               "notification_icon" => icon(action),
-              "notification_link" => link(action, subject)
+              "notification_link" => link(action, subject, meta),
+              # Item 20 (2026-11-20): the email's subject and Telegram's
+              # first line, and the button's label. A label, never a
+              # sentence built from pieces.
+              "notification_title" => title(action, subject, lang),
+              "notification_action" => action_label(action, subject)
             }
           end)
 
@@ -619,6 +625,25 @@ defmodule PhoenixKitProjects.Notices do
   defp text("projects.assignment_removed", c),
     do: gettext("%{actor} removed your task “%{task}”", actor: c.actor, task: c.task)
 
+  # With the words in the quote block, the line names the act only: the
+  # block is what a reader who lost access does not get (zai). A core
+  # without the block keeps the excerpt in the line (the clauses below).
+  defp text("projects.comment_added", %{meta: %{"quote" => %{}}} = c) do
+    case {c.subject, c.meta["note"]} do
+      {%Assignment{}, "redirect"} ->
+        gettext("%{actor} changed the direction of “%{task}”", actor: c.actor, task: c.task)
+
+      {%Assignment{}, note} when is_binary(note) ->
+        gettext("%{actor} added a note to “%{task}”", actor: c.actor, task: c.task)
+
+      {%Assignment{}, _} ->
+        gettext("%{actor} commented on “%{task}”", actor: c.actor, task: c.task)
+
+      _ ->
+        gettext("%{actor} commented on %{project}", actor: c.actor, project: c.project)
+    end
+  end
+
   defp text(
          "projects.comment_added",
          %{subject: %Assignment{}, meta: %{"note" => "redirect"}} = c
@@ -685,6 +710,97 @@ defmodule PhoenixKitProjects.Notices do
   defp icon("projects.comment_added"), do: "hero-chat-bubble-left-right"
   defp icon("projects.member_" <> _), do: "hero-user-group"
   defp icon(_), do: "hero-clipboard-document-list"
+
+  @doc """
+  Core's `visible` check for this module's notification type: whether the
+  reader may still open the project the notice is about, asked when an email
+  or Telegram message goes out (a queued comment must not reach someone who
+  lost access since). A membership notice is about the reader's own access
+  and is always visible: a removed member is told although they are out.
+  """
+  @spec still_visible?(term(), term()) :: boolean()
+  def still_visible?(%{activity: %{action: "projects.member_" <> _}}, _user), do: true
+
+  def still_visible?(%{activity: %{resource_type: type, resource_uuid: uuid}}, %{uuid: user_uuid})
+      when is_binary(uuid) and is_binary(user_uuid) do
+    project =
+      case type do
+        "assignment" ->
+          case Projects.get_assignment(uuid) do
+            %Assignment{} = a -> project_of(a)
+            _ -> nil
+          end
+
+        "project" ->
+          Projects.get_project(uuid)
+
+        _ ->
+          nil
+      end
+
+    case project do
+      %Project{} = p -> may_view?(user_uuid, p)
+      _ -> false
+    end
+  end
+
+  def still_visible?(_notification, _user), do: false
+
+  # The task's key and name ("ACME-12 · Fit the doors"), or the project's
+  # name — what the email's subject and Telegram's first line show.
+  defp title("projects.assignment_removed", %Assignment{} = a, lang),
+    do: project_title(project_of(a), lang)
+
+  defp title(_action, %Assignment{} = a, lang) do
+    name = Assignment.label(a, lang)
+
+    case Assignment.row_ref(a) do
+      ref when is_binary(ref) and ref != "" -> "#{ref} · #{name}"
+      _ -> name
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp title(_action, %Project{} = p, lang), do: project_title(p, lang)
+
+  defp project_title(%Project{} = p, lang), do: project_name(p, lang)
+  defp project_title(_p, _lang), do: nil
+
+  defp action_label("projects.assignment_removed", _subject), do: gettext("Open project")
+  defp action_label(_action, %Assignment{}), do: gettext("Open task")
+  defp action_label(_action, %Project{}), do: gettext("Open project")
+
+  # A comment's notice opens on the comment, where its thread is mounted:
+  # the project's Comments tab for a project's discussion (the project page
+  # itself may show none), the task's AI notes for a note (the task opens
+  # on its discussion otherwise), the task's discussion for a comment. Its
+  # anchor replaces the row's — one fragment only: the thread's
+  # JumpToComment hook matches the whole hash, and `#task-X#pk-comment-Y`
+  # matched nothing.
+  defp link("projects.comment_added", subject, %{"comment" => comment} = meta)
+       when is_binary(comment) do
+    base =
+      case {subject, meta} do
+        {%Project{} = p, _} ->
+          Paths.project_comments(p)
+
+        {%Assignment{} = a, %{"note" => note}} when is_binary(note) ->
+          a |> link() |> without_fragment() |> with_query("task_tab=notes")
+
+        _ ->
+          subject |> link() |> without_fragment()
+      end
+
+    base <> "#pk-comment-" <> comment
+  end
+
+  defp link(action, subject, _meta), do: link(action, subject)
+
+  defp without_fragment(url), do: url |> String.split("#", parts: 2) |> hd()
+
+  defp with_query(url, pair),
+    do: if(String.contains?(url, "?"), do: url <> "&" <> pair, else: url <> "?" <> pair)
 
   defp link("projects.assignment_removed", %Assignment{} = a), do: Paths.project(a.project_uuid)
   defp link(_action, subject), do: link(subject)

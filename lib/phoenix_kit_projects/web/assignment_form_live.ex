@@ -2622,6 +2622,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # The browser's time zone (`PkpZone`): the viewer's own when their profile
+  # names none, so "In 1 hour" and every time typed here are their clock.
+  def handle_event("pkp_zone", %{"zone" => zone}, socket) do
+    if L10n.use_browser_zone(socket.assigns[:phoenix_kit_current_scope], zone),
+      do: {:noreply, assign(socket, :viewer_zone, zone)},
+      else: {:noreply, socket}
+  end
+
+  # An event this form does not know, or a known one without the
+  # parameters it takes: nothing happens. A crash would restart the form and
+  # lose what was typed and everything held until Save (the project page
+  # has the same guard).
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
   # What the «Project to nest» picker offers: the projects the viewer may
   # nest here, minus the ones the host's move lock holds in place (nesting
   # moves a project). One hook call for the whole list.
@@ -2742,7 +2756,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         class="flex items-center gap-2 text-sm"
         data-held={if state != :saved, do: to_string(state)}
       >
-        <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+        <.assignment_status_badge status={a.status} class="shrink-0" />
         <span class={["truncate flex-1", state == :removing && "line-through text-base-content/50"]}>
           {Assignment.label(a, @lang)}
         </span>
@@ -2786,7 +2800,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # The small mark on something Save will write.
   defp not_saved(assigns) do
     ~H"""
-    <span class="badge badge-warning badge-outline badge-xs shrink-0" title={gettext("Saved when you press Save")}>
+    <span class="badge badge-warning badge-outline badge-sm shrink-0" title={gettext("Saved when you press Save")}>
       {gettext("not saved")}
     </span>
     """
@@ -2900,7 +2914,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         do: socket,
         else: assign(socket, held_dep_adds: [], held_dep_removes: [], held_dep_items: %{})
 
-    # Likewise subtasks: a held "Sits under" and held new subtasks are
+    # Likewise subtasks: a held "Parent task" and held new subtasks are
     # dropped; held ticks are plain status changes and stay.
     socket =
       if fx.subtasks,
@@ -3090,7 +3104,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # ── Tasks under tasks ──────────────────────────────────────────────
 
-  # The "Sits under" choices (every task of the project but this one and
+  # The "Parent task" choices (every task of the project but this one and
   # what is under it, indented by depth), the current choice, and — when
   # editing — the task's own subtasks.
   defp assign_outline(socket, params) do
@@ -3190,7 +3204,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     _ -> :ok
   end
 
-  # The "Sits under" select changed on a task being edited: held until
+  # The "Parent task" select changed on a task being edited: held until
   # Save (the boss, 2026-11-18 — the task moved in the list behind the
   # popup before Save was pressed), then moved with its branch
   # (`apply_held/1`). Back to where it sits now, nothing is held.
@@ -3354,7 +3368,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp save_new_subproject(socket, attrs) do
-    case Projects.create_subproject(socket.assigns.project.uuid, attrs) do
+    case Projects.create_subproject(socket.assigns.project.uuid, attrs,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, %{child_project: child, assignment: link}} ->
         Activity.log("projects.subproject_created",
           actor_uuid: Activity.actor_uuid(socket),
@@ -5212,7 +5228,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 <% pending = for u <- @pending_dep_uuids, a = Map.get(by_uuid, u), a, do: {u, a} %>
                 <ul :if={pending != []} class="flex flex-col gap-1">
                   <li :for={{dep_uuid, a} <- pending} class="flex items-center gap-2 text-sm">
-                    <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+                    <.assignment_status_badge status={a.status} class="shrink-0" />
                     <span class="truncate flex-1">{Assignment.label(a, sp_lang)}</span>
                     <button
                       type="button"
@@ -5552,6 +5568,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               label={gettext("Deadline")}
               default_hour={17}
             />
+            <.zone_note id={"assignment-zone-#{@dom}"} zone={assigns[:viewer_zone]} />
             <div class="flex flex-wrap items-center gap-1.5 text-xs">
               <span class="text-base-content/60">{gettext("By when it has to be done.")}</span>
               <button type="button" phx-click="deadline_preset" phx-value-preset="hour" class="btn btn-xs btn-ghost border-base-300 font-normal">
@@ -5681,8 +5698,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               id="assignment-parent-task"
               name="parent_task"
               value={@parent_task || ""}
-              label={gettext("Sits under")}
-              options={[{gettext("Nothing — a top-level task"), ""} | @parent_options]}
+              label={gettext("Parent task")}
+              options={[{gettext("None — top-level task"), ""} | @parent_options]}
             />
             <p
               :if={@live_action == :edit and @held_parent != :keep}
@@ -5766,17 +5783,31 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </ul>
               <%!-- Re-keyed after each add: a fresh, empty input that takes
                    the cursor back for the next line. --%>
-              <input
-                type="text"
-                name="title"
-                form={"assignment-subtask-form-#{@dom}"}
-                id={"assignment-subtask-new-#{assigns[:subtask_seq] || 0}"}
-                phx-mounted={(assigns[:subtask_seq] || 0) > 0 && JS.focus()}
-                placeholder={gettext("Add a subtask and press Enter")}
-                maxlength="500"
-                autocomplete="off"
-                class="input input-sm input-bordered w-full"
-              />
+              <%!-- Enter adds it, and so does the button beside it (Max,
+                   2026-11-25: Enter alone was the only way, and nothing on
+                   the screen said so). --%>
+              <div class="join w-full">
+                <input
+                  type="text"
+                  name="title"
+                  form={"assignment-subtask-form-#{@dom}"}
+                  id={"assignment-subtask-new-#{assigns[:subtask_seq] || 0}"}
+                  phx-mounted={(assigns[:subtask_seq] || 0) > 0 && JS.focus()}
+                  placeholder={gettext("New subtask")}
+                  aria-label={gettext("New subtask")}
+                  maxlength="500"
+                  autocomplete="off"
+                  class="input input-sm input-bordered join-item w-full"
+                />
+                <button
+                  type="submit"
+                  form={"assignment-subtask-form-#{@dom}"}
+                  id={"assignment-subtask-add-#{@dom}"}
+                  class="btn btn-sm join-item gap-1"
+                >
+                  <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add")}
+                </button>
+              </div>
             </fieldset>
 
             <%!-- Repeating (the boss, via Max, 2026-10-31: low priority, and
@@ -5831,7 +5862,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <% pending = for u <- @pending_dep_uuids, a = Map.get(by_uuid, u), a, do: {u, a} %>
               <ul :if={pending != []} class="flex flex-col gap-1">
                 <li :for={{dep_uuid, a} <- pending} class="flex items-center gap-2 text-sm">
-                  <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+                  <.assignment_status_badge status={a.status} class="shrink-0" />
                   <span class="truncate flex-1">{Assignment.label(a, lang)}</span>
                   <button
                     type="button"
@@ -5865,7 +5896,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <p class="text-xs text-base-content/60">{gettext("Tasks that wait for this one to finish.")}</p>
             <ul :if={@unlocks != []} class="flex flex-col gap-1">
               <li :for={u <- @unlocks} class="flex items-center gap-2 text-sm">
-                <.assignment_status_badge status={u.status} size="xs" class="shrink-0" />
+                <.assignment_status_badge status={u.status} class="shrink-0" />
                 <span class="truncate">{Assignment.label(u, lang)}</span>
               </li>
             </ul>

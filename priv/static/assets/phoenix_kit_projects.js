@@ -36,6 +36,12 @@
  *
  * PkpCalendarWorkday: a calendar's Week and Day grids open at the start of
  * the work day instead of midnight.
+ *
+ * PkpZone: tells a form the browser's time zone (an IANA name), so a viewer
+ * whose profile names none types and reads times in their own zone.
+ *
+ * PkpKeepStack: a popup host's open frames survive a dropped connection —
+ * handed back to the server on reconnect, with what was typed in them.
  */
 (function () {
   "use strict";
@@ -141,6 +147,8 @@
       this.root.setAttribute("role", "textbox");
       this.root.setAttribute("aria-multiline", "true");
       this.root.setAttribute("aria-label", this.el.dataset.label || "Tasks");
+      // Announced to screen readers: open a line, tick it.
+      this.root.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter Control+Shift+Enter Meta+Shift+Enter");
       this.root.spellcheck = true;
       if (this.canEdit) this.root.contentEditable = "true";
       else this.root.dataset.readonly = "1";
@@ -684,6 +692,13 @@
       if (mod && !e.altKey && (e.key === "y" || e.key === "Y")) {
         e.preventDefault();
         this.undo(true);
+        return;
+      }
+      // Ctrl/⌘ + Shift + Enter ticks the line (the box in the gutter is
+      // otherwise a mouse target only); Ctrl/⌘ + Enter opens it.
+      if (mod && e.shiftKey && e.key === "Enter") {
+        e.preventDefault();
+        if (c.collapsed) this.tick(c.start.line);
         return;
       }
       if (mod && e.key === "Enter") {
@@ -1353,7 +1368,7 @@
     },
     linked: function (id) { return !!(this.up[id] || this.down[id]); },
     card: function (id) {
-      return this.el.querySelector('[data-pkp-card="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      return this.el.querySelector('[data-pkp-card="' + (window.CSS && window.CSS.escape ? window.CSS.escape(id) : id) + '"]');
     },
     // Everything reachable from `id` one way, guarded against a cycle.
     reach: function (id, map) {
@@ -1394,7 +1409,7 @@
       var bAll = traced ? this.reach(src, this.up) : b1;
       var aAll = traced ? this.reach(src, this.down) : a1;
 
-      var scope = "#" + (window.CSS && CSS.escape ? CSS.escape(this.el.id) : this.el.id) + " ";
+      var scope = "#" + (window.CSS && window.CSS.escape ? window.CSS.escape(this.el.id) : this.el.id) + " ";
       var card = function (id) { return scope + '[data-pkp-card="' + id + '"]'; };
       var rel = function (id) { return scope + '[data-pkp-rel="' + id + '"]'; };
       var rules = [];
@@ -1588,7 +1603,7 @@
         if (!payload || !payload.uuid || !self.el.isConnected) return;
         var cls = payload.status === "ok" ? "pkp-board-ok" : payload.status === "error" ? "pkp-board-err" : null;
         if (!cls) return;
-        var card = self.el.querySelector('.sortable-item[data-id="' + CSS.escape(payload.uuid) + '"]');
+        var card = self.el.querySelector('.sortable-item[data-id="' + window.CSS.escape(payload.uuid) + '"]');
         if (!card) return;
         card.classList.remove("pkp-board-ok", "pkp-board-err");
         void card.offsetWidth;
@@ -2143,6 +2158,490 @@
     }
   };
 
+  // ---------------------------------------------------------------------
+  // Leaf's floating parts inside a task popup. Leaf (the rich editor) puts
+  // its `@`/`#` suggestion list, its image menu, its image-address box and
+  // their backdrops on <body>. A task popup is a <dialog> opened with
+  // showModal(): it sits in the browser's top layer, above everything on
+  // <body> whatever its z-index, and makes the rest of the page inert — so
+  // the list showed UNDER the popup and took no click (Max, 2026-11-24).
+  // Core's own mention menu moves into the open dialog for the same reason.
+  //
+  // Here: a Leaf part that appears on <body> while the editor being used
+  // sits in an open dialog is moved into that dialog. These parts are
+  // `position: fixed` in viewport coordinates, and the dialog is not a
+  // containing block (unlike its scaled .modal-box), so they stay where
+  // Leaf puts them. LiveView keeps a node marked `data-phx-teleported` (its
+  // own portals use it) through a patch of the dialog and sends its events
+  // to the view it names, so the moved node carries the id of the view
+  // that holds the editor. Leaf's own removals still remove it.
+  // The selection toolbar is left alone: it is positioned in document
+  // coordinates, which inside a dialog would be off by the page's scroll.
+  // ---------------------------------------------------------------------
+  // Parts made while their editor is in use. The image menu is not here:
+  // Leaf puts it on <body> when an editor MOUNTS, so the editor in use is
+  // not necessarily its own; it is adopted when its button is clicked.
+  var LEAF_FLOATING =
+    ".leaf-suggest-popup, .leaf-suggest-sr, .leaf-image-url-backdrop, " +
+    ".leaf-image-url-dialog, .leaf-grip-tooltip";
+
+  function leafHost(node) {
+    // The suggestion list names its editor; everything else follows the
+    // editor being used (focus stays in it: Leaf's menus keep it there).
+    var editorId = node.dataset && node.dataset.leafSuggestPopup;
+    var from = (editorId && document.getElementById(editorId)) || document.activeElement;
+    var dialog = from && from.closest ? from.closest("dialog[open]") : null;
+    if (!dialog) return null;
+    // The editor's own view, inside the dialog (a task popup's frame) or
+    // around it (a page's own dialog): LiveView keeps a node that names a
+    // view through a patch, and sends its events there.
+    var view = from.closest("[data-phx-session]");
+    return { dialog: dialog, viewId: view ? view.id : null };
+  }
+
+  // Leaf focuses its image-address box in the same turn it appends it to
+  // <body>; outside the open modal that focus is ignored (inert), so typing,
+  // Enter and Esc went to the description (grok, ran in Chromium). Moving a
+  // node also drops any focus inside it. After the move, a part that holds a
+  // text field gets it focused; the suggestion list holds none, so focus
+  // stays in the editor as before.
+  var LEAF_FIELD = "input:not([type=hidden]):not([disabled]), textarea:not([disabled])";
+
+  function adoptLeafNode(node, host) {
+    if (!host || node.parentNode === host.dialog) return;
+    if (host.viewId) node.setAttribute("data-phx-teleported", host.viewId);
+    host.dialog.appendChild(node);
+
+    var field = node.matches && node.matches(LEAF_FIELD) ? node : node.querySelector && node.querySelector(LEAF_FIELD);
+    if (field && typeof field.focus === "function") field.focus();
+  }
+
+  window.PhoenixKitProjectsInternals = window.PhoenixKitProjectsInternals || {};
+  window.PhoenixKitProjectsInternals.adoptLeafNode = adoptLeafNode;
+
+  function moveLeafFloats(nodes) {
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (node.nodeType !== 1 || node.parentNode !== document.body) continue;
+      if (!node.matches(LEAF_FLOATING)) continue;
+      adoptLeafNode(node, leafHost(node));
+    }
+  }
+
+  if (!window.__pkpLeafLayer && typeof MutationObserver === "function") {
+    window.__pkpLeafLayer = true;
+
+    var startLeafLayer = function () {
+      new MutationObserver(function (records) {
+        for (var i = 0; i < records.length; i++) moveLeafFloats(records[i].addedNodes);
+      }).observe(document.body, { childList: true });
+
+      // The image menu is moved to <body> when its editor MOUNTS, before
+      // anyone uses it; it is adopted when its button is clicked inside a
+      // dialog (after Leaf's own handler has shown it).
+      document.addEventListener("click", function (e) {
+        var trigger = e.target.closest && e.target.closest("[data-image-dropdown-trigger]");
+        var dialog = trigger && trigger.closest("dialog[open]");
+        if (!dialog) return;
+        var view = trigger.closest("[data-phx-session]");
+        var host = { dialog: dialog, viewId: view ? view.id : null };
+        var open = document.body.querySelectorAll(
+          ":scope > [data-image-dropdown-menu]:not(.hidden), :scope > .leaf-image-url-backdrop"
+        );
+        for (var i = 0; i < open.length; i++) adoptLeafNode(open[i], host);
+      });
+    };
+
+    if (document.body) startLeafLayer();
+    else document.addEventListener("DOMContentLoaded", startLeafLayer);
+  }
+
+  // PkpZone (Max, 2026-11-25): times in each person's own zone. Sent once
+  // per mount; the server keeps a profile's zone over it.
+  var Zone = {
+    mounted: function () {
+      var zone = null;
+      try {
+        zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      } catch (_e) {
+        zone = null;
+      }
+      if (zone) this.pushEvent("pkp_zone", { zone: zone });
+    }
+  };
+
+  // PkpKeepStack (Max, 2026-11-25: "my internet flickered and the popup
+  // closed and when I opened it again some of the fields were reset"). The
+  // host's stack lives in its process; a rejoin rebuilds it from the
+  // session alone, so a form opened from a button was gone. This element
+  // carries the open frames (what opened each, `data-frames`); on a
+  // disconnect it keeps them and the values typed in each frame's form, and
+  // on the rejoin, if the host came back with nothing open, it hands them
+  // back (`pkp_restore_stack` — the server checks each like any opening)
+  // and types the values back in once the forms are there. Hidden inputs
+  // are not replayed: they are the forms' own bookkeeping, and the rich
+  // editors' text is theirs to keep.
+  var KeepStack = {
+    mounted: function () {
+      this.read();
+    },
+    updated: function () {
+      this.read();
+    },
+    read: function () {
+      try {
+        this.frames = JSON.parse(this.el.dataset.frames || "[]");
+      } catch (_e) {
+        this.frames = [];
+      }
+    },
+    dialogs: function () {
+      var host = this.el.closest("[data-phx-session]");
+      if (!host) return [];
+      return Array.from(host.querySelectorAll("dialog[data-frame-ref]")).filter(function (dialog) {
+        return dialog.closest("[data-phx-session]") === host;
+      });
+    },
+    disconnected: function () {
+      if (!this.frames || this.frames.length === 0) {
+        this.kept = null;
+        return;
+      }
+      var dialogs = this.dialogs();
+      this.kept = {
+        frames: this.frames,
+        values: dialogs.map(function (dialog) {
+          var form = dialog.querySelector("form[phx-change]");
+          if (!form) return [];
+          return Array.prototype.slice
+            .call(form.elements)
+            .filter(function (el) {
+              return el.name && el.type !== "hidden" && el.type !== "file" && el.type !== "submit" && el.type !== "button";
+            })
+            .map(function (el) {
+              return {
+                name: el.name,
+                value: el.value,
+                checked: el.type === "checkbox" || el.type === "radio" ? el.checked : null
+              };
+            });
+        })
+      };
+    },
+    reconnected: function () {
+      var kept = this.kept;
+      this.kept = null;
+      if (!kept) return;
+      var self = this;
+      // The rejoin's own render first: the host may have reopened a task
+      // from the address, and then nothing is handed back.
+      setTimeout(function () {
+        self.read();
+        if (self.frames.length > 0) return;
+        self.pushEvent("pkp_restore_stack", { frames: kept.frames });
+        self.replay(kept, 0);
+      }, 50);
+    },
+    // Waits (up to ~10 s) for the restored frames' forms, then types the
+    // kept values back in, one input event per form so the server hears it.
+    replay: function (kept, tries) {
+      var values = kept.values;
+      var self = this;
+      var dialogs = this.dialogs();
+      var ready =
+        JSON.stringify(this.frames) === JSON.stringify(kept.frames) &&
+        dialogs.length === values.length &&
+        dialogs.every(function (d, i) {
+          return !values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]");
+        });
+      if (!ready) {
+        if (tries < 50) setTimeout(function () { self.replay(kept, tries + 1); }, 200);
+        return;
+      }
+      dialogs.forEach(function (dialog, i) {
+        var saved = values[i] || [];
+        var form = dialog.querySelector("form[phx-change]");
+        if (!form || saved.length === 0) return;
+        var last = null;
+        saved.forEach(function (field) {
+          var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
+          Array.prototype.forEach.call(els, function (el) {
+            if (el.type === "hidden") return;
+            if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
+              if (el.value === field.value) el.checked = field.checked;
+            } else if (el.type !== "checkbox" && el.type !== "radio") {
+              el.value = field.value;
+            }
+            last = el;
+          });
+        });
+        if (last) last.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+  };
+
+  // ── PkpListDrag: the card list's drag, levels included ─────────────
+  //
+  // Max and the panel (codex, zai, grok), 2026-11-25: a card could only be
+  // dragged among its own siblings, so a task could not be dragged under
+  // another one nor a subtask out to the top. Now, as in an outliner:
+  //   * a straight drag up or down keeps the level;
+  //   * moving sideways by about one indent (2rem) changes it, snapped to
+  //     whole levels: right goes deeper (at most one below the row above),
+  //     left comes out (never shallower than the row below, which would
+  //     leave that row's place in the plan behind);
+  //   * the dragged card's subtasks go with it (lifted out of the list
+  //     while it moves), the card shows the level it will land at, and the
+  //     task it will sit under is outlined;
+  //   * a sub-project's row is never a parent; into a folded task, a row
+  //     lands as its last subtask and the page unfolds it.
+  // A filtered list (rows hidden) keeps the old sibling-only reorder: the
+  // row above on screen is not necessarily the row above in the plan.
+  // The server does the move (`list_drop` → `Outline.move/3`) and redraws
+  // the list; a refused move answers `pkp-list:revert` and the cards go
+  // back where they were.
+  var LIST_STYLE_ID = "pkp-list-drag-style";
+  var LIST_CSS = [
+    ".pkp-list-lifted{display:none!important}",
+    ".pkp-list-ghost{opacity:.55}",
+    ".pkp-list-ghost .card{outline:2px dashed var(--color-primary,#4f46e5);outline-offset:-2px}",
+    ".pkp-list-parent .card{box-shadow:inset 3px 0 0 var(--color-primary,#4f46e5)}",
+    ".pkp-list-dragging .pk-drag-handle{cursor:grabbing}"
+  ].join("\n");
+
+  // Where a dropped row lands. `rows`: the list as it stands after the drop,
+  // the moved branch's other rows left out — `[{id, depth, sub, folded}]`;
+  // `idx`: the moved row's index; `startDepth`: its level before; `dx`: how
+  // far the pointer went sideways (px); `indent`: one level (px). Answers
+  // `{depth, parent, after}`: the parent's id or null (top level), and the
+  // sibling it goes after, null (first) or "last" (a folded parent).
+  function listDropTarget(rows, idx, startDepth, dx, indent, threshold) {
+    var above = idx > 0 ? rows[idx - 1] : null;
+    var next = idx + 1 < rows.length ? rows[idx + 1] : null;
+    threshold = threshold == null ? indent / 2 : threshold;
+    var raw = Math.abs(dx) < threshold ? startDepth : startDepth + Math.round(dx / indent);
+    var max = above ? above.depth + (above.sub ? 0 : 1) : 0;
+    var min = next ? Math.min(next.depth, max) : 0;
+    var depth = Math.max(min, Math.min(max, raw));
+
+    function parentAt(d) {
+      if (d <= 0) return null;
+      for (var i = idx - 1; i >= 0; i--) {
+        if (rows[i].depth === d - 1) return rows[i];
+        if (rows[i].depth < d - 1) return null;
+      }
+      return null;
+    }
+
+    var parent = parentAt(depth);
+    // Never under a sub-project's row (it holds no task rows).
+    while (depth > 0 && (!parent || parent.sub)) {
+      depth -= 1;
+      parent = parentAt(depth);
+    }
+
+    var after = null;
+    for (var j = idx - 1; j >= 0; j--) {
+      if (rows[j].depth === depth) { after = rows[j].id; break; }
+      if (rows[j].depth < depth) break;
+    }
+    if (parent && parent.folded) after = "last";
+    return { depth: depth, parent: parent ? parent.id : null, after: after };
+  }
+
+  function listRows(container, skip) {
+    return Array.prototype.filter.call(
+      container.querySelectorAll(":scope > .sortable-item[data-id]"),
+      function (el) { return !el.classList.contains("pkp-list-lifted") && el !== skip; }
+    );
+  }
+
+  function rowInfo(el) {
+    return {
+      id: el.dataset.id,
+      depth: parseInt(el.dataset.depth || "0", 10) || 0,
+      sub: el.dataset.sub === "true",
+      folded: el.dataset.folded === "true",
+      el: el
+    };
+  }
+
+  var ListDrag = {
+    mounted: function () {
+      var self = this;
+      this.gone = false;
+      if (!document.getElementById(LIST_STYLE_ID)) {
+        var style = document.createElement("style");
+        style.id = LIST_STYLE_ID;
+        style.textContent = LIST_CSS;
+        document.head.appendChild(style);
+      }
+      // A refused drop: only the moved card goes back where it was picked
+      // up (next to the row it sat before), so a row another session added
+      // meanwhile keeps its place.
+      this.handleEvent("pkp-list:revert", function (payload) {
+        var last = self.lastMove;
+        if (!payload || !last || last.id !== payload.uuid) return;
+        self.lastMove = null;
+        var item = last.item;
+        if (!item || !item.isConnected) return;
+        if (last.next && last.next.isConnected && last.next !== item) self.el.insertBefore(item, last.next);
+        else if (last.prev && last.prev.isConnected) last.prev.after(item);
+        else self.el.insertBefore(item, self.el.children[last.index] || null);
+      });
+      loadSortable().then(function () {
+        if (!self.gone) self.init();
+      }, function () {});
+    },
+
+    indentPx: function () {
+      var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      return 2 * rem;
+    },
+
+    init: function () {
+      var self = this;
+      var el = this.el;
+      var pointerX = 0;
+      var downX = 0;
+      var xOf = function (e) {
+        var t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+        return t ? t.clientX : e.clientX;
+      };
+      var track = function (e) {
+        pointerX = xOf(e);
+        if (self.dragging) self.preview();
+      };
+      // The press itself is the origin of the sideways distance: SortableJS
+      // starts a drag from inside its own move handler, so a listener added
+      // in onStart never saw where the pointer began (every first drag read
+      // as hundreds of pixels sideways — the panel, 2026-11-25).
+      this.onDown = function (e) {
+        downX = xOf(e);
+        pointerX = downX;
+      };
+      el.addEventListener("pointerdown", this.onDown, true);
+      el.addEventListener("touchstart", this.onDown, true);
+
+      this.sortable = window.Sortable.create(el, {
+        draggable: ".sortable-item",
+        handle: ".pk-drag-handle",
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackTolerance: 4,
+        delay: 180,
+        delayOnTouchOnly: true,
+        touchStartThreshold: 6,
+        animation: 150,
+        ghostClass: "pkp-list-ghost",
+        onStart: function (evt) {
+          var item = evt.item;
+          var nest = el.dataset.nest === "true";
+          var start = rowInfo(item);
+          // The branch moves together: its rows leave the list meanwhile.
+          var lifted = [];
+          if (nest) {
+            var n = item.nextElementSibling;
+            while (n && n.matches(".sortable-item") && rowInfo(n).depth > start.depth) {
+              n.classList.add("pkp-list-lifted");
+              lifted.push(n);
+              n = n.nextElementSibling;
+            }
+          }
+          // Where it stands now, to tell a real move from a drop in place,
+          // and its neighbours, to put it back on a refusal.
+          var startRows = listRows(el).map(rowInfo);
+          var startIdx = startRows.findIndex(function (r) { return r.id === start.id; });
+          self.lastMove = {
+            id: start.id, item: item,
+            // Its own subtasks stay in place while it moves: back before them.
+            prev: item.previousElementSibling, next: item.nextElementSibling,
+            index: Array.prototype.indexOf.call(el.children, item)
+          };
+          self.dragging = {
+            item: item, nest: nest, start: start, lifted: lifted,
+            startX: downX, margin: item.style.marginLeft,
+            from: startIdx >= 0 ? listDropTarget(startRows, startIdx, start.depth, 0, self.indentPx()) : null
+          };
+          el.classList.add("pkp-list-dragging");
+          document.addEventListener("pointermove", track, true);
+          document.addEventListener("touchmove", track, true);
+        },
+        onChange: function () { self.preview(); },
+        onEnd: function (evt) {
+          var d = self.dragging;
+          self.dragging = null;
+          document.removeEventListener("pointermove", track, true);
+          document.removeEventListener("touchmove", track, true);
+          el.classList.remove("pkp-list-dragging");
+          self.clearParentMark();
+          if (!d) return;
+          var id = d.start.id;
+          // Measured while the branch's subtasks are still out of the list,
+          // as the preview was (unhiding them first put the row below back
+          // and undid the level the card had shown).
+          var target = d.nest ? self.target(d) : null;
+          d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
+          d.item.style.marginLeft = d.margin;
+
+          if (!d.nest) {
+            if (evt.oldIndex === evt.newIndex) return;
+            var ids = listRows(el).map(function (n) { return n.dataset.id; });
+            self.pushEvent(el.dataset.sortableEvent || "reorder_assignments", { ordered_ids: ids, moved_id: id });
+            return;
+          }
+
+          // The row vanished under the drag (a patch replaced it): no guess.
+          if (!target) return;
+          if (d.from && d.from.parent === target.parent && d.from.after === target.after) return;
+          self.pushEvent(el.dataset.dropEvent || "list_drop", {
+            id: id, parent: target.parent, after: target.after
+          });
+        }
+      });
+
+      this.target = function (d) {
+        var rows = listRows(el).map(rowInfo);
+        var idx = rows.findIndex(function (r) { return r.id === d.start.id; });
+        if (idx < 0) return null;
+        return listDropTarget(rows, idx, d.start.depth, pointerX - d.startX, self.indentPx());
+      };
+    },
+
+    // While dragging: the card at the level it will land at, its future
+    // parent outlined.
+    preview: function () {
+      var d = this.dragging;
+      if (!d || !d.nest) return;
+      var t = this.target(d);
+      if (!t) return;
+      d.item.style.marginLeft = (t.depth * 2) + "rem";
+      this.clearParentMark();
+      if (t.parent) {
+        var p = this.el.querySelector(':scope > .sortable-item[data-id="' + window.CSS.escape(t.parent) + '"]');
+        if (p) p.classList.add("pkp-list-parent");
+      }
+    },
+
+    clearParentMark: function () {
+      Array.prototype.forEach.call(this.el.querySelectorAll(".pkp-list-parent"), function (n) {
+        n.classList.remove("pkp-list-parent");
+      });
+    },
+
+    destroyed: function () {
+      this.gone = true;
+      if (this.onDown) {
+        this.el.removeEventListener("pointerdown", this.onDown, true);
+        this.el.removeEventListener("touchstart", this.onDown, true);
+      }
+      if (this.sortable) { this.sortable.destroy(); this.sortable = null; }
+    }
+  };
+
+  window.PhoenixKitProjectsInternals = window.PhoenixKitProjectsInternals || {};
+  window.PhoenixKitProjectsInternals.listDropTarget = listDropTarget;
+
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,
     PkpPop: Pop,
@@ -2151,9 +2650,12 @@
     PkpTitle: Title,
     PkpLinks: Links,
     PkpBoard: Board,
+    PkpListDrag: ListDrag,
     PkpTabScroll: TabScroll,
     PkpDrawerUrl: DrawerUrl,
     PkpUrlMirror: UrlMirror,
-    PkpCalendarWorkday: CalendarWorkday
+    PkpCalendarWorkday: CalendarWorkday,
+    PkpZone: Zone,
+    PkpKeepStack: KeepStack
   };
 })();
