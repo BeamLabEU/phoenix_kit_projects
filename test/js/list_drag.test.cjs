@@ -19,7 +19,7 @@ function stub() {
 
 function load() {
   const document = stub();
-  const window = { document, addEventListener() {}, removeEventListener() {} };
+  const window = { document, addEventListener() {}, removeEventListener() {}, CSS: { escape: (s) => s } };
   window.window = window;
   const ctx = vm.createContext({
     window, document, console, CSS: { escape: (s) => s },
@@ -28,8 +28,11 @@ function load() {
   });
   const src = fs.readFileSync(path.join(__dirname, "../../priv/static/assets/phoenix_kit_projects.js"), "utf8");
   vm.runInContext(src, ctx);
+  loaded = window;
   return window.PhoenixKitProjectsInternals.listDropTarget;
 }
+
+let loaded = null;
 
 // The bundle runs in its own context: plain copies, so its objects compare.
 const raw = load();
@@ -92,4 +95,42 @@ test("a dragged row's own subtasks are left out: dropping it in place changes no
   // With X's subtask X1 still in the list the row below would force a level.
   const unlifted = [r("A", 0), r("X", 0), r("X1", 1), r("B", 0)];
   assert.equal(target(unlifted, 1, 0, 0, I).depth, 1);
+});
+
+
+// The preview's card: a top-level card reaches into the arrows' gutter
+// (`pkp-row-card`, -2rem) and a subtask's does not. The card keeps the class
+// of the level it will land at, or the indent was cancelled (Max,
+// 2026-11-25: "they aren't deep enough").
+function fakeClassList(initial) {
+  const set = new Set(initial);
+  return {
+    contains: (c) => set.has(c),
+    add: (c) => set.add(c),
+    remove: (c) => set.delete(c),
+    toggle: (c, on) => (on ? set.add(c) : set.delete(c)),
+    has: (c) => set.has(c)
+  };
+}
+
+function previewAt(depth, cardClasses) {
+  const hook = loaded.PhoenixKitProjectsHooks.PkpListDrag;
+  const card = { classList: fakeClassList(cardClasses) };
+  const item = { style: { marginLeft: "" } };
+  const self = {
+    el: { querySelector: () => null, querySelectorAll: () => [] },
+    dragging: { item, nest: true, card, rowCard: cardClasses.includes("pkp-row-card") },
+    target: () => ({ depth, parent: depth > 0 ? "P" : null, after: null }),
+    clearParentMark: hook.clearParentMark
+  };
+  hook.preview.call(self);
+  return { margin: item.style.marginLeft, rowCard: card.classList.has("pkp-row-card") };
+}
+
+test("a top-level card previewed one level in drops its gutter reach", () => {
+  assert.deepEqual(previewAt(1, ["card", "pkp-row-card"]), { margin: "2rem", rowCard: false });
+});
+
+test("a subtask previewed at the top level takes the gutter reach", () => {
+  assert.deepEqual(previewAt(0, ["card"]), { margin: "0rem", rowCard: true });
 });

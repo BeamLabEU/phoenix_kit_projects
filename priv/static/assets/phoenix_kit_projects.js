@@ -2457,6 +2457,12 @@
     };
   }
 
+  // The card of a list row (the element the server gives `pkp-row-card` at
+  // the top level).
+  function rowCard(item) {
+    return item && item.querySelector(":scope > .card, :scope > [data-pkp-card]");
+  }
+
   var ListDrag = {
     mounted: function () {
       var self = this;
@@ -2552,6 +2558,11 @@
           self.dragging = {
             item: item, nest: nest, start: start, lifted: lifted,
             startX: downX, margin: item.style.marginLeft,
+            // A top-level card reaches into the arrows' gutter
+            // (`pkp-row-card`, -2rem) and a subtask's does not: the
+            // preview gives the card the class its landing level will
+            // have, or the indent was cancelled ("not deep enough", Max).
+            card: rowCard(item), rowCard: !!(rowCard(item) && rowCard(item).classList.contains("pkp-row-card")),
             from: startIdx >= 0 ? listDropTarget(startRows, startIdx, start.depth, 0, self.indentPx()) : null
           };
           el.classList.add("pkp-list-dragging");
@@ -2574,6 +2585,7 @@
           var target = d.nest ? self.target(d) : null;
           d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
           d.item.style.marginLeft = d.margin;
+          if (d.card) d.card.classList.toggle("pkp-row-card", d.rowCard);
 
           if (!d.nest) {
             if (evt.oldIndex === evt.newIndex) return;
@@ -2607,6 +2619,7 @@
       var t = this.target(d);
       if (!t) return;
       d.item.style.marginLeft = (t.depth * 2) + "rem";
+      if (d.card) d.card.classList.toggle("pkp-row-card", t.depth === 0);
       this.clearParentMark();
       if (t.parent) {
         var p = this.el.querySelector(':scope > .sortable-item[data-id="' + window.CSS.escape(t.parent) + '"]');
