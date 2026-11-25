@@ -3360,7 +3360,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp save_new_subproject(socket, attrs) do
-    case Projects.create_subproject(socket.assigns.project.uuid, attrs) do
+    case Projects.create_subproject(socket.assigns.project.uuid, attrs,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, %{child_project: child, assignment: link}} ->
         Activity.log("projects.subproject_created",
           actor_uuid: Activity.actor_uuid(socket),

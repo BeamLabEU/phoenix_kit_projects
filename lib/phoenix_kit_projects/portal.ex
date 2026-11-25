@@ -664,15 +664,12 @@ defmodule PhoenixKitProjects.Portal do
 
   def store_attachments(_files, _project_uuid), do: {:error, :invalid}
 
-  defp discard_stored(uuids) do
-    Enum.each(uuids, fn uuid ->
-      try do
-        Storage.delete_file(uuid)
-      rescue
-        _ -> :ok
-      end
-    end)
-  end
+  # The files of a submission that failed half way. `Storage.delete_file/1`
+  # takes a struct and only removes the row, so given a uuid it raised and
+  # every stored screenshot stayed, bytes and all (codex): core's
+  # `delete_file_completely/2` removes the row and the objects no other file
+  # still uses.
+  defp discard_stored(uuids), do: Enum.each(uuids, &delete_file/1)
 
   defp project_owner_uuid(nil), do: nil
 
@@ -816,14 +813,7 @@ defmodule PhoenixKitProjects.Portal do
     from(sub in PortalSubmission, where: sub.assignment_uuid == ^assignment_uuid)
     |> RepoHelper.repo().all()
     |> Enum.flat_map(&(&1.file_uuids || []))
-    |> Enum.each(fn uuid ->
-      case Storage.get_file(uuid) do
-        %{} = file -> Storage.delete_file(file)
-        _ -> :ok
-      end
-    end)
-
-    :ok
+    |> delete_files()
   rescue
     e ->
       Logger.warning("[Portal] could not clean up attachments: #{Exception.message(e)}")
@@ -887,10 +877,8 @@ defmodule PhoenixKitProjects.Portal do
   end
 
   defp delete_file(uuid) do
-    case Storage.get_file(uuid) do
-      %{} = file -> Storage.delete_file(file)
-      _ -> :ok
-    end
+    _ = Storage.delete_file_completely(uuid)
+    :ok
   rescue
     e -> Logger.warning("[Portal] could not clean up an attachment: #{Exception.message(e)}")
   catch

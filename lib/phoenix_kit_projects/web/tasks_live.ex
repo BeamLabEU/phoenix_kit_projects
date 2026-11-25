@@ -490,7 +490,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     result =
       if one_off_order_refused?(socket),
         do: {:error, :forbidden},
-        else: Projects.reorder_tasks(ordered_ids, actor_uuid: actor_uuid)
+        else:
+          Projects.reorder_tasks(ordered_ids,
+            actor_uuid: actor_uuid,
+            ad_hoc: lens_filter(socket.assigns.lens)
+          )
 
     case result do
       :ok ->
@@ -556,7 +560,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
          |> put_flash(:info, gettext("Task deleted."))
          |> load_tasks()}
 
-      {:error, _} ->
+      {:error, reason} ->
         Activity.log_failed("projects.task_deleted",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
@@ -564,7 +568,13 @@ defmodule PhoenixKitProjects.Web.TasksLive do
           metadata: %{"title" => task.title}
         )
 
-        {:noreply, put_flash(socket, :error, gettext("Could not delete task."))}
+        message =
+          if reason == :subproject_below,
+            do:
+              gettext("A sub-project sits under this task in a project. Move or delete it first."),
+            else: gettext("Could not delete task.")
+
+        {:noreply, put_flash(socket, :error, message)}
     end
   end
 
