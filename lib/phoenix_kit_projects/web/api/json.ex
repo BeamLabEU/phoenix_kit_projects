@@ -337,10 +337,13 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   @spec put_view(ApiKey.t()) :: :ok
   def put_view(%ApiKey{} = key) do
     Process.put(:pk_api_view, key)
+    # A rescope keeps what this request already read; only a NEW request
+    # (the auth plug) starts the access cache afresh.
     # what was read for the key's person (`viewer/0`, `prefetch_images/1`)
     # is read again: rights are never carried from one request to the next
     Process.delete(:pk_api_viewer)
     Process.delete(:pk_api_images)
+    Process.delete(:pk_api_subprojects)
     :ok
   end
 
@@ -669,6 +672,36 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   end
 
   @doc """
+  Reads, for a list of task rows, what showing their sub-project rows needs
+  — the key's access to each sub-project (`ApiKeys.access_map/2`) and each
+  one's progress (`Projects.caught_up_states/1`) — in a fixed number of
+  reads, so `visible_row?/1` and the row's `subproject` read nothing more
+  per row. Returns the rows.
+  """
+  @spec prime_rows([Assignment.t()]) :: [Assignment.t()]
+  def prime_rows(rows) when is_list(rows) do
+    uuids =
+      rows
+      |> Enum.map(fn
+        %Assignment{child_project_uuid: uuid} -> uuid
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    if uuids != [] do
+      with %ApiKey{} = key <- Process.get(:pk_api_view), do: ApiKeys.access_map(key, uuids)
+
+      Process.put(
+        :pk_api_subprojects,
+        Map.merge(Process.get(:pk_api_subprojects) || %{}, Projects.caught_up_states(uuids))
+      )
+    end
+
+    rows
+  end
+
+  @doc """
   Whether a row of a task list may be shown to the request's key: every
   task, and a sub-project's row only when the key reaches that sub-project
   (a grant can stop there — its name and progress are then not shown).
@@ -710,6 +743,21 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   defp subproject_state(%Assignment{child_project_uuid: nil}), do: nil
 
   defp subproject_state(%Assignment{child_project_uuid: uuid}) do
+    case (Process.get(:pk_api_subprojects) || %{})[uuid] do
+      %{project: child, caught_up: caught_up, caught_up_since: since} ->
+        %{
+          completion: Project.completion(child),
+          caught_up: caught_up,
+          caught_up_since: since,
+          completed_at: child.completed_at
+        }
+
+      _ ->
+        read_subproject_state(uuid)
+    end
+  end
+
+  defp read_subproject_state(uuid) do
     case Projects.get_project(uuid) do
       nil ->
         nil

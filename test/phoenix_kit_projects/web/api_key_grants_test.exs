@@ -346,7 +346,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       assert {:error, :no_access} = ApiKeys.access_for(key, template.uuid)
     end
 
-    test "time:read alone lists time entries, not tokens or cost; /hours sums usage only where every project allows it",
+    test "time:read alone lists time entries, not tokens or cost; /hours sums usage where it is allowed",
          %{token: token, key: key, home: home} do
       {:ok, %{child_project: child}} = Projects.create_subproject(home.uuid, %{"name" => "Kid"})
       {:ok, _} = PhoenixKitProjects.Ledger.log_time(home.uuid, 30)
@@ -364,13 +364,12 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       {:ok, _} = ApiKeys.put_grant(key, home.uuid, %{"scopes" => ["time:read", "usage:read"]})
       {:ok, _} = ApiKeys.put_grant(key, child.uuid, %{"scopes" => ["time:read"]})
 
-      totals =
-        api(build_conn(), token)
-        |> get("#{@base}/hours")
-        |> json_response(200)
-        |> Map.get("totals")
+      body = api(build_conn(), token) |> get("#{@base}/hours") |> json_response(200)
+      totals = body["totals"]
 
-      refute Map.has_key?(totals, "tokens")
+      # The home's usage only: the child allows time, not usage.
+      assert totals["tokens"] == 1000 and totals["cost_cents"] == 5
+      assert body["usage_projects"] == [home.uuid]
 
       :ok = ApiKeys.delete_grant(key, child.uuid)
 

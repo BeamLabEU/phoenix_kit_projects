@@ -3831,6 +3831,42 @@ defmodule PhoenixKitProjects.Projects do
     do_subtree([project_uuid], [], @max_parent_depth)
   end
 
+  @doc """
+  The parent of each of `project_uuids` and of every project above them:
+  `%{project_uuid => parent_uuid | nil}`, one read per level (bounded like
+  `parent_chain/1`), so a set of sub-projects costs the depth of the tree in
+  reads, never one walk per project.
+  """
+  @spec parent_map([uuid()]) :: %{uuid() => uuid() | nil}
+  def parent_map(project_uuids) when is_list(project_uuids),
+    do:
+      do_parent_map(
+        project_uuids |> Enum.filter(&is_binary/1) |> Enum.uniq(),
+        %{},
+        @max_parent_depth
+      )
+
+  defp do_parent_map([], acc, _hops), do: acc
+  defp do_parent_map(level, acc, 0), do: Enum.reduce(level, acc, &Map.put_new(&2, &1, nil))
+
+  defp do_parent_map(level, acc, hops) do
+    parents =
+      repo().all(
+        from(a in Assignment,
+          where: a.child_project_uuid in ^level,
+          select: {a.child_project_uuid, a.project_uuid}
+        )
+      )
+      |> Map.new()
+
+    acc = Enum.reduce(level, acc, &Map.put(&2, &1, parents[&1]))
+
+    next =
+      parents |> Map.values() |> Enum.uniq() |> Enum.reject(&Map.has_key?(acc, &1))
+
+    do_parent_map(next, acc, hops - 1)
+  end
+
   @doc "Several projects and everything nested under each — one read per level."
   @spec subtrees_uuids([uuid()]) :: [uuid()]
   def subtrees_uuids([]), do: []
@@ -5146,7 +5182,45 @@ defmodule PhoenixKitProjects.Projects do
   @doc "When an ongoing project caught up: the latest completion among its tasks, nil when not caught up."
   @spec caught_up_since(Project.t()) :: DateTime.t() | nil
   def caught_up_since(%Project{} = project) do
-    if caught_up?(project) do
+    caught_up_since(project, caught_up?(project))
+  end
+
+  @doc """
+  `caught_up?/1` and `caught_up_since/1` for many projects in a fixed number
+  of reads (the batched summaries and one grouped read of the last
+  completion): `%{project_uuid => %{project, caught_up, caught_up_since}}`.
+  A list of sub-project rows asks this, never one summary per row.
+  """
+  @spec caught_up_states([uuid()]) :: %{uuid() => map()}
+  def caught_up_states([]), do: %{}
+
+  def caught_up_states(project_uuids) when is_list(project_uuids) do
+    projects = repo().all(from(p in Project, where: p.uuid in ^Enum.uniq(project_uuids)))
+    summaries = project_summaries(projects)
+
+    last_done =
+      from(a in Assignment,
+        where: a.project_uuid in ^Enum.map(projects, & &1.uuid) and a.review_status == "accepted",
+        group_by: a.project_uuid,
+        select: {a.project_uuid, max(a.completed_at)}
+      )
+      |> repo().all()
+      |> Map.new()
+
+    projects
+    |> Enum.zip(summaries)
+    |> Map.new(fn {p, summary} ->
+      caught_up = caught_up?(p, summary)
+
+      {p.uuid,
+       %{project: p, caught_up: caught_up, caught_up_since: if(caught_up, do: last_done[p.uuid])}}
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  defp caught_up_since(%Project{} = project, caught_up) do
+    if caught_up do
       repo().one(
         from(a in Assignment,
           where: a.project_uuid == ^project.uuid and a.review_status == "accepted",

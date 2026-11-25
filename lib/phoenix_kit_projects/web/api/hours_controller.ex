@@ -25,25 +25,36 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
       %{pk_project: project, pk_api_key: key} = conn.assigns
 
       # Each nested project only where this key may read time there: a
-      # grant can stop at a sub-project, or narrow it (V24).
-      uuids =
-        project.uuid
-        |> Hours.project_uuids(opts.include_subprojects)
-        |> Enum.filter(&(&1 == project.uuid or ApiKeys.allows?(key, &1, "time:read")))
+      # grant can stop at a sub-project, or narrow it (V24). One batched
+      # read of the key's access for the whole tree, not a walk per project.
+      tree = Hours.project_uuids(project.uuid, opts.include_subprojects)
+      access = ApiKeys.access_map(key, tree)
 
-      # Tokens and cost are the usage area's — in EVERY project summed.
-      usage? = Enum.all?(uuids, &ApiKeys.allows?(key, &1, "usage:read"))
+      may? = fn uuid, scope ->
+        case access[uuid] do
+          {:ok, %{scopes: scopes}} -> scope in scopes
+          _ -> false
+        end
+      end
 
-      filters =
+      uuids = Enum.filter(tree, &(&1 == project.uuid or may?.(&1, "time:read")))
+
+      # Tokens and cost are the usage area's: summed over the projects this
+      # key may read usage in, which `usage_projects` names. A sub-project
+      # without it used to hide them for the whole answer.
+      usage_uuids = Enum.filter(uuids, &may?.(&1, "usage:read"))
+
+      filters = fn project_uuids ->
         Hours.filters(
-          project_uuids: uuids,
+          project_uuids: project_uuids,
           from: opts.from,
           until: opts.until,
           workers: opts.workers,
           billable: opts.billable
         )
+      end
 
-      summary = Hours.summary(filters)
+      summary = Hours.summary(filters.(uuids))
 
       json(conn, %{
         project_uuid: project.uuid,
@@ -51,8 +62,10 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
         period: %{from: opts.from, to: opts.until},
         totals:
           summary.totals
-          |> Map.drop(if usage?, do: [], else: [:tokens, :cost_cents])
+          |> Map.drop([:tokens, :cost_cents])
+          |> Map.merge(usage_totals(summary, uuids, usage_uuids, filters))
           |> Map.new(fn {k, v} -> {k, Json.number(v)} end),
+        usage_projects: usage_uuids,
         group_by: opts.group_by,
         groups: groups(summary, opts.group_by)
       })
@@ -61,6 +74,22 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
       {:error, {status, body}} -> conn |> put_status(status) |> json(body)
     end
   end
+
+  # Usage of every project summed: the same summary. Of some: a second one
+  # over those alone. Of none: no usage figures.
+  defp usage_totals(_summary, _uuids, [], _filters), do: %{}
+
+  defp usage_totals(summary, uuids, usage_uuids, _filters)
+       when length(uuids) == length(usage_uuids),
+       do: Map.take(summary.totals, [:tokens, :cost_cents])
+
+  defp usage_totals(_summary, _uuids, usage_uuids, filters),
+    do:
+      usage_uuids
+      |> filters.()
+      |> Hours.summary()
+      |> Map.fetch!(:totals)
+      |> Map.take([:tokens, :cost_cents])
 
   defp groups(summary, "person") do
     Enum.map(summary.by_worker, fn row ->

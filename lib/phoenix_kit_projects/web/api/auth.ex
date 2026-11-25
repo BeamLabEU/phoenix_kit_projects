@@ -113,6 +113,8 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   end
 
   defp admit(conn, key) do
+    PhoenixKitProjects.ApiKeys.reset_access_cache()
+
     with %{} = project <- home_project(key) || :no_project,
          {:ok, key, refused} <- home_view(key, project) do
       key = ApiKeys.touch_last_used(key)

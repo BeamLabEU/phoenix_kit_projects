@@ -72,6 +72,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
       tasks =
         tasks
+        |> Json.prime_rows()
         |> Enum.filter(&Json.visible_row?/1)
         |> filter_under(under, outline)
         |> filter_status(params["status"])
