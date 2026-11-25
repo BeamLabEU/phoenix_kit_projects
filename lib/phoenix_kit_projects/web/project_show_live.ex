@@ -7294,7 +7294,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           >
             <% ol_folded = assigns[:outline_folded] || MapSet.new() %>
             <% ol_depths = if @list_manual?, do: Outline.depths(@visible_assignments), else: %{} %>
-            <% ol_nest_in = OutlineList.nest_in_set(@assignments) %>
+            <%!-- Only while the whole list shows, as the drag's level change
+                 (`data-nest`): under a lens the row above on screen is not the
+                 row above in the plan, and the item nested under a hidden one. --%>
+            <% ol_nest_in =
+              if assigns[:list_whole?] != false and
+                   length(@visible_assignments) == length(@assignments),
+                 do: OutlineList.nest_in_set(@assignments),
+                 else: MapSet.new() %>
             <%= for a <- OutlineList.unfolded(@visible_assignments, ol_folded) do %>
               <%!-- The row a link named (`focus_task/2`) takes focus as the
                    page mounts, which is what scrolls it into view: the

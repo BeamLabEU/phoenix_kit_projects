@@ -534,6 +534,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   defp handle_outline("outline_nest", %{"id" => uuid, "dir" => dir}, socket, reload) do
     with true <- socket.assigns.outline_can.edit,
          true <- socket.assigns.outline_can.nest or dir == "out",
+         true <- dir == "out" or whole_list?(socket),
          %Assignment{} = a <- own(socket, uuid) do
       rows = socket.assigns.assignments
       siblings = Enum.filter(rows, &(&1.parent_uuid == a.parent_uuid))
@@ -558,7 +559,12 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       case result do
         {:ok, moved} ->
           audit(socket, "projects.assignment_moved", a, %{"parent" => moved.parent_uuid})
-          {:noreply, socket |> assign(outline_focus: a.uuid) |> reload.()}
+
+          {:noreply,
+           socket
+           |> assign(outline_focus: a.uuid)
+           |> unfold_to(moved.parent_uuid)
+           |> reload.()}
 
         {:error, _} ->
           audit_failed(socket, "projects.assignment_moved", a.uuid)
@@ -1268,5 +1274,30 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       tick: fx[:tasks] == true and Authz.can?(scope, project, :update_status),
       nest: fx[:subtasks] != false
     }
+  end
+
+  # The new parent and everything above it unfold, as the drag's drop does:
+  # a row nested into a folded branch otherwise vanished from the list.
+  defp unfold_to(socket, nil), do: socket
+
+  defp unfold_to(socket, parent) do
+    shown = [
+      parent
+      | (socket.assigns[:assignments] || []) |> Outline.ancestors(parent) |> Enum.map(& &1.uuid)
+    ]
+
+    folded = socket.assigns[:outline_folded] || MapSet.new()
+    assign(socket, :outline_folded, Enum.reduce(shown, folded, &MapSet.delete(&2, &1)))
+  end
+
+  # The whole plan is on screen (no lens, filter or search): only then is
+  # "the task above" on screen the task above in the plan. A page that does
+  # not track it (no `visible_assignments`) is the whole list.
+  defp whole_list?(socket) do
+    assigns = socket.assigns
+
+    assigns[:list_whole?] != false and
+      (is_nil(assigns[:visible_assignments]) or
+         length(assigns[:visible_assignments]) == length(assigns[:assignments] || []))
   end
 end
