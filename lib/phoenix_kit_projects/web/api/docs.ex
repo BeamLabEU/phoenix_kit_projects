@@ -764,7 +764,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks/{id}/time",
         summary:
-          "Record minutes you spent on a task. Whole minutes, never billable, recorded as AI time (apart from people's time). Append-only: an entry cannot be edited or deleted, so send an Idempotency-Key and retry with the same one.",
+          "Record minutes you spent on a task. Whole minutes, never billable, recorded as AI time (apart from people's time). Send an Idempotency-Key and retry with the same one: a second POST is a second entry. A wrong entry is corrected with PATCH /entries/{id} or removed with DELETE /entries/{id} (your own, under the project's agent_policy.amend_own_ledger) - never by posting another to even it out.",
         auth: true,
         scope: "time:write",
         action: "log_time",
@@ -1254,7 +1254,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/events",
         summary:
-          "The project's own calendar events - milestones, reviews, internal dates - in time order. A meeting planned with the client is NOT here: it is an interaction with status planned (GET /ext/interactions?status=planned). Needs the events extension on the project.",
+          "The project's own calendar events - milestones, reviews, internal dates - in time order, at most 200 (truncated: true when there are more: narrow from/until). A meeting planned with the client is NOT here: it is an interaction with status planned (GET /ext/interactions?status=planned). Needs the events extension on the project.",
         auth: true,
         scope: "events:read",
         action: "view",
@@ -1266,14 +1266,16 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             in: :query,
             type: "string",
             required: false,
-            doc: "ISO 8601; events starting at or after"
+            doc:
+              "a day (2026-11-01, its start in UTC) or an ISO 8601 datetime (no offset = UTC); events starting at or after. Anything else is a 422"
           },
           %{
             name: "until",
             in: :query,
             type: "string",
             required: false,
-            doc: "ISO 8601; events starting before"
+            doc:
+              "a day (2026-11-30, its start in UTC) or an ISO 8601 datetime (no offset = UTC); events starting strictly before. Anything else is a 422"
           },
           %{
             name: "project",
@@ -1439,6 +1441,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
      "The key has used its calls for the current window. Wait the `Retry-After` seconds, then retry the same request (same Idempotency-Key). Nothing was done."},
     {500, "provider_failed",
      "An extension's record (`/ext/…`) could not be read or written by its module. Retry later; tell your operator if it persists."},
+    {503, "idempotency_unavailable",
+     "The write could not be protected against running twice just now, so it was NOT run. Retry in a moment with the SAME Idempotency-Key."},
     {503, "module_disabled",
      "The Projects module is switched off on this site. Every call answers this until it is switched on again; retry later."},
     {500, "(any)",
