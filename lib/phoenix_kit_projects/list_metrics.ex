@@ -290,7 +290,7 @@ defmodule PhoenixKitProjects.ListMetrics do
         open =
           user_uuid
           |> PhoenixKitProjects.Members.accessible_project_uuids()
-          |> PhoenixKitProjects.Projects.subtrees_uuids()
+          |> PhoenixKitProjects.Projects.viewable_subtrees_uuids()
           |> MapSet.new()
 
         for p <- parents,

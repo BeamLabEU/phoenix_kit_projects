@@ -1005,7 +1005,7 @@ defmodule PhoenixKitProjects.Projects do
     uuids =
       user_uuid
       |> PhoenixKitProjects.Members.accessible_project_uuids()
-      |> subtrees_uuids()
+      |> viewable_subtrees_uuids()
 
     from(p in query, where: p.uuid in ^uuids)
   end
@@ -3888,6 +3888,48 @@ defmodule PhoenixKitProjects.Projects do
       |> Enum.reject(&(&1 in acc or &1 in level))
 
     do_subtree(children, Enum.reverse(level) ++ acc, hops - 1)
+  end
+
+  @doc """
+  What a viewer of `project_uuids` may read through them: those projects and
+  every sub-project nested under them, never a template and never anything
+  under one — the same rule as `Authz`'s inherited `:view`, which stops at a
+  template ancestor. Every list, count and mention check that asks "what
+  can this person open" goes through here, so none of them can offer a
+  project whose page refuses the viewer (zai, 2026-11-25). One read per
+  level.
+  """
+  @spec viewable_subtrees_uuids([uuid()]) :: [uuid()]
+  def viewable_subtrees_uuids([]), do: []
+
+  def viewable_subtrees_uuids(project_uuids) when is_list(project_uuids) do
+    roots =
+      repo().all(
+        from(p in Project,
+          where: p.uuid in ^Enum.uniq(project_uuids) and p.is_template == false,
+          select: p.uuid
+        )
+      )
+
+    do_viewable_subtree(roots, [], @max_parent_depth)
+  end
+
+  defp do_viewable_subtree([], acc, _hops), do: Enum.reverse(acc)
+  defp do_viewable_subtree(level, acc, 0), do: Enum.reverse(Enum.reverse(level) ++ acc)
+
+  defp do_viewable_subtree(level, acc, hops) do
+    children =
+      repo().all(
+        from(a in Assignment,
+          join: p in Project,
+          on: p.uuid == a.child_project_uuid,
+          where: a.project_uuid in ^level and p.is_template == false,
+          select: p.uuid
+        )
+      )
+      |> Enum.reject(&(&1 in acc or &1 in level))
+
+    do_viewable_subtree(children, Enum.reverse(level) ++ acc, hops - 1)
   end
 
   @doc "The sub-projects embedded directly in a project, in plan order."

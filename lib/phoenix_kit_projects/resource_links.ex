@@ -325,18 +325,16 @@ defmodule PhoenixKitProjects.ResourceLinks do
           |> repo().all()
           |> Map.new()
 
-        # A SUB-project is a project, but `list_projects_for/2` excludes
-        # sub-projects from its listing, so one would resolve as "no
-        # access" for someone who can plainly see it on its parent's page.
-        # Its visibility is its parent's.
-        parents = parent_projects(uuids, allowed)
-
+        # `allowed` is already everything the viewer may open — their
+        # projects and what is nested under them, never a template nor
+        # anything under one (`Projects.viewable_subtrees_uuids/1`, the
+        # pages' rule) — so a project or a task's project is visible exactly
+        # when it is in it. The old climb to a parent let a record under a
+        # template through, which the page refuses (zai, 2026-11-25).
         Enum.filter(uuids, fn uuid ->
-          cond do
-            project_uuid = Map.get(task_projects, uuid) -> project_visible?(project_uuid, allowed)
-            MapSet.member?(allowed, uuid) -> true
-            parent = Map.get(parents, uuid) -> project_visible?(parent, allowed)
-            true -> false
+          case Map.get(task_projects, uuid) do
+            nil -> MapSet.member?(allowed, uuid)
+            project_uuid -> MapSet.member?(allowed, project_uuid)
           end
         end)
     end
@@ -344,31 +342,6 @@ defmodule PhoenixKitProjects.ResourceLinks do
     e ->
       Logger.warning("[Projects.ResourceLinks] visibility failed: #{Exception.message(e)}")
       []
-  end
-
-  # A project is visible when it, or any project above it, is accessible:
-  # a grandchild's visibility is its root's (the panel's sweep found the
-  # one-hop version losing it).
-  defp project_visible?(project_uuid, allowed) do
-    MapSet.member?(allowed, project_uuid) or
-      Enum.any?(Projects.parent_chain(project_uuid), &MapSet.member?(allowed, &1.uuid))
-  end
-
-  # For each uuid that is a sub-project, the project it hangs under. Only
-  # consulted for uuids that aren't directly accessible, so the common case
-  # costs nothing.
-  defp parent_projects(uuids, allowed) do
-    candidates = Enum.reject(uuids, &MapSet.member?(allowed, &1))
-
-    if candidates == [] do
-      %{}
-    else
-      Assignment
-      |> where([a], a.child_project_uuid in ^candidates)
-      |> select([a], {a.child_project_uuid, a.project_uuid})
-      |> repo().all()
-      |> Map.new()
-    end
   end
 
   # `:all` for a site admin, `:none` for someone with no identity, else the
@@ -425,7 +398,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
       # saw their own project's chips locked.
       with user_uuid when is_binary(user_uuid) <- Authz.subject_user_uuid_of(scope),
            [_ | _] = uuids <-
-             user_uuid |> Members.accessible_project_uuids() |> Projects.subtrees_uuids() do
+             user_uuid |> Members.accessible_project_uuids() |> Projects.viewable_subtrees_uuids() do
         uuids
       else
         _ -> :none

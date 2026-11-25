@@ -14,8 +14,11 @@ defmodule PhoenixKitProjects.Web.OpenItems1125Test do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import Ecto.Query, only: [from: 2]
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Ledger, Members, Projects, QueryCounter, ResourceLinks}
+  alias PhoenixKitProjects.Test.Repo
 
   @base "/api/projects/v1"
 
@@ -208,6 +211,29 @@ defmodule PhoenixKitProjects.Web.OpenItems1125Test do
              ) == []
 
       assert ResourceLinks.search_resources("Inner", scope: scope) == []
+    end
+
+    # zai, 2026-11-25: the page's inherited view stops at a template
+    # ancestor; mentions (and the lists) now stop there too.
+    test "nothing at or under a template nested in the project resolves", ctx do
+      scope = member_scope(ctx.parent)
+
+      {:ok, %{child_project: deeper}} =
+        Projects.create_subproject(ctx.child.uuid, %{"name" => "Below the template"})
+
+      {1, _} =
+        Repo.update_all(
+          from(p in PhoenixKitProjects.Schemas.Project, where: p.uuid == ^ctx.child.uuid),
+          set: [is_template: true]
+        )
+
+      assert ResourceLinks.visible_resource_uuids(
+               [ctx.child.uuid, ctx.row.uuid, deeper.uuid],
+               scope: scope
+             ) == []
+
+      refute PhoenixKitProjects.Authz.can?(scope, Projects.get_project(deeper.uuid), :view)
+      assert PhoenixKitProjects.Authz.can?(scope, Projects.get_project(ctx.parent.uuid), :view)
     end
   end
 end
