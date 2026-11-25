@@ -2199,11 +2199,25 @@
     return { dialog: dialog, viewId: view ? view.id : null };
   }
 
+  // Leaf focuses its image-address box in the same turn it appends it to
+  // <body>; outside the open modal that focus is ignored (inert), so typing,
+  // Enter and Esc went to the description (grok, ran in Chromium). Moving a
+  // node also drops any focus inside it. After the move, a part that holds a
+  // text field gets it focused; the suggestion list holds none, so focus
+  // stays in the editor as before.
+  var LEAF_FIELD = "input:not([type=hidden]):not([disabled]), textarea:not([disabled])";
+
   function adoptLeafNode(node, host) {
     if (!host || node.parentNode === host.dialog) return;
     if (host.viewId) node.setAttribute("data-phx-teleported", host.viewId);
     host.dialog.appendChild(node);
+
+    var field = node.matches && node.matches(LEAF_FIELD) ? node : node.querySelector && node.querySelector(LEAF_FIELD);
+    if (field && typeof field.focus === "function") field.focus();
   }
+
+  window.PhoenixKitProjectsInternals = window.PhoenixKitProjectsInternals || {};
+  window.PhoenixKitProjectsInternals.adoptLeafNode = adoptLeafNode;
 
   function moveLeafFloats(nodes) {
     for (var i = 0; i < nodes.length; i++) {
