@@ -120,14 +120,19 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       truly out of the way once the LV content is composited.
     --%>
     <style>
-      @keyframes popup-host-frame-spinner-fade {
-        0%, 25% { opacity: 1; visibility: visible; }
-        90%     { opacity: 0; visibility: visible; }
-        100%    { opacity: 0; visibility: hidden; }
+      /* The frame's skeleton (Max, 2026-11-25: the opening popup was a
+         thin empty strip with a spinner, then jumped to its size). A
+         frame's content is its own LiveView: until that joins, its
+         container is empty, and only then is the skeleton shown, shaped
+         like the frame that is coming. It fades in after 150 ms, so a
+         fast load never flashes it. Pure CSS: no message has to arrive
+         for it to go. */
+      .pkp-frame .pkp-skel { display: none; }
+      .pkp-frame *:has(> [data-phx-session]:not(:has(*))) > .pkp-skel {
+        display: block;
+        animation: pkp-skel-in 160ms ease-out 150ms both;
       }
-      .popup-host-frame-spinner {
-        animation: popup-host-frame-spinner-fade 600ms ease-out forwards;
-      }
+      @keyframes pkp-skel-in { from { opacity: 0; } to { opacity: 1; } }
       /* Tabs never jump (the panel, 2026-10-31): a drawer holding a tab
          strip (`FormParts.form_tabs/1`) is one full-height column. Every
          box from the frame down to the strip is a flex column that fills
@@ -222,18 +227,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         phx-value-frame-ref={frame.frame_ref}
         data-frame-ref={frame.frame_ref}
       >
-        <%!--
-          Loading overlay — visible immediately when the dialog mounts,
-          fades out after ~400ms. The embedded LV's `live_render` dead
-          render happens synchronously with the parent's re-render, so
-          real content is already underneath; the spinner is purely a
-          transitional cue so the popup doesn't appear blank during
-          its fade-in. `pointer-events-none` so the overlay never blocks
-          clicks even before its opacity is 0.
-        --%>
-        <div class="popup-host-frame-spinner absolute inset-0 z-10 flex items-center justify-center bg-base-100/85 rounded-2xl pointer-events-none">
-          <span class="loading loading-spinner loading-lg text-primary" />
-        </div>
+        <.frame_skeleton kind={skeleton_kind(frame)} />
         <%!-- A way out that is always there (Max, 2026-10-14: a drawer he
              could not close — the backdrop is a no-op while a field holds
              typed text, by `close_guard={:input}`, and there was no other
@@ -241,8 +235,14 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
              first only while the form says it has unsaved changes. On the
              header's row (the boss, 2026-11-02): the box's padding is 1.5rem
              and the header's buttons are 2rem high. --%>
+        <%!-- `PkpFrameClose` centres it on the frame's header row
+             (`[data-pkp-frame-head]`), whatever that frame's header is
+             (Max, 2026-11-25: it sat a few pixels low beside a form's
+             title); the CSS position is the fallback. --%>
         <button
+          id={"popup-host-frame-#{frame.frame_ref}-close"}
           type="button"
+          phx-hook="PkpFrameClose"
           class="pkp-frame-close btn btn-ghost btn-sm btn-circle absolute right-6 top-6 z-20"
           {close_attrs(@on_close, frame)}
           aria-label={gettext("Close")}
@@ -276,5 +276,94 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
     else
       %{"phx-click" => on_close, "phx-value-frame-ref" => ref}
     end
+  end
+
+  # Which skeleton a frame shows while its LiveView joins: the shape of
+  # what is coming, so the box opens at about its size.
+  defp skeleton_kind(%{lv: PhoenixKitProjects.Web.AssignmentViewLive}), do: :view
+
+  defp skeleton_kind(%{lv: lv})
+       when lv in [
+              PhoenixKitProjects.Web.AssignmentFormLive,
+              PhoenixKitProjects.Web.ProjectFormLive,
+              PhoenixKitProjects.Web.TaskFormLive,
+              PhoenixKitProjects.Web.TemplateFormLive
+            ],
+       do: :form
+
+  defp skeleton_kind(_frame), do: :generic
+
+  attr(:kind, :atom, required: true)
+
+  defp frame_skeleton(%{kind: :view} = assigns) do
+    ~H"""
+    <div class="pkp-skel" aria-hidden="true" data-pkp-skeleton="view">
+      <div class="flex items-center gap-2 pr-10 h-7">
+        <div class="skeleton h-5 w-14 rounded"></div>
+        <div class="skeleton h-5 w-56"></div>
+      </div>
+      <div class="mt-5 grid gap-6 @2xl:grid-cols-[minmax(0,1fr)_15rem]">
+        <div class="flex flex-col gap-3">
+          <div class="skeleton h-4 w-24"></div>
+          <div class="skeleton h-10 w-full"></div>
+          <div class="flex gap-4 mt-2">
+            <div class="skeleton h-5 w-24"></div>
+            <div class="skeleton h-5 w-16"></div>
+          </div>
+          <div class="skeleton h-24 w-full"></div>
+          <div class="flex items-start gap-3">
+            <div class="skeleton h-7 w-7 rounded-full shrink-0"></div>
+            <div class="flex-1 flex flex-col gap-2">
+              <div class="skeleton h-3 w-32"></div>
+              <div class="skeleton h-3 w-3/4"></div>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-col gap-3">
+          <div class="skeleton h-4 w-full"></div>
+          <div class="skeleton h-4 w-5/6"></div>
+          <div class="skeleton h-4 w-2/3"></div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp frame_skeleton(%{kind: :form} = assigns) do
+    ~H"""
+    <div class="pkp-skel" aria-hidden="true" data-pkp-skeleton="form">
+      <div class="flex items-center gap-2 pr-10 h-7">
+        <div class="skeleton h-5 w-40"></div>
+      </div>
+      <div class="skeleton h-10 w-full mt-4 rounded-box"></div>
+      <div class="mt-5 flex flex-col gap-4">
+        <div class="skeleton h-10 w-full"></div>
+        <div class="skeleton h-28 w-full"></div>
+        <div class="flex gap-3">
+          <div class="skeleton h-10 flex-1"></div>
+          <div class="skeleton h-10 flex-1"></div>
+        </div>
+      </div>
+      <div class="mt-6 flex justify-end gap-2">
+        <div class="skeleton h-9 w-20"></div>
+        <div class="skeleton h-9 w-28"></div>
+      </div>
+    </div>
+    """
+  end
+
+  defp frame_skeleton(assigns) do
+    ~H"""
+    <div class="pkp-skel" aria-hidden="true" data-pkp-skeleton="generic">
+      <div class="flex items-center gap-2 pr-10 h-7">
+        <div class="skeleton h-5 w-48"></div>
+      </div>
+      <div class="mt-5 flex flex-col gap-3">
+        <div class="skeleton h-4 w-full"></div>
+        <div class="skeleton h-4 w-5/6"></div>
+        <div class="skeleton h-4 w-2/3"></div>
+      </div>
+    </div>
+    """
   end
 end

@@ -37,6 +37,7 @@
  * PkpCalendarWorkday: a calendar's Week and Day grids open at the start of
  * the work day instead of midnight.
  *
+ * PkpFrameClose: centres the popup's ✕ on the open frame's header row.
  * PkpZone: tells a form the browser's time zone (an IANA name), so a viewer
  * whose profile names none types and reads times in their own zone.
  *
@@ -2256,6 +2257,57 @@
     else document.addEventListener("DOMContentLoaded", startLeafLayer);
   }
 
+  // PkpFrameClose (Max, 2026-11-25: the popup's ✕ "looks too low compared
+  // to the content on the same row"). The ✕ is the popup host's, absolutely
+  // placed over a frame whose header is the frame's own (a form's title, a
+  // task's ref and name), so a fixed `top` only suits one of them. It is
+  // centred on the frame's header row (`[data-pkp-frame-head]`) instead,
+  // again whenever the frame's content or size changes; with no header row
+  // (or before the frame's LiveView has joined) the CSS position stands.
+  var FrameClose = {
+    mounted: function () {
+      var self = this;
+      this.box = this.el.closest(".modal-box") || this.el.parentElement;
+      this.queued = false;
+      this.schedule = function () {
+        if (self.queued) return;
+        self.queued = true;
+        requestAnimationFrame(function () {
+          self.queued = false;
+          self.align();
+        });
+      };
+      if (typeof MutationObserver === "function" && this.box) {
+        this.mo = new MutationObserver(this.schedule);
+        this.mo.observe(this.box, { childList: true, subtree: true });
+      }
+      if (typeof ResizeObserver === "function" && this.box) {
+        this.ro = new ResizeObserver(this.schedule);
+        this.ro.observe(this.box);
+      }
+      this.align();
+    },
+    updated: function () {
+      this.align();
+    },
+    destroyed: function () {
+      if (this.mo) this.mo.disconnect();
+      if (this.ro) this.ro.disconnect();
+    },
+    align: function () {
+      var box = this.box;
+      var head = box && box.querySelector("[data-pkp-frame-head]");
+      if (!head || head.getClientRects().length === 0) {
+        this.el.style.top = "";
+        return;
+      }
+      var b = box.getBoundingClientRect();
+      var h = head.getBoundingClientRect();
+      var top = h.top - b.top + box.scrollTop + (h.height - this.el.offsetHeight) / 2;
+      this.el.style.top = Math.max(4, Math.round(top)) + "px";
+    }
+  };
+
   // PkpZone (Max, 2026-11-25): times in each person's own zone. Sent once
   // per mount; the server keeps a profile's zone over it.
   var Zone = {
@@ -2868,6 +2920,7 @@
     PkpUrlMirror: UrlMirror,
     PkpCalendarWorkday: CalendarWorkday,
     PkpZone: Zone,
+    PkpFrameClose: FrameClose,
     PkpKeepStack: KeepStack
   };
 })();
