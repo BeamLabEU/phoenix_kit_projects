@@ -663,22 +663,31 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   # Taking access away only narrows a key, so it needs no check on the
-  # project beyond who may manage this row.
+  # project beyond who may manage this row. `take_away/3`, not a bare delete:
+  # with the row gone a parent's grant covering sub-projects would reach the
+  # project again, often with more than the row allowed.
   def handle_event("remove_grant", %{"key" => key_uuid, "project" => project_uuid}, socket) do
     with %ApiKey{revoked_at: nil} = key <- ApiKeys.get(key_uuid),
          true <- may?(socket, key, :edit) or project_uuid in socket.assigns.owned do
-      :ok = ApiKeys.delete_grant(key, project_uuid, actor_uuid: socket.assigns.me)
+      {:ok, how} = ApiKeys.take_away(key, project_uuid, actor_uuid: socket.assigns.me)
 
-      {:noreply,
-       socket
-       |> put_flash(
-         :info,
-         gettext("%{project} taken away from %{key}.",
-           project: project_label(project_uuid),
-           key: key.name
-         )
-       )
-       |> load()}
+      message =
+        case how do
+          :deleted ->
+            gettext("%{project} taken away from %{key}.",
+              project: project_label(project_uuid),
+              key: key.name
+            )
+
+          :blocked ->
+            gettext(
+              "%{project} taken away from %{key}: it now has no access there, though a project above it still has.",
+              project: project_label(project_uuid),
+              key: key.name
+            )
+        end
+
+      {:noreply, socket |> put_flash(:info, message) |> load()}
     else
       _ -> {:noreply, socket}
     end
