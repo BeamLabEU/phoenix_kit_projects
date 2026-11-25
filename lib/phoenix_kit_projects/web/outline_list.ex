@@ -1233,8 +1233,10 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     """
   end
 
+  # No scope (or no feature map yet) answers "nobody may", never a crash.
   defp rights(socket) do
-    %{project: project, fx: fx} = socket.assigns
+    project = socket.assigns.project
+    fx = socket.assigns[:fx] || %{}
     scope = socket.assigns[:phoenix_kit_current_scope]
 
     %{
