@@ -33,6 +33,15 @@ defmodule PhoenixKitProjects.Integration.TaskConversionTest do
     %{project: Projects.get_project!(project.uuid)}
   end
 
+  test "conversion rechecks the task's project and parent under the project lock", %{project: p} do
+    parent = task!(p, "Fit")
+    stale = task!(p, "Cut")
+    {:ok, _} = Outline.move(stale, parent.uuid, :last)
+    assert {:error, :subtask} = TaskConversion.to_subproject(stale)
+    {:ok, _} = TaskConversion.to_subproject(parent)
+    assert {:error, :not_found} = TaskConversion.to_subproject(stale)
+  end
+
   test "a task becomes a sub-project and its subtasks the sub-project's tasks", %{project: p} do
     before = task!(p, "Measure")
     fit = task!(p, "Fit the worktop", description: "Oak, 40 mm")

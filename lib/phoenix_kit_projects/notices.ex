@@ -764,7 +764,7 @@ defmodule PhoenixKitProjects.Notices do
 
   defp title(_action, %Project{} = p, lang), do: project_title(p, lang)
 
-  defp project_title(%Project{} = p, _lang), do: p.name
+  defp project_title(%Project{} = p, lang), do: project_name(p, lang)
   defp project_title(_p, _lang), do: nil
 
   defp action_label("projects.assignment_removed", _subject), do: gettext("Open project")

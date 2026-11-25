@@ -136,7 +136,9 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
       assign(assigns,
         viewer_label: zone_name(viewer || site),
         site_label:
-          if((viewer && viewer != site) and not same_zone?(viewer, site), do: zone_name(site))
+          if(is_binary(viewer) and viewer != site and not same_zone?(viewer, site),
+            do: zone_name(site)
+          )
       )
 
     ~H"""

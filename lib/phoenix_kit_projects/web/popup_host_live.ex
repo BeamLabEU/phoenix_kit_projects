@@ -646,8 +646,16 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # passes: an embeddable LV, a session stripped of the host's own keys,
   # the depth cap.
   def handle_event("pkp_restore_stack", %{"frames" => frames}, socket) when is_list(frames) do
-    if socket.assigns.modal_stack == [] do
-      {:noreply, Enum.reduce(frames, socket, &restore_frame/2)}
+    if socket.assigns.modal_stack == [] and length(frames) <= socket.assigns.max_stack_depth do
+      restored =
+        Enum.reduce_while(frames, socket, fn token, acc ->
+          case verify_frame(acc, token) do
+            {:ok, {lv, session}} -> {:cont, push_frame(acc, lv, session, token)}
+            :error -> {:halt, socket}
+          end
+        end)
+
+      {:noreply, restored}
     else
       {:noreply, socket}
     end
@@ -655,28 +663,20 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
-  defp restore_frame(%{"lv" => lv_str, "session" => session}, socket)
-       when is_binary(lv_str) and is_map(session) do
-    with true <- length(socket.assigns.modal_stack) < socket.assigns.max_stack_depth,
-         {:ok, lv} <- WebHelpers.decode_embeddable_lv(lv_str),
-         true <- string_keyed?(session) do
-      push_frame(socket, lv, WebHelpers.sanitize_session_overrides(session))
+  # Only reopen frames this host actually issued to this viewer.
+  defp verify_frame(socket, token) when is_binary(token) do
+    with {:ok, {owner, lv, session}} <-
+           Phoenix.Token.verify(socket, "projects popup frame", token, max_age: 86_400),
+         true <- owner == frame_owner(socket) and WebHelpers.embeddable_lv?(lv) do
+      {:ok, {lv, session}}
     else
-      _ -> socket
+      _ -> :error
     end
   end
 
-  defp restore_frame(_frame, socket), do: socket
+  defp verify_frame(_socket, _token), do: :error
 
-  defp string_keyed?(map), do: Enum.all?(map, fn {k, _} -> is_binary(k) end)
-
-  defp restore_list(stack) do
-    stack
-    |> Enum.map(&%{"lv" => Atom.to_string(&1.lv), "session" => Map.get(&1, :origin, %{})})
-    |> Jason.encode!()
-  rescue
-    _ -> "[]"
-  end
+  defp frame_owner(socket), do: {socket.assigns.host_topic, socket.assigns.host_current_user_uuid}
 
   # A frame holding unsaved edits closes only through its ✕'s confirmation
   # (`:confirmed`): Esc and the backdrop are ignored on it in the browser,
@@ -811,7 +811,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # wide frame (`@2xl:` variants); without a container they never matched.
   @child_wrapper_class "@container flex flex-col w-full px-1 pb-1 gap-3"
 
-  defp push_frame(socket, lv, child_session) do
+  defp push_frame(socket, lv, child_session, token \\ nil) do
     frame_ref = System.unique_integer([:positive, :monotonic])
 
     stamped_session =
@@ -829,7 +829,13 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       session: stamped_session,
       # What opened it, before the host's own keys were stamped: what the
       # browser hands back to restore the frame after a reconnect.
-      origin: child_session,
+      restore_token:
+        token ||
+          Phoenix.Token.sign(
+            socket,
+            "projects popup frame",
+            {frame_owner(socket), lv, child_session}
+          ),
       id: "embed-#{frame_ref}-#{lv_slug(lv)}",
       task_ref: frame_task_ref(lv, child_session)
     }
@@ -913,7 +919,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     <div
       id={"pkp-keep-stack-#{topic_suffix(@host_topic)}"}
       phx-hook="PkpKeepStack"
-      data-frames={restore_list(@modal_stack)}
+      data-frames={Jason.encode!(Enum.map(@modal_stack, & &1.restore_token))}
       hidden
     >
     </div>

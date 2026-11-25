@@ -27,10 +27,11 @@ function load() {
   });
   const src = fs.readFileSync(path.join(__dirname, "../../priv/static/assets/phoenix_kit_projects.js"), "utf8");
   vm.runInContext(src, ctx);
-  return window.PhoenixKitProjectsInternals.adoptLeafNode;
+  return window;
 }
 
-const adopt = load();
+const bundle = load();
+const adopt = bundle.PhoenixKitProjectsInternals.adoptLeafNode;
 
 function node({ field = null } = {}) {
   const attrs = {};
@@ -75,4 +76,22 @@ test("nothing happens without an open dialog, or for a part already inside it", 
   n.parentNode = d;
   adopt(n, { dialog: d, viewId: null });
   assert.equal(d.children.length, 0);
+});
+
+test("reconnect captures only forms owned by this popup host", () => {
+  const own = {
+    closest: () => host,
+    querySelector: () => ({ elements: [{ name: "title", value: "Mine" }] }),
+    // The rich-editor capture reads each kept dialog's editors.
+    querySelectorAll: () => []
+  };
+  const nested = { closest: () => nestedHost, querySelector: () => assert.fail("read a nested host's form") };
+  const nestedHost = {};
+  const host = { querySelectorAll: () => [own, nested] };
+  const hook = Object.create(bundle.PhoenixKitProjectsHooks.PkpKeepStack);
+  hook.el = { closest: () => host };
+  hook.frames = ["own-frame"];
+  hook.disconnected();
+  assert.equal(hook.kept.values.length, 1);
+  assert.equal(hook.kept.values[0][0].value, "Mine");
 });

@@ -1002,10 +1002,7 @@ defmodule PhoenixKitProjects.Projects do
     # Plus everything nested under those (Max, 2026-11-25): a sub-project is
     # read by whoever reads a project above it (`Authz`), so a list, count
     # or bucket never leaves out one its page would open. One read per level.
-    uuids =
-      user_uuid
-      |> PhoenixKitProjects.Members.accessible_project_uuids()
-      |> viewable_subtrees_uuids()
+    uuids = visible_project_uuids(user_uuid)
 
     from(p in query, where: p.uuid in ^uuids)
   end
@@ -1013,7 +1010,7 @@ defmodule PhoenixKitProjects.Projects do
   defp scope_assignments_to_viewer(query, nil), do: query
 
   defp scope_assignments_to_viewer(query, user_uuid) when is_binary(user_uuid) do
-    uuids = PhoenixKitProjects.Members.accessible_project_uuids(user_uuid)
+    uuids = visible_project_uuids(user_uuid)
     from(a in query, where: a.project_uuid in ^uuids)
   end
 
@@ -3867,13 +3864,6 @@ defmodule PhoenixKitProjects.Projects do
     do_parent_map(next, acc, hops - 1)
   end
 
-  @doc "Several projects and everything nested under each — one read per level."
-  @spec subtrees_uuids([uuid()]) :: [uuid()]
-  def subtrees_uuids([]), do: []
-
-  def subtrees_uuids(project_uuids) when is_list(project_uuids),
-    do: do_subtree(Enum.uniq(project_uuids), [], @max_parent_depth)
-
   defp do_subtree([], acc, _hops), do: Enum.reverse(acc)
   defp do_subtree(level, acc, 0), do: Enum.reverse(Enum.reverse(level) ++ acc)
 
@@ -3888,6 +3878,14 @@ defmodule PhoenixKitProjects.Projects do
       |> Enum.reject(&(&1 in acc or &1 in level))
 
     do_subtree(children, Enum.reverse(level) ++ acc, hops - 1)
+  end
+
+  @doc "Projects visible through membership or inheritance, stopping at every template."
+  @spec visible_project_uuids(uuid()) :: [uuid()]
+  def visible_project_uuids(user_uuid) when is_binary(user_uuid) do
+    user_uuid
+    |> PhoenixKitProjects.Members.accessible_project_uuids()
+    |> viewable_subtrees_uuids()
   end
 
   @doc """

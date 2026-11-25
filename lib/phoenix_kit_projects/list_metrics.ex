@@ -289,8 +289,7 @@ defmodule PhoenixKitProjects.ListMetrics do
       user_uuid = PhoenixKitProjects.Authz.subject_user_uuid_of(scope) ->
         open =
           user_uuid
-          |> PhoenixKitProjects.Members.accessible_project_uuids()
-          |> PhoenixKitProjects.Projects.viewable_subtrees_uuids()
+          |> PhoenixKitProjects.Projects.visible_project_uuids()
           |> MapSet.new()
 
         for p <- parents,

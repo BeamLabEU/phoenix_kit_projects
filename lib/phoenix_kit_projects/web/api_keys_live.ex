@@ -668,9 +668,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   # project again, often with more than the row allowed.
   def handle_event("remove_grant", %{"key" => key_uuid, "project" => project_uuid}, socket) do
     with %ApiKey{revoked_at: nil} = key <- ApiKeys.get(key_uuid),
-         true <- may?(socket, key, :edit) or project_uuid in socket.assigns.owned do
-      {:ok, how} = ApiKeys.take_away(key, project_uuid, actor_uuid: socket.assigns.me)
-
+         true <- may?(socket, key, :edit) or project_uuid in socket.assigns.owned,
+         {:ok, how} <- ApiKeys.take_away(key, project_uuid, actor_uuid: socket.assigns.me) do
       message =
         case how do
           :deleted ->
@@ -689,6 +688,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
       {:noreply, socket |> put_flash(:info, message) |> load()}
     else
+      {:error, cs} -> {:noreply, put_flash(socket, :error, error_text(cs))}
       _ -> {:noreply, socket}
     end
   end

@@ -251,42 +251,42 @@ defmodule PhoenixKitProjects.ApiKeys do
   grant there and below; otherwise it is deleted. Answers `{:ok, :deleted}`
   or `{:ok, :blocked}`. Options: `:actor_uuid`.
   """
-  @spec take_away(ApiKey.t(), binary(), keyword()) :: {:ok, :deleted | :blocked}
+  @spec take_away(ApiKey.t(), binary(), keyword()) ::
+          {:ok, :deleted | :blocked} | {:error, Ecto.Changeset.t()}
   def take_away(%ApiKey{} = key, project_uuid, opts \\ []) do
     if reached_from_above?(key, project_uuid) do
-      {n, _} =
-        from(g in ApiKeyGrant,
-          where: g.api_key_uuid == ^key.uuid and g.project_uuid == ^project_uuid
-        )
-        |> RepoHelper.repo().update_all(
-          set: [scopes: [], updated_at: DateTime.truncate(DateTime.utc_now(), :second)]
-        )
+      RepoHelper.repo().transact(fn ->
+        with {:ok, _} <- block_grant(key, project_uuid) do
+          move_home_off(key, project_uuid)
 
-      if n == 0 do
-        %ApiKeyGrant{}
-        |> ApiKeyGrant.changeset(%{
-          "api_key_uuid" => key.uuid,
-          "project_uuid" => project_uuid,
-          "scopes" => [],
-          "role" => key.role || "member"
-        })
-        |> RepoHelper.repo().insert()
-      end
+          Activity.log("projects.api_key_access_removed",
+            actor_uuid: Keyword.get(opts, :actor_uuid),
+            resource_type: "project",
+            resource_uuid: project_uuid,
+            metadata: %{"api_key" => key.uuid, "name" => key.name, "blocked" => true}
+          )
 
-      move_home_off(key, project_uuid)
-
-      Activity.log("projects.api_key_access_removed",
-        actor_uuid: Keyword.get(opts, :actor_uuid),
-        resource_type: "project",
-        resource_uuid: project_uuid,
-        metadata: %{"api_key" => key.uuid, "name" => key.name, "blocked" => true}
-      )
-
-      {:ok, :blocked}
+          {:ok, :blocked}
+        end
+      end)
     else
       :ok = delete_grant(key, project_uuid, opts)
       {:ok, :deleted}
     end
+  end
+
+  defp block_grant(key, project_uuid) do
+    %ApiKeyGrant{}
+    |> ApiKeyGrant.changeset(%{
+      "api_key_uuid" => key.uuid,
+      "project_uuid" => project_uuid,
+      "scopes" => [],
+      "role" => key.role || "member"
+    })
+    |> RepoHelper.repo().insert(
+      conflict_target: [:api_key_uuid, :project_uuid],
+      on_conflict: {:replace, [:scopes, :updated_at]}
+    )
   end
 
   # Whether, with no row of its own, the project would be reached by a grant
@@ -323,7 +323,7 @@ defmodule PhoenixKitProjects.ApiKeys do
     if key.project_uuid == project_uuid do
       next = key |> grants() |> Enum.find(&(&1.scopes != [] and &1.project_uuid != project_uuid))
 
-      from(k in ApiKey, where: k.uuid == ^key.uuid)
+      from(k in ApiKey, where: k.uuid == ^key.uuid and k.project_uuid == ^project_uuid)
       |> RepoHelper.repo().update_all(set: [project_uuid: next && next.project_uuid])
     end
 

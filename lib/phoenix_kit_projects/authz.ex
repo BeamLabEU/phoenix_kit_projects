@@ -397,6 +397,15 @@ defmodule PhoenixKitProjects.Authz do
   # its Open link led to "Project not found"). Only `:view` is inherited:
   # every other action follows the sub-project's own roles, so a parent's
   # viewer seat (which the default floors let edit) never becomes one here.
+  defp member_can?(subject, uuid, :view, record) when is_binary(uuid) do
+    case PhoenixKitProjects.Projects.get_project(uuid) do
+      %Project{} = project -> member_can?(subject, project, :view, record)
+      nil -> false
+    end
+  rescue
+    _ -> false
+  end
+
   defp member_can?(subject, project, :view, record) do
     own_can?(subject, project, :view, record) or
       (not template?(project) and inherited_view?(subject, project))

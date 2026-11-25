@@ -132,7 +132,11 @@ defmodule PhoenixKitProjects.Assignees do
   end
 
   @typedoc "Who an assignee is, as faces: up to `max` people and how many more."
-  @type faces :: %{faces: [%{name: String.t(), user: struct() | nil}], extra: non_neg_integer()}
+  @type faces :: %{
+          faces: [%{name: String.t(), user: struct() | nil}],
+          extra: non_neg_integer(),
+          user_uuids: [String.t()]
+        }
 
   @doc """
   The faces behind each assignment's assignee, for showing who has what at
@@ -170,7 +174,8 @@ defmodule PhoenixKitProjects.Assignees do
 
         people ->
           {shown, rest} = Enum.split(people, max)
-          Map.put(acc, a.uuid, %{faces: shown, extra: length(rest)})
+          user_uuids = for %{user: %{uuid: uuid}} <- people, uniq: true, do: uuid
+          Map.put(acc, a.uuid, %{faces: shown, extra: length(rest), user_uuids: user_uuids})
       end
     end)
   rescue

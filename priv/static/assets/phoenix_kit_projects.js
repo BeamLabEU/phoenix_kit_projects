@@ -2387,12 +2387,19 @@
         this.frames = [];
       }
     },
+    dialogs: function () {
+      var host = this.el.closest("[data-phx-session]");
+      if (!host) return [];
+      return Array.from(host.querySelectorAll("dialog[data-frame-ref]")).filter(function (dialog) {
+        return dialog.closest("[data-phx-session]") === host;
+      });
+    },
     disconnected: function () {
       if (!this.frames || this.frames.length === 0) {
         this.kept = null;
         return;
       }
-      var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
+      var dialogs = this.dialogs();
       this.kept = {
         frames: this.frames,
         rich: dialogs.map(keepRich),
@@ -2425,20 +2432,27 @@
         self.read();
         if (self.frames.length > 0) return;
         self.pushEvent("pkp_restore_stack", { frames: kept.frames });
-        self.replay(kept.values, 0, kept.rich || []);
+        self.replay(kept, 0);
       }, 50);
     },
     // Waits (up to ~10 s) for the restored frames, then types each frame's
     // kept values back in as soon as THAT frame is ready (its form, and its
     // rich editors if it had kept text), one input event per form so the
-    // server hears it. A frame whose editor never comes back no longer holds
-    // the others up (kimi): at the deadline its plain values still go in.
-    replay: function (values, tries, rich, done) {
+    // server hears it. Nothing goes in until the host shows exactly the
+    // frames that were kept (a different stack is not ours to fill). A frame
+    // whose editor never comes back no longer holds the others up (kimi): at
+    // the deadline its plain values still go in.
+    replay: function (kept, tries, done) {
       var self = this;
-      rich = rich || [];
+      var values = kept.values;
+      var rich = kept.rich || [];
       done = done || [];
-      var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
+      var dialogs = this.dialogs();
       var last = tries >= 50;
+      if (JSON.stringify(this.frames) !== JSON.stringify(kept.frames) || dialogs.length !== values.length) {
+        if (!last) setTimeout(function () { self.replay(kept, tries + 1, done); }, 200);
+        return;
+      }
       var pending = false;
       for (var i = 0; i < values.length; i++) {
         if (done[i]) continue;
@@ -2453,7 +2467,7 @@
         }
       }
       if (pending && !last) {
-        setTimeout(function () { self.replay(values, tries + 1, rich, done); }, 200);
+        setTimeout(function () { self.replay(kept, tries + 1, done); }, 200);
       }
     }
   };
@@ -2755,7 +2769,13 @@
   window.PhoenixKitProjectsInternals.keepRich = keepRich;
   window.PhoenixKitProjectsInternals.restoreRich = restoreRich;
   window.PhoenixKitProjectsInternals.noteServer = noteServer;
-  window.PhoenixKitProjectsInternals.keepStackReplay = function (values, rich) { KeepStack.replay(values, 50, rich); };
+  window.PhoenixKitProjectsInternals.keepStackReplay = function (values, rich) {
+    var hook = Object.create(KeepStack);
+    hook.dialogs = function () {
+      return Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
+    };
+    hook.replay({ values: values, rich: rich, frames: hook.frames }, 50);
+  };
 
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,

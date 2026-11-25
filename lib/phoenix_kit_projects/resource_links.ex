@@ -33,7 +33,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.Scope
-  alias PhoenixKitProjects.{Authz, L10n, Members, Projects, Refs}
+  alias PhoenixKitProjects.{Authz, L10n, Projects, Refs}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @base "/admin/projects"
@@ -398,7 +398,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
       # saw their own project's chips locked.
       with user_uuid when is_binary(user_uuid) <- Authz.subject_user_uuid_of(scope),
            [_ | _] = uuids <-
-             user_uuid |> Members.accessible_project_uuids() |> Projects.viewable_subtrees_uuids() do
+             Projects.visible_project_uuids(user_uuid) do
         uuids
       else
         _ -> :none

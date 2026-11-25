@@ -86,6 +86,13 @@ defmodule PhoenixKitProjects.Web.SubprojectAccessTest do
     {:ok, _} = Members.add_member(ctx.parent, ctx.user.uuid, role: "member")
     {:ok, _} = Projects.update_project(ctx.child, %{"is_template" => true})
 
+    refute Authz.can?(ctx.scope, ctx.child.uuid, :view)
     refute Authz.can?(ctx.scope, Projects.get_project(ctx.grandchild.uuid), :view)
+
+    assert Enum.map(
+             Projects.list_projects(viewer: ctx.user.uuid, include_subprojects: true),
+             & &1.uuid
+           ) ==
+             [ctx.parent.uuid]
   end
 end

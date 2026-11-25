@@ -122,62 +122,45 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
 
     defp stack(view), do: :sys.get_state(view.pid).socket.assigns.modal_stack
 
-    test "hands the open frames back; refuses what an opening would refuse", %{conn: conn} do
+    defp open_form(view, project) do
+      send(
+        view.pid,
+        {:projects, :opened,
+         %{
+           lv: PhoenixKitProjects.Web.AssignmentFormLive,
+           session: %{"live_action" => "new", "project_id" => project.uuid}
+         }}
+      )
+
+      render(view)
+    end
+
+    test "restores only frames issued for this host", %{conn: conn} do
       project = fixture_project()
       view = host(conn)
+      assert open_form(view, project) =~ ~s(phx-hook="PkpKeepStack")
+      [frame] = stack(view)
+      render_click(view, "close_top_modal", %{"frame-ref" => to_string(frame.frame_ref)})
+      assert stack(view) == []
 
-      render_hook(view, "pkp_restore_stack", %{
-        "frames" => [
-          %{"lv" => "Elixir.Kernel", "session" => %{}},
-          %{
-            "lv" => "Elixir.PhoenixKitProjects.Web.AssignmentFormLive",
-            "session" => %{
-              "live_action" => "new",
-              "project_id" => project.uuid,
-              "current_user_uuid" => Ecto.UUID.generate(),
-              "pubsub_topic" => "elsewhere"
-            }
-          }
-        ]
-      })
+      other = host(conn)
+      render_hook(other, "pkp_restore_stack", %{"frames" => [frame.restore_token]})
+      assert stack(other) == []
 
-      assert [frame] = stack(view)
-      assert frame.lv == PhoenixKitProjects.Web.AssignmentFormLive
-      # The host's own keys are the host's, never the browser's.
-      refute frame.session["pubsub_topic"] == "elsewhere"
-      refute Map.has_key?(frame.origin, "current_user_uuid")
+      render_hook(view, "pkp_restore_stack", %{"frames" => [frame.restore_token, "invalid"]})
+      assert stack(view) == []
 
-      # The list the browser keeps carries what opened it.
-      html = render(view)
-      assert html =~ ~s(phx-hook="PkpKeepStack")
-      assert html =~ "AssignmentFormLive"
+      render_hook(view, "pkp_restore_stack", %{"frames" => [frame.restore_token]})
+      assert [restored] = stack(view)
+      assert restored.session["project_id"] == project.uuid
+      assert restored.frame_ref != frame.frame_ref
 
-      # Something is open: nothing more is handed back.
-      render_hook(view, "pkp_restore_stack", %{
-        "frames" => [
-          %{
-            "lv" => "Elixir.PhoenixKitProjects.Web.AssignmentFormLive",
-            "session" => %{"live_action" => "new", "project_id" => project.uuid}
-          }
-        ]
-      })
-
-      assert [_only_one] = stack(view)
+      render_hook(view, "pkp_restore_stack", %{"frames" => [frame.restore_token]})
+      assert stack(view) == [restored]
     end
 
     test "every frame has its pinned ✕ and the offline notice", %{conn: conn} do
-      project = fixture_project()
-      view = host(conn)
-
-      html =
-        render_hook(view, "pkp_restore_stack", %{
-          "frames" => [
-            %{
-              "lv" => "Elixir.PhoenixKitProjects.Web.AssignmentFormLive",
-              "session" => %{"live_action" => "new", "project_id" => project.uuid}
-            }
-          ]
-        })
+      html = open_form(host(conn), fixture_project())
 
       assert html =~ "pkp-frame-close"
       assert html =~ "pkp-offline"

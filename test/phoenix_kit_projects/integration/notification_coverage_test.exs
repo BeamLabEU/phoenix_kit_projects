@@ -304,6 +304,13 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     on_exit(fn -> PhoenixKit.Settings.update_setting("mentions_enabled", "false") end)
     {:ok, token} = Token.to_string(:user, "user", carl.user, "Carl")
 
+    Repo.update_all(from(u in Auth.User, where: u.uuid == ^carl.user),
+      set: [custom_fields: %{"preferred_locale" => "et"}]
+    )
+
+    {:ok, _} =
+      Projects.update_project(ctx.project, %{"translations" => %{"et" => %{"name" => "Töökoda"}}})
+
     {:ok, comment} =
       PhoenixKitComments.create_comment("project", ctx.project.uuid, alice.user, %{
         content: "Please look " <> token
@@ -312,6 +319,7 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     assert [n] = notices("projects.comment_added", carl.user)
     # The project page may show no discussion at all; its Comments tab
     # always mounts the thread, so the anchor has something to land on.
+    assert n.metadata["notification_title"] == "Töökoda"
     assert n.metadata["notification_link"] =~ ~r{/comments#pk-comment-#{comment.uuid}$}
   end
 

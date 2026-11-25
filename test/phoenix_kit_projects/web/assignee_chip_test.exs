@@ -66,12 +66,14 @@ defmodule PhoenixKitProjects.Web.AssigneeChipTest do
   end
 
   test "several people carry data-people for the drawer" do
-    {u1, p1} = person!("Anna")
-    {u2, p2} = person!("Ben")
-    a = task!(fixture_project(), [{"person", p1.uuid}, {"person", p2.uuid}])
+    members = Enum.map(~w(Anna Ben Cam Dee Eli), &person!/1)
+    a = task!(fixture_project(), Enum.map(members, fn {_, p} -> {"person", p.uuid} end))
 
     html = shown(a)
-    assert html =~ ~r/data-people="[^"]*#{u1.uuid}/
-    assert html =~ ~r/data-people="[^"]*#{u2.uuid}/
+    assert html =~ "+1"
+    [_, people] = Regex.run(~r/data-people="([^"]+)"/, html)
+
+    assert Enum.sort(String.split(people, ",")) ==
+             Enum.sort(Enum.map(members, fn {u, _} -> u.uuid end))
   end
 end

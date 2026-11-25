@@ -21,8 +21,8 @@ defmodule PhoenixKitProjects.TaskConversion do
   Each runs in one transaction under the parent project's lock
   (`Outline.with_project_lock/2`). A moved task gets the next free number
   of the project it moves to (`KEY-n` is per project), and the time logged
-  on it moves with it. Connections between a moved task and one that
-  stays are kept as they are.
+  on it moves with it. Dependencies move with their endpoints. A dependency that would span
+  two projects is removed.
   """
 
   import Ecto.Query
@@ -85,7 +85,7 @@ defmodule PhoenixKitProjects.TaskConversion do
 
   defp convert_in_lock(%Assignment{} = row, opts) do
     Outline.with_project_lock(row.project_uuid, fn parent ->
-      with %Assignment{child_project_uuid: nil} = row <- fresh(row),
+      with %Assignment{child_project_uuid: nil, parent_uuid: nil} = row <- fresh(row),
            :ok <- room_below(parent) do
         rows = project_rows(parent.uuid)
         moving = Outline.descendants(rows, row.uuid)
@@ -116,6 +116,7 @@ defmodule PhoenixKitProjects.TaskConversion do
         %{assignment: link, project: child, moved: length(moving)}
       else
         {:error, reason} -> repo().rollback(reason)
+        %Assignment{child_project_uuid: nil} -> repo().rollback(:subtask)
         %Assignment{} -> repo().rollback(:not_a_task)
         nil -> repo().rollback(:not_found)
       end
@@ -390,8 +391,8 @@ defmodule PhoenixKitProjects.TaskConversion do
 
   # ── Helpers ────────────────────────────────────────────────────────
 
-  defp fresh(%Assignment{uuid: uuid}) do
-    Assignment |> preload(:task) |> repo().get(uuid)
+  defp fresh(%Assignment{uuid: uuid, project_uuid: project_uuid}) do
+    Assignment |> preload(:task) |> repo().get_by(uuid: uuid, project_uuid: project_uuid)
   end
 
   # The project's rows in list order — the depth-first walk the outline
