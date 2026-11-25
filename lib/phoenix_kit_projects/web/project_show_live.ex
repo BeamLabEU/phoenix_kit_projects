@@ -761,6 +761,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # changed — both project and assignment counts cost a single
   # query each, and the message carries an `action` (`:created |
   # :deleted`) that we don't need to discriminate on here.
+  # A comment added or removed anywhere in this project (the task popup is
+  # another LiveView: its component tells the popup, not this page): the
+  # rows' comment counts follow.
+  def handle_info({:projects, event, _payload}, socket)
+      when event in [:comment_added, :comment_deleted] do
+    {:noreply, load_comment_counts(socket)}
+  end
+
   def handle_info({:comments_updated, _payload}, socket) do
     socket = load_comment_counts(socket)
 

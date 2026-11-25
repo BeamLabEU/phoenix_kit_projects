@@ -324,7 +324,7 @@ defmodule PhoenixKitProjects.Notices do
               # otherwise be the sender's (the dialect of their page).
               "notification_text" => line(action, subject, actor, meta, lang),
               "notification_icon" => icon(action),
-              "notification_link" => link(action, subject),
+              "notification_link" => link(action, subject, meta),
               # Item 20 (2026-11-20): the email's subject and Telegram's
               # first line, and the button's label. A label, never a
               # sentence built from pieces.
@@ -750,6 +750,20 @@ defmodule PhoenixKitProjects.Notices do
   defp action_label("projects.assignment_removed", _subject), do: gettext("Open project")
   defp action_label(_action, %Assignment{}), do: gettext("Open task")
   defp action_label(_action, %Project{}), do: gettext("Open project")
+
+  # A comment's notice opens on the comment: its anchor replaces the row's
+  # (one fragment only — the thread's JumpToComment hook matches the whole
+  # hash, and `#task-X#pk-comment-Y` matched nothing).
+  defp link("projects.comment_added", subject, %{"comment" => comment})
+       when is_binary(comment) do
+    subject
+    |> link()
+    |> String.split("#", parts: 2)
+    |> hd()
+    |> Kernel.<>("#pk-comment-" <> comment)
+  end
+
+  defp link(action, subject, _meta), do: link(action, subject)
 
   defp link("projects.assignment_removed", %Assignment{} = a), do: Paths.project(a.project_uuid)
   defp link(_action, subject), do: link(subject)

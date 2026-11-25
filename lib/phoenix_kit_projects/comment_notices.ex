@@ -157,9 +157,10 @@ defmodule PhoenixKitProjects.CommentNotices do
   permanent, so this is the only place those words can be taken back.
   """
   @impl true
-  def on_comment_deleted(type, _uuid, %Comment{uuid: comment_uuid})
+  def on_comment_deleted(type, uuid, %Comment{uuid: comment_uuid})
       when type in ["assignment", "project", "project_task_notes"] do
     Notices.scrub_comment(comment_uuid)
+    announce_deleted(type, uuid)
     :ok
   rescue
     error ->
@@ -170,6 +171,27 @@ defmodule PhoenixKitProjects.CommentNotices do
   end
 
   def on_comment_deleted(_type, _uuid, _comment), do: :ok
+
+  # The pages showing a comment count (the task rows, the popup's tabs)
+  # hear of a deletion as they hear of an addition: only `:comment_added`
+  # was announced, so a count went stale until the next reload.
+  defp announce_deleted(type, uuid) when is_binary(uuid) do
+    project_uuid =
+      case {type, subject(if(type == "project", do: "project", else: "assignment"), uuid)} do
+        {"project", %{uuid: p}} -> p
+        {_, %{project_uuid: p}} -> p
+        _ -> nil
+      end
+
+    if project_uuid do
+      PhoenixKitProjects.PubSub.broadcast_to_project(project_uuid, :comment_deleted, %{
+        project_uuid: project_uuid,
+        resource_uuid: uuid
+      })
+    end
+  end
+
+  defp announce_deleted(_type, _uuid), do: :ok
 
   defp subject("assignment", uuid), do: Projects.get_assignment(uuid)
   defp subject("project", uuid), do: Projects.get_project(uuid)

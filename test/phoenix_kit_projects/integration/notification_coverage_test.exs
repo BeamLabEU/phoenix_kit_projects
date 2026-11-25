@@ -275,7 +275,10 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
 
     PhoenixKit.Mentions.notify(new, source_type: "assignment", source_uuid: a.uuid)
 
-    assert [_] = notices("projects.comment_added", carl.user)
+    assert [n] = notices("projects.comment_added", carl.user)
+    # It opens on the comment: one fragment, the comment's own anchor.
+    assert n.metadata["notification_link"] =~ ~r/#pk-comment-#{comment.uuid}$/
+    assert length(String.split(n.metadata["notification_link"], "#")) == 2
 
     assert Repo.all(
              from(e in Entry,

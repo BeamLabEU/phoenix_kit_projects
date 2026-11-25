@@ -254,6 +254,13 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
   defp threads(_project, _a), do: nil
 
+  defp recount_threads(
+         %{assigns: %{project: %Project{} = project, assignment: %Assignment{} = a}} = socket
+       ),
+       do: assign(socket, :threads, threads(project, a))
+
+  defp recount_threads(socket), do: socket
+
   # The pencil beside the title (the boss, 2026-11-18: the title on the
   # list only opens the task, so renaming moved in here). The same rules as
   # renaming a card's title: a one-off task with `:edit_tasks`, a library
@@ -540,6 +547,18 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
            ] do
     {:noreply, reload(socket)}
   end
+
+  # A comment added or removed on this task — here (the component tells its
+  # host) or anywhere else (the project topic): the tabs' counts follow.
+  def handle_info({:projects, event, %{resource_uuid: uuid}}, socket)
+      when event in [:comment_added, :comment_deleted] do
+    if match?(%Assignment{uuid: ^uuid}, socket.assigns[:assignment]),
+      do: {:noreply, recount_threads(socket)},
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:comments_updated, _payload}, socket),
+    do: {:noreply, recount_threads(socket)}
 
   # `@` and `#` in the redirect's editor.
   def handle_info({:leaf_suggest, %{editor_id: "pkp-dialog-" <> _}} = msg, socket),
