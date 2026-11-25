@@ -38,7 +38,13 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       limit = limit(params["limit"])
 
       key = conn.assigns.pk_api_key
-      all = project.uuid |> Projects.list_assignments() |> Enum.filter(&Json.visible_row?/1)
+
+      all =
+        project.uuid
+        |> Projects.list_assignments()
+        |> Json.prime_rows()
+        |> Enum.filter(&Json.visible_row?/1)
+
       outline = OutlineApi.info(project.uuid)
       {done, open_any} = Enum.split_with(all, &(&1.status == "done"))
 
