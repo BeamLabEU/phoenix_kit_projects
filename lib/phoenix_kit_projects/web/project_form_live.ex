@@ -21,7 +21,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   import PhoenixKitProjects.Web.Components.AssigneeField, only: [assignee_field: 1]
 
   import PhoenixKitProjects.Web.Components.FormParts,
-    only: [form_header: 1, form_tabs: 1, form_pane: 1, words_block: 1]
+    only: [form_header: 1, form_tabs: 1, form_pane: 1, words_block: 1, zone_note: 1]
 
   alias PhoenixKit.Mentions
   alias PhoenixKit.Modules.Storage
@@ -1020,6 +1020,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   def handle_event(event, _params, socket) when event in ~w(add_link_dep remove_link_dep),
     do: {:noreply, socket}
+
+  # The browser's time zone (`PkpZone`): the viewer's own when their profile
+  # names none, so the scheduled start is typed on their clock.
+  def handle_event("pkp_zone", %{"zone" => zone}, socket) do
+    if L10n.use_browser_zone(socket.assigns[:phoenix_kit_current_scope], zone),
+      do: {:noreply, assign(socket, :viewer_zone, zone)},
+      else: {:noreply, socket}
+  end
 
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
@@ -2148,6 +2156,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       cond do
         "template" in assigns.top_blocks -> nil
         match?(%{task_count: _}, assigns.template_preview) -> gettext("From a template")
+        # Nothing to pick (Max, 2026-11-25: "it states no template but I
+        # don't see a way to set a template there"): say nothing.
+        assigns.templates == [] -> nil
         true -> gettext("No template")
       end
 
@@ -2331,6 +2342,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   attr(:form, :any, required: true)
   attr(:lifecycle, :boolean, default: true)
+  attr(:zone, :string, default: nil)
 
   # Renders nothing when the project has no start and no finish: asking a
   # shared checklist when it begins is the question that has no answer.
@@ -2349,17 +2361,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           {gettext("Scheduled date"), "scheduled"}
         ]}
       />
-      <div class="hidden group-has-[option[value=scheduled]:checked]/start:block">
+      <%!-- The server shows it too once the choice is in the form: the CSS
+           variant alone left the field hidden whenever that one rule was
+           missing from the stylesheet (Max, 2026-11-25: no field to type
+           the date the save then required). --%>
+      <div class={[
+        !scheduled?(@form) && "hidden",
+        "group-has-[option[value=scheduled]:checked]/start:block"
+      ]}>
         <.datetime_input
           id="project-scheduled-start"
           field={@form[:scheduled_start_date]}
           value={local_input_value(@form[:scheduled_start_date].value)}
           label={gettext("Start date and time")}
         />
+        <.zone_note id="project-zone" zone={@zone} class="mt-1" />
       </div>
     </div>
     """
   end
+
+  defp scheduled?(form), do: form[:start_mode].value in ["scheduled", :scheduled]
 
   attr(:statuses_available, :boolean, required: true)
   attr(:form, :any, required: true)
@@ -2732,6 +2754,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       <.form_header
         id="project-form-header"
         title={project_title(assigns)}
+        show_title={@embed_mode != :navigate}
         untitled={@live_action != :edit && gettext("New project")}
         mode={if @live_action == :edit, do: gettext("Editing"), else: gettext("New project")}
         close_event={@embed_mode not in [:navigate, :emit] && "cancel"}
@@ -2874,7 +2897,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
           <div :if={"start" in @top_blocks} id="create-top-start" class="card bg-base-100 shadow">
             <div class="card-body flex flex-col gap-3">
-              <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+              <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} zone={assigns[:viewer_zone]} />
 
             </div>
           </div>
@@ -2920,7 +2943,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
           <%!-- 1. What it starts from — template, timing, statuses. --%>
           <.form_pane prefix="project" pane="schedule" active={@pane}>
-          <.accordion :if={setup_section_shown?(assigns)} id="create-start" cue={true} class={drawer_class()}>
+          <%!-- The tab holds only this section: open from the start (Max,
+               2026-11-25: one closed drawer to click before anything). --%>
+          <.accordion :if={setup_section_shown?(assigns)} id="create-start" open={true} cue={true} class={drawer_class()}>
             <:title>
               {gettext("Start from")}
               <span class="ml-2 text-xs font-normal opacity-50">{setup_summary(assigns)}</span>
@@ -2937,7 +2962,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 </div>
 
                 <div :if={"start" not in @top_blocks}>
-                  <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+                  <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} zone={assigns[:viewer_zone]} />
                 </div>
 
                 <div
@@ -2956,7 +2981,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 <.checkbox
                   :if={@flag_states["scheduling"] != false}
                   field={@form[:counts_weekends]}
-                  label={gettext("Count weekends in schedule")}
+                  label={gettext("Count weekends")}
                   class="checkbox-primary checkbox-sm"
                 />
               </div>
@@ -3288,6 +3313,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                    `@flag_states` is the creation page's and is empty here. --%>
               <.start_block
                 form={@form}
+                zone={assigns[:viewer_zone]}
                 lifecycle={
                   if @live_action == :edit,
                     do: @fx[:lifecycle] != false,
@@ -3300,7 +3326,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               <.checkbox
                 :if={@fx.scheduling}
                 field={@form[:counts_weekends]}
-                label={gettext("Count weekends in schedule")}
+                label={gettext("Count weekends")}
                 class="checkbox-primary checkbox-sm"
               />
 

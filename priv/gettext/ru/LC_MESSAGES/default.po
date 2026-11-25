@@ -11193,3 +11193,44 @@ msgstr "Открыть задачу"
 #, elixir-autogen, elixir-format
 msgid "Hide sub-project tasks"
 msgstr "Скрыть задачи подпроекта"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:683
+#, elixir-autogen, elixir-format
+msgid "%{project} taken away from %{key}: it now has no access there, though a project above it still has."
+msgstr "%{project} отнят у %{key}: там у него больше нет доступа, хотя у проекта выше он ещё есть."
+
+#: lib/phoenix_kit_projects/web/tasks_live.ex:574
+#, elixir-autogen, elixir-format
+msgid "A sub-project sits under this task in a project. Move or delete it first."
+msgstr "В одном из проектов под этой задачей есть подпроект. Сначала переместите или удалите его."
+
+#: lib/phoenix_kit_projects/web/components/popup_host.ex:258
+#, elixir-autogen, elixir-format
+msgid "Connection lost — reconnecting. Saving works again once it is back."
+msgstr "Соединение потеряно — переподключение. Сохранение снова заработает, когда оно вернётся."
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2984
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3329
+#, elixir-autogen, elixir-format
+msgid "Count weekends"
+msgstr "Учитывать выходные"
+
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:169
+#, elixir-autogen, elixir-format
+msgid "Pick one of the offered lists."
+msgstr "Выберите один из предложенных списков."
+
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:143
+#, elixir-autogen, elixir-format
+msgid "Times are in %{zone}"
+msgstr "Время в поясе %{zone}"
+
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:941
+#, elixir-autogen, elixir-format
+msgid "You no longer have access to this project."
+msgstr "У вас больше нет доступа к этому проекту."
+
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:144
+#, elixir-autogen, elixir-format
+msgid "the site uses %{zone}"
+msgstr "сайт использует %{zone}"

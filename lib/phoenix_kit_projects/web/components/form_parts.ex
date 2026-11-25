@@ -67,6 +67,14 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   )
 
   attr(:close_label, :string, default: nil)
+
+  attr(:show_title, :boolean,
+    default: true,
+    doc:
+      "false on a full page, whose breadcrumb already names it (Max, 2026-11-25): " <>
+        "the title stays for screen readers only"
+  )
+
   slot(:context)
   slot(:actions)
   slot(:badge)
@@ -84,12 +92,14 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
         title={@mode}
         class={[
           "flex-1 min-w-0 text-lg font-semibold leading-tight break-words",
-          @untitled? && "text-base-content/40 italic font-normal"
+          @untitled? && "text-base-content/40 italic font-normal",
+          !@show_title && "sr-only"
         ]}
       >
         <span :if={@mode} class="sr-only">{@mode}:</span>
         {if @untitled?, do: @untitled || gettext("Untitled"), else: @title}
       </h2>
+      <span :if={!@show_title} class="flex-1"></span>
       {render_slot(@badge)}
       {render_slot(@actions)}
       <button
@@ -103,6 +113,45 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
       </button>
     </header>
     """
+  end
+
+  @doc """
+  Which zone the form's times are in (Max, 2026-11-25): the viewer's own —
+  their profile's, else their browser's (the `PkpZone` hook on this line
+  reports it once; the form hands it to `L10n.use_browser_zone/2`) — and
+  the site's too when it differs. `zone` is the form's `@viewer_zone`
+  assign, passed so the line redraws when the browser's zone arrives.
+  """
+  attr(:id, :string, required: true)
+  attr(:zone, :string, default: nil)
+  attr(:class, :any, default: nil)
+
+  def zone_note(assigns) do
+    viewer = assigns.zone || PhoenixKitProjects.L10n.viewer_zone()
+    site = PhoenixKitProjects.L10n.site_zone()
+
+    assigns =
+      assign(assigns,
+        viewer_label: zone_name(viewer || site),
+        site_label:
+          if((viewer && viewer != site) and not same_zone?(viewer, site), do: zone_name(site))
+      )
+
+    ~H"""
+    <p id={@id} phx-hook="PkpZone" class={["flex flex-wrap items-center gap-1 text-xs text-base-content/60", @class]}>
+      <.icon name="hero-globe-alt" class="w-3.5 h-3.5 shrink-0" />
+      <span>{gettext("Times are in %{zone}", zone: @viewer_label)}</span>
+      <span :if={@site_label}>· {gettext("the site uses %{zone}", zone: @site_label)}</span>
+    </p>
+    """
+  end
+
+  defp zone_name(value), do: PhoenixKit.Utils.TimeZone.label(value)
+
+  defp same_zone?(a, b) do
+    PhoenixKit.Utils.TimeZone.effectively_same?(a, b)
+  rescue
+    _ -> false
   end
 
   # ── Tabs ───────────────────────────────────────────────────────────

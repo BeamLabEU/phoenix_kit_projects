@@ -11130,3 +11130,44 @@ msgstr "Ava ülesanne"
 #, elixir-autogen, elixir-format
 msgid "Hide sub-project tasks"
 msgstr "Peida alamprojekti ülesanded"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:683
+#, elixir-autogen, elixir-format
+msgid "%{project} taken away from %{key}: it now has no access there, though a project above it still has."
+msgstr "%{project} võeti võtmelt %{key} ära: seal tal enam ligipääsu pole, kuigi ülemisel projektil veel on."
+
+#: lib/phoenix_kit_projects/web/tasks_live.ex:574
+#, elixir-autogen, elixir-format
+msgid "A sub-project sits under this task in a project. Move or delete it first."
+msgstr "Selle ülesande all on mõnes projektis alamprojekt. Liiguta või kustuta see enne."
+
+#: lib/phoenix_kit_projects/web/components/popup_host.ex:258
+#, elixir-autogen, elixir-format
+msgid "Connection lost — reconnecting. Saving works again once it is back."
+msgstr "Ühendus katkes – ühendan uuesti. Salvestamine töötab jälle, kui ühendus on tagasi."
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2984
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3329
+#, elixir-autogen, elixir-format
+msgid "Count weekends"
+msgstr "Arvesta nädalavahetusi"
+
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:169
+#, elixir-autogen, elixir-format
+msgid "Pick one of the offered lists."
+msgstr "Vali üks pakutud loenditest."
+
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:143
+#, elixir-autogen, elixir-format
+msgid "Times are in %{zone}"
+msgstr "Ajad on vööndis %{zone}"
+
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:941
+#, elixir-autogen, elixir-format
+msgid "You no longer have access to this project."
+msgstr "Sul pole enam sellele projektile ligipääsu."
+
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:144
+#, elixir-autogen, elixir-format
+msgid "the site uses %{zone}"
+msgstr "sait kasutab vööndit %{zone}"

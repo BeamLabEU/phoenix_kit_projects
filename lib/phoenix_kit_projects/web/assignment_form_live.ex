@@ -2622,6 +2622,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # The browser's time zone (`PkpZone`): the viewer's own when their profile
+  # names none, so "In 1 hour" and every time typed here are their clock.
+  def handle_event("pkp_zone", %{"zone" => zone}, socket) do
+    if L10n.use_browser_zone(socket.assigns[:phoenix_kit_current_scope], zone),
+      do: {:noreply, assign(socket, :viewer_zone, zone)},
+      else: {:noreply, socket}
+  end
+
   # An event this form does not know, or a known one without the
   # parameters it takes: nothing happens. A crash would restart the form and
   # lose what was typed and everything held until Save (the project page
@@ -5560,6 +5568,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               label={gettext("Deadline")}
               default_hour={17}
             />
+            <.zone_note id={"assignment-zone-#{@dom}"} zone={assigns[:viewer_zone]} />
             <div class="flex flex-wrap items-center gap-1.5 text-xs">
               <span class="text-base-content/60">{gettext("By when it has to be done.")}</span>
               <button type="button" phx-click="deadline_preset" phx-value-preset="hour" class="btn btn-xs btn-ghost border-base-300 font-normal">
