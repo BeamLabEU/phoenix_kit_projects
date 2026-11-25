@@ -33,7 +33,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.Scope
-  alias PhoenixKitProjects.{Authz, L10n, Projects, Refs}
+  alias PhoenixKitProjects.{Authz, L10n, Members, Projects, Refs}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @base "/admin/projects"
@@ -382,10 +382,8 @@ defmodule PhoenixKitProjects.ResourceLinks do
     case accessible do
       :none -> :none
       :all -> subtree
-      # `list_projects_for/1` lists top-level projects only, so a member of
-      # the field's own project reaches its whole subtree (the same climb
-      # `visible_resource_uuids/2` makes); anything else keeps only what
-      # is individually accessible.
+      # A member of the field's own project reaches its whole subtree;
+      # anything else keeps only what is individually accessible.
       uuids -> if uuid in uuids, do: subtree, else: Enum.filter(subtree, &(&1 in uuids))
     end
     |> case do
@@ -420,9 +418,17 @@ defmodule PhoenixKitProjects.ResourceLinks do
     if Authz.admin_all?(scope) do
       :all
     else
-      case Projects.list_projects_for(scope) do
-        [] -> :none
-        projects -> Enum.map(projects, & &1.uuid)
+      # The pages' rule (`Members.accessible_project_uuids/1` and everything
+      # nested under those — a sub-project is read by whoever reads a
+      # project above it): `list_projects_for/1` listed top-level projects
+      # only, so a member of just a sub-project found nothing with `#` and
+      # saw their own project's chips locked.
+      with user_uuid when is_binary(user_uuid) <- Authz.subject_user_uuid_of(scope),
+           [_ | _] = uuids <-
+             user_uuid |> Members.accessible_project_uuids() |> Projects.subtrees_uuids() do
+        uuids
+      else
+        _ -> :none
       end
     end
   end
