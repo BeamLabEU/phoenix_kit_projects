@@ -2768,7 +2768,12 @@
           var nest = el.dataset.nest === "true";
           var start = rowInfo(item);
           // The branch moves together: its rows leave the list meanwhile.
+          // The list keeps its height while they are out (Max, 2026-11-25:
+          // a drop "scrolls to the top of the task list" — lifting a long
+          // branch shortened the page, the browser pulled the scroll up to
+          // fit, and it stayed there when the rows came back).
           var lifted = [];
+          el.style.minHeight = el.offsetHeight + "px";
           if (nest) {
             var n = item.nextElementSibling;
             while (n && n.matches(".sortable-item") && rowInfo(n).depth > start.depth) {
@@ -2812,7 +2817,10 @@
           document.removeEventListener("touchmove", track, true);
           el.classList.remove("pkp-list-dragging");
           self.clearParentMark();
-          if (!d) return;
+          // Released once the branch is back (below, in this same task), so
+          // the page never gets shorter than it was.
+          var releaseHeight = function () { el.style.minHeight = ""; };
+          if (!d) { releaseHeight(); return; }
           var id = d.start.id;
           // Measured while the branch's subtasks are still out of the list,
           // as the preview was (unhiding them first put the row below back
@@ -2834,6 +2842,7 @@
             d.item.style.marginLeft = d.margin;
             if (d.card) d.card.classList.toggle("pkp-row-card", d.rowCard);
           }
+          releaseHeight();
 
           if (!d.nest) {
             if (evt.oldIndex === evt.newIndex) return;
