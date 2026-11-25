@@ -2281,6 +2281,59 @@
   // and types the values back in once the forms are there. Hidden inputs
   // are not replayed: they are the forms' own bookkeeping, and the rich
   // editors' text is theirs to keep.
+  // The rich (Leaf) editors of one frame: each editor's text as the person
+  // left it, and what the server had rendered for it (its hidden sync
+  // input's value attribute), so a newer server value is never overwritten.
+  function keepRich(dialog) {
+    return Array.prototype.slice
+      .call(dialog.querySelectorAll("[data-editor-id]"))
+      .map(function (ed) {
+        var id = ed.dataset.editorId;
+        var md = document.getElementById(id + "-markdown-textarea");
+        var sync = dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + id + '"]');
+        var visual = ed.querySelector("[data-editor-visual]");
+        var markdown = md ? md.value : sync ? sync.value : null;
+        return {
+          id: id,
+          markdown: markdown,
+          html: visual ? visual.innerHTML : null,
+          server: sync ? sync.getAttribute("value") || "" : null
+        };
+      })
+      .filter(function (e) {
+        // Only what the person changed: an untouched editor needs nothing.
+        return e.markdown != null && e.server != null && e.markdown !== e.server;
+      });
+  }
+
+  // Every kept editor of the frame is back (its sync input rendered).
+  function richReady(dialog, kept) {
+    return kept.every(function (e) {
+      return !!dialog.querySelector('[data-editor-id="' + e.id + '"]') &&
+        !!dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + e.id + '"]');
+    });
+  }
+
+  // Puts the kept text back through Leaf's own command (its hook listens
+  // for `phx:leaf-command:<id>` on window), only while the server's value is
+  // still the one the page had. Answers the last sync input it filled, or
+  // null when it restored nothing.
+  function restoreRich(dialog, kept) {
+    var last = null;
+    kept.forEach(function (e) {
+      var sync = dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + e.id + '"]');
+      if (!sync || (sync.getAttribute("value") || "") !== e.server) return;
+      window.dispatchEvent(new CustomEvent("phx:leaf-command:" + e.id, {
+        detail: { action: "set_content", content: e.markdown, html: e.html || "" }
+      }));
+      // Leaf fills the input itself; set it too, so the form's input event
+      // carries the text even if the editor is in another mode.
+      sync.value = e.markdown;
+      last = sync;
+    });
+    return last;
+  }
+
   var KeepStack = {
     mounted: function () {
       this.read();
@@ -2303,6 +2356,7 @@
       var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
       this.kept = {
         frames: this.frames,
+        rich: dialogs.map(keepRich),
         values: dialogs.map(function (dialog) {
           var form = dialog.querySelector("form[phx-change]");
           if (!form) return [];
@@ -2332,28 +2386,31 @@
         self.read();
         if (self.frames.length > 0) return;
         self.pushEvent("pkp_restore_stack", { frames: kept.frames });
-        self.replay(kept.values, 0);
+        self.replay(kept.values, 0, kept.rich || []);
       }, 50);
     },
     // Waits (up to ~10 s) for the restored frames' forms, then types the
     // kept values back in, one input event per form so the server hears it.
-    replay: function (values, tries) {
+    replay: function (values, tries, rich) {
       var self = this;
+      rich = rich || [];
       var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
       var ready =
         dialogs.length >= values.length &&
         dialogs.every(function (d, i) {
-          return !values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]");
+          var formReady = !values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]");
+          return formReady && richReady(d, rich[i] || []);
         });
       if (!ready) {
-        if (tries < 50) setTimeout(function () { self.replay(values, tries + 1); }, 200);
+        if (tries < 50) setTimeout(function () { self.replay(values, tries + 1, rich); }, 200);
         return;
       }
       dialogs.forEach(function (dialog, i) {
         var saved = values[i] || [];
         var form = dialog.querySelector("form[phx-change]");
-        if (!form || saved.length === 0) return;
-        var last = null;
+        var restoredRich = restoreRich(dialog, rich[i] || []);
+        if (!form || (saved.length === 0 && !restoredRich)) return;
+        var last = restoredRich;
         saved.forEach(function (field) {
           var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
           Array.prototype.forEach.call(els, function (el) {
@@ -2645,6 +2702,8 @@
 
   window.PhoenixKitProjectsInternals = window.PhoenixKitProjectsInternals || {};
   window.PhoenixKitProjectsInternals.listDropTarget = listDropTarget;
+  window.PhoenixKitProjectsInternals.keepRich = keepRich;
+  window.PhoenixKitProjectsInternals.restoreRich = restoreRich;
 
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,
