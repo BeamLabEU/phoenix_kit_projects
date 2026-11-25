@@ -541,6 +541,15 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       {%{event: "pkp_url_discard"}, socket} ->
         {:noreply, close_task_frames(socket)}
 
+      # Back to a task lower in the stack, past frames with unsaved changes.
+      {%{event: "pkp_url_back_to", params: %{"task" => ref}}, socket} ->
+        stack = socket.assigns.modal_stack
+
+        case Enum.find_index(stack, &(&1[:task_ref] == ref)) do
+          i when is_integer(i) -> {:noreply, assign(socket, modal_stack: Enum.take(stack, i + 1))}
+          nil -> {:noreply, socket}
+        end
+
       {_none, socket} ->
         {:noreply, socket}
     end
@@ -599,9 +608,27 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
         i when is_integer(i) ->
           above = Enum.drop(stack, i + 1)
 
-          if Enum.any?(above, &(&1[:closeable] == false)),
-            do: {:noreply, socket},
-            else: {:noreply, assign(socket, modal_stack: Enum.take(stack, i + 1))}
+          # Unsaved changes above it: ask first, as Back to no task does, and
+          # give the address its entry back meanwhile, so it never names a
+          # task the drawer is not showing (codex).
+          if Enum.any?(above, &(&1[:closeable] == false)) do
+            socket =
+              ConfirmAction.request(
+                socket,
+                %{
+                  "event" => "pkp_url_back_to",
+                  "task" => task_ref,
+                  "title" => gettext("Close without saving?"),
+                  "message" => gettext("What you changed since the last save is lost."),
+                  "confirm" => gettext("Discard")
+                },
+                ~w(pkp_url_back_to)
+              )
+
+            {:noreply, push_event(socket, "pkp_url_restore", %{task: top_task_ref(stack)})}
+          else
+            {:noreply, assign(socket, modal_stack: Enum.take(stack, i + 1))}
+          end
 
         nil ->
           if length(stack) < socket.assigns.max_stack_depth,

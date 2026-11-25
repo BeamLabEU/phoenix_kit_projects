@@ -227,4 +227,25 @@ defmodule PhoenixKitProjects.Web.PopupReview1125Test do
     render_hook(view, "pkp_url_task", %{"task" => ""})
     assert stack(view) == []
   end
+
+  test "Back to a lower task past a frame with unsaved changes asks first, then shows it", ctx do
+    {view, topic} = host(ctx)
+    open_view(view, topic, ctx.a)
+    b = other_assignment(ctx.project)
+    render_hook(view, "pkp_url_task", %{"task" => Assignment.row_ref(b)})
+    [%{task_ref: a_ref}, %{frame_ref: b_frame}] = stack(view)
+
+    send(view.pid, {:projects, :dirty, %{frame_ref: b_frame, dirty: true}})
+    _ = render(view)
+
+    # Back names the lower task: nothing is dropped yet, the question is up
+    # and the address gets the open task back meanwhile.
+    render_hook(view, "pkp_url_task", %{"task" => a_ref})
+    assert length(stack(view)) == 2
+    assert render(view) =~ "Close without saving?"
+    assert_push_event(view, "pkp_url_restore", %{task: _})
+
+    render_click(view, "confirm_action_ok", %{})
+    assert [%{task_ref: ^a_ref}] = stack(view)
+  end
 end
