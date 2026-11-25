@@ -30,7 +30,7 @@ defmodule PhoenixKitProjects.TaskConversion do
   alias PhoenixKit.RepoHelper
   alias PhoenixKitProjects.{AssigneeSet, Outline, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.{Assignment, Project, Task, WorkEntry}
+  alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, WorkEntry}
 
   @prefix Application.compile_env(:phoenix_kit, :prefix)
   @counters "phoenix_kit_project_task_counters"
@@ -323,6 +323,17 @@ defmodule PhoenixKitProjects.TaskConversion do
 
     from(w in WorkEntry, where: w.assignment_uuid in ^uuids)
     |> repo().update_all(set: [project_uuid: project_uuid])
+
+    # A dependency lives in one project (`add_dependency/3` refuses a pair
+    # from two). An edge between a row that moved and one that stayed would
+    # now cross projects — a task waiting on a row it can no longer see — so
+    # it goes; edges among the moved rows move with them (codex).
+    from(d in Dependency,
+      where:
+        (d.assignment_uuid in ^uuids and d.depends_on_uuid not in ^uuids) or
+          (d.depends_on_uuid in ^uuids and d.assignment_uuid not in ^uuids)
+    )
+    |> repo().delete_all()
 
     :ok
   end
