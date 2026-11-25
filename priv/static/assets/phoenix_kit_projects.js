@@ -2659,8 +2659,8 @@
   function setRowLevel(row, depth) {
     row.style.marginLeft = (depth * 2) + "rem";
     row.dataset.depth = String(depth);
-    var card = rowCard(row);
-    if (card) card.classList.toggle("pkp-row-card", depth === 0);
+    // Every level carries the gutter (`pkp-row-card`), so the class no
+    // longer changes with the level.
   }
 
   // The optimistic landing of a drop that moves: the card at its new
@@ -2866,7 +2866,6 @@
       var t = this.target(d);
       if (!t) return;
       d.item.style.marginLeft = (t.depth * 2) + "rem";
-      if (d.card) d.card.classList.toggle("pkp-row-card", t.depth === 0);
       this.clearParentMark();
       if (t.parent) {
         var p = this.el.querySelector(':scope > .sortable-item[data-id="' + window.CSS.escape(t.parent) + '"]');
