@@ -392,7 +392,39 @@ defmodule PhoenixKitProjects.Authz do
 
   @role_rank %{owner: 0, manager: 1, member: 2, viewer: 3}
 
-  defp member_can?(subject, project, action, record) do
+  # A sub-project is read by whoever can read a project above it (Max,
+  # 2026-11-25: the parent's page already shows its tasks in the inset, and
+  # its Open link led to "Project not found"). Only `:view` is inherited:
+  # every other action follows the sub-project's own roles, so a parent's
+  # viewer seat (which the default floors let edit) never becomes one here.
+  defp member_can?(subject, project, :view, record) do
+    own_can?(subject, project, :view, record) or inherited_view?(subject, project)
+  end
+
+  defp member_can?(subject, project, action, record),
+    do: own_can?(subject, project, action, record)
+
+  defp inherited_view?(subject, project) do
+    case project_uuid_of(project) do
+      nil ->
+        false
+
+      uuid ->
+        uuid
+        |> PhoenixKitProjects.Projects.parent_chain()
+        |> Enum.any?(&own_can?(subject, &1, :view, nil))
+    end
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
+
+  defp project_uuid_of(%{uuid: uuid}) when is_binary(uuid), do: uuid
+  defp project_uuid_of(uuid) when is_binary(uuid), do: uuid
+  defp project_uuid_of(_), do: nil
+
+  defp own_can?(subject, project, action, record) do
     case subject_user_uuid(subject) do
       nil ->
         false
