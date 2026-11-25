@@ -593,7 +593,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
         <%!-- One row, as every popup's: back, the ref pill, the name and the
              close (the boss, 2026-11-02: the status and Edit belong with the
              details below, not beside the name). --%>
-        <div class={["flex items-center gap-2 min-w-0", @embed_mode == :emit && "pr-8"]}>
+        <div data-pkp-frame-head class={["flex items-center gap-2 min-w-0", @embed_mode == :emit && "pr-8"]}>
           <button
             :if={@back_task}
             type="button"
