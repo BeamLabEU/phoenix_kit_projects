@@ -17,6 +17,7 @@ defmodule PhoenixKitProjects.Web.ReviewSweep1125Test do
 
   import Phoenix.LiveViewTest
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Members
   alias PhoenixKitProjects.Projects
 
@@ -139,7 +140,7 @@ defmodule PhoenixKitProjects.Web.ReviewSweep1125Test do
     # A plain account (embed_user_uuid!/0 holds "*", which sees every
     # project): a direct member needs no module key.
     {:ok, user} =
-      PhoenixKit.Users.Auth.register_user(%{
+      Auth.register_user(%{
         "email" => "cal-#{System.unique_integer([:positive])}@example.com",
         "password" => "ValidPassword123!"
       })

@@ -40,6 +40,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Date, as: KitDate
 
+  alias PhoenixKit.Utils.TimeZone
+
   alias PhoenixKitProjects.{
     Activity,
     Authz,
@@ -1162,7 +1164,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       cond do
         # The viewer's own today, not "now + 24 h": tomorrow's date passed
         # most of the day under the old window.
-        Date.compare(date, PhoenixKit.Utils.TimeZone.local_date(DateTime.utc_now(), offset)) ==
+        Date.compare(date, TimeZone.local_date(DateTime.utc_now(), offset)) ==
             :gt ->
           {:error, gettext("The day cannot be in the future.")}
 

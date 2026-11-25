@@ -2152,32 +2152,39 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp setup_summary(assigns) do
-    template =
-      cond do
-        "template" in assigns.top_blocks -> nil
-        match?(%{task_count: _}, assigns.template_preview) -> gettext("From a template")
-        # Nothing to pick (Max, 2026-11-25: "it states no template but I
-        # don't see a way to set a template there"): say nothing.
-        assigns.templates == [] -> nil
-        true -> gettext("No template")
-      end
+    join_summary([
+      setup_template_summary(assigns),
+      setup_start_summary(assigns),
+      setup_statuses_summary(assigns)
+    ])
+  end
 
-    start =
-      cond do
-        "start" in assigns.top_blocks -> nil
-        assigns.flag_states["lifecycle"] == false -> nil
-        assigns.form[:start_mode].value in ["scheduled", :scheduled] -> gettext("Scheduled start")
-        true -> gettext("Starts immediately")
-      end
+  defp setup_template_summary(assigns) do
+    cond do
+      "template" in assigns.top_blocks -> nil
+      match?(%{task_count: _}, assigns.template_preview) -> gettext("From a template")
+      # Nothing to pick (Max, 2026-11-25: "it states no template but I
+      # don't see a way to set a template there"): say nothing.
+      assigns.templates == [] -> nil
+      true -> gettext("No template")
+    end
+  end
 
-    statuses =
-      cond do
-        "statuses" in assigns.top_blocks or assigns.flag_states["statuses"] == false -> nil
-        assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Site default statuses")
-        true -> gettext("Custom statuses")
-      end
+  defp setup_start_summary(assigns) do
+    cond do
+      "start" in assigns.top_blocks -> nil
+      assigns.flag_states["lifecycle"] == false -> nil
+      assigns.form[:start_mode].value in ["scheduled", :scheduled] -> gettext("Scheduled start")
+      true -> gettext("Starts immediately")
+    end
+  end
 
-    join_summary([template, start, statuses])
+  defp setup_statuses_summary(assigns) do
+    cond do
+      "statuses" in assigns.top_blocks or assigns.flag_states["statuses"] == false -> nil
+      assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Site default statuses")
+      true -> gettext("Custom statuses")
+    end
   end
 
   defp people_summary(assigns) do

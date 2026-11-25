@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
 
   use Phoenix.Controller, formats: [:json]
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiAccess, ApiKeys, Authz, Extensions}
   alias PhoenixKitProjects.Schemas.{ApiKey, Project}
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs, Json}
@@ -111,7 +112,7 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
   # key pages' `ApiKeyPanel.user_name/1` falls back to one): first and last
   # name, else the username, else nil — the uuid says who.
   defp api_name(uuid) do
-    case PhoenixKit.Users.Auth.get_user(uuid) do
+    case Auth.get_user(uuid) do
       %{} = user ->
         Assignee.person_name(%{user: user}) ||
           case Map.get(user, :username) do

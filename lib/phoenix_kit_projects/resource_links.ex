@@ -31,6 +31,8 @@ defmodule PhoenixKitProjects.ResourceLinks do
   require Logger
 
   alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.{Authz, L10n, Projects, Refs}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
@@ -400,8 +402,8 @@ defmodule PhoenixKitProjects.ResourceLinks do
   # saw none — the uuid carries no permissions. The account is loaded: an
   # inactive one sees nothing, an active one is judged by its real scope.
   defp viewer(uuid) when is_binary(uuid) do
-    case PhoenixKit.Users.Auth.get_user(uuid) do
-      %{is_active: true} = user -> PhoenixKit.Users.Auth.Scope.for_user(user)
+    case Auth.get_user(uuid) do
+      %{is_active: true} = user -> Scope.for_user(user)
       _ -> nil
     end
   rescue

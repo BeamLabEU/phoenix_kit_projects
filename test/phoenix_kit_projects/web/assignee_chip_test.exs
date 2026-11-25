@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Web.AssigneeChipTest do
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Assignees, Projects}
   alias PhoenixKitProjects.People.Person
+  alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitProjects.Web.Components.AssigneeFaces
 
   defp person!(name) do
@@ -24,7 +25,7 @@ defmodule PhoenixKitProjects.Web.AssigneeChipTest do
       })
 
     {:ok, person} =
-      PhoenixKitProjects.Test.Repo.insert(%Person{
+      Repo.insert(%Person{
         uuid: UUIDv7.generate(),
         user_uuid: user.uuid,
         status: "active",
