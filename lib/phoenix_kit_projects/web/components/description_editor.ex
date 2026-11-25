@@ -100,7 +100,14 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
 
     results =
       Enum.map(reply.results, fn r ->
-        %{value: r.token, label: r.title, sublabel: r.subtitle}
+        # The comments thread's rows carry the same icon: the two `@` lists
+        # read alike, and a person is told from a record at a glance.
+        %{
+          value: r.token,
+          label: r.title,
+          sublabel: r.subtitle,
+          icon: if(trigger == "@", do: "hero-user", else: "hero-hashtag")
+        }
       end)
 
     LiveView.send_update(Leaf,

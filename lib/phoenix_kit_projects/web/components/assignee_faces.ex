@@ -10,7 +10,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
   use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
 
-  import PhoenixKitWeb.Components.Core.UserInfo, only: [user_avatar: 1]
+  import PhoenixKitWeb.Components.Core.UserInfo, only: [user_avatar: 1, person_chip: 1]
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
 
   attr(:faces, :map, default: nil, doc: "`%{faces: [...], extra: n}` or nil")
@@ -67,17 +67,43 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
   attr(:size, :string, default: "xs", values: ~w(xs sm))
   attr(:class, :any, default: nil)
 
+  # One person with an account is core's person chip (Max, 2026-11-25: a
+  # tag in a description and an assignee read the same; a click opens their
+  # card). Several people (a team, a department, a set) keep the stack and
+  # carry `data-people`, so a click opens the side drawer with each of them.
   def assignee_shown(assigns) do
-    assigns = assign(assigns, :kind, kind(assigns.a))
+    kind = kind(assigns.a)
+
+    assigns =
+      assigns
+      |> assign(:kind, kind)
+      |> assign(:single, single_user(kind, assigns.faces))
+      |> assign(:people, people_uuids(assigns.faces))
 
     ~H"""
-    <span :if={@kind} class={["inline-flex items-center gap-1.5 min-w-0", @class]}>
+    <span :if={@kind && @single} class={["inline-flex min-w-0", @class]}>
+      <.person_chip person={@single.user} name={@single.name} uuid={@single.user.uuid} />
+    </span>
+    <span
+      :if={@kind && !@single}
+      class={["inline-flex items-center gap-1.5 min-w-0", @people != "" && "cursor-pointer", @class]}
+      data-people={@people != "" && @people}
+    >
       <.assignee_faces faces={@faces} size={@size} />
       <.icon :if={no_faces?(@faces)} name={kind_icon(@kind)} class="w-3.5 h-3.5 shrink-0 opacity-70" />
       <span class="truncate">{PhoenixKitProjects.Web.Helpers.assignee_label(@a)}</span>
     </span>
     """
   end
+
+  defp single_user(:person, %{faces: [%{user: %{uuid: _} = _user} = face], extra: 0}), do: face
+  defp single_user(_kind, _faces), do: nil
+
+  defp people_uuids(%{faces: faces}) when is_list(faces) do
+    faces |> Enum.flat_map(fn f -> if f[:user], do: [f.user.uuid], else: [] end) |> Enum.join(",")
+  end
+
+  defp people_uuids(_), do: ""
 
   # From the keys, never from a translated label: the kind picks the icon
   # in every language. Several assignees show the people icon.
