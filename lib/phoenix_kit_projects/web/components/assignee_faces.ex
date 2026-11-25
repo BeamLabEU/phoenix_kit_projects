@@ -82,7 +82,12 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
 
     ~H"""
     <span :if={@kind && @single} class={["inline-flex min-w-0", @class]}>
-      <.person_chip person={@single.user} name={@single.name} uuid={@single.user.uuid} />
+      <.person_chip
+        person={@single.user}
+        name={@single.name}
+        uuid={@single.user.uuid}
+        title={@single.name}
+      />
     </span>
     <span
       :if={@kind && !@single}
