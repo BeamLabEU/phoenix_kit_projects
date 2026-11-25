@@ -516,7 +516,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   @impl true
   def handle_info({:projects, :assignment_deleted, %{uuid: uuid}}, socket) do
     if match?(%Assignment{uuid: ^uuid}, socket.assigns[:assignment]),
-      do: {:noreply, WebHelpers.close_or_navigate(socket, project_path(socket))},
+      do: {:noreply, WebHelpers.close_deleted(socket, :assignment, uuid, project_path(socket))},
       else: {:noreply, reload(socket)}
   end
 

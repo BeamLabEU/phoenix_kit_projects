@@ -588,10 +588,26 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     stack = socket.assigns.modal_stack
 
     with false <- top_task_ref(stack) == ref,
-         true <- length(stack) < socket.assigns.max_stack_depth,
          %Assignment{} = a <- url_task(ref),
-         false <- top_task_ref(stack) == (Assignment.row_ref(a) || a.uuid) do
-      {:noreply, push_frame(socket, AssignmentViewLive, task_view(socket, a))}
+         task_ref = Assignment.row_ref(a) || a.uuid,
+         false <- top_task_ref(stack) == task_ref do
+      case Enum.find_index(stack, &(&1[:task_ref] in [ref, task_ref])) do
+        # Already open lower down (Back from a task opened over it): show
+        # that frame again instead of stacking a second copy of the task,
+        # whose thread would repeat every DOM id. Frames holding unsaved
+        # changes are never dropped this way.
+        i when is_integer(i) ->
+          above = Enum.drop(stack, i + 1)
+
+          if Enum.any?(above, &(&1[:closeable] == false)),
+            do: {:noreply, socket},
+            else: {:noreply, assign(socket, modal_stack: Enum.take(stack, i + 1))}
+
+        nil ->
+          if length(stack) < socket.assigns.max_stack_depth,
+            do: {:noreply, push_frame(socket, AssignmentViewLive, task_view(socket, a))},
+            else: {:noreply, socket}
+      end
     else
       _ -> {:noreply, socket}
     end
@@ -639,15 +655,30 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   # The session the page's own rows open a view with — under a project
   # page that runs the view's next steps, its `step_intents`.
+  # Only a task of THAT page's project: the page re-scopes a step to its own
+  # project, so a task of another one (an address naming it) was offered
+  # step buttons that did nothing while the drawer closed as if they ran.
   defp task_view(socket, %Assignment{} = a) do
     case socket.assigns.root_view do
-      %{lv: ProjectShowLive} ->
-        ProjectShowLive.view_session(%{project_uuid: a.project_uuid, uuid: a.uuid})
+      %{lv: ProjectShowLive, session: %{"id" => id}} = _root ->
+        if root_project_uuid(id) == a.project_uuid,
+          do: ProjectShowLive.view_session(%{project_uuid: a.project_uuid, uuid: a.uuid}),
+          else: %{"project_id" => a.project_uuid, "id" => a.uuid}
 
       _ ->
         %{"project_id" => a.project_uuid, "id" => a.uuid}
     end
   end
+
+  # The root page's `"id"` may be a key or a uuid.
+  defp root_project_uuid(id) when is_binary(id) do
+    case Projects.get_project(id) do
+      %{uuid: uuid} -> uuid
+      _ -> nil
+    end
+  end
+
+  defp root_project_uuid(_), do: nil
 
   # Every frame from the lowest one showing a task up.
   defp close_task_frames(socket) do
@@ -713,7 +744,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # children unless the host explicitly passed one.
   # Compact (the boss, 2026-10-31): the box's own padding is the margin;
   # the wrapper adds none above the header.
-  @child_wrapper_class "flex flex-col w-full px-1 pb-1 gap-3"
+  # `@container`: the task view lays its details beside the discussion on a
+  # wide frame (`@2xl:` variants); without a container they never matched.
+  @child_wrapper_class "@container flex flex-col w-full px-1 pb-1 gap-3"
 
   defp push_frame(socket, lv, child_session) do
     frame_ref = System.unique_integer([:positive, :monotonic])
