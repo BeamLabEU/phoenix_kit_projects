@@ -350,6 +350,13 @@ was recorded. A person with both an account and a staff record is one line.
 It is the read behind the Hours tab (`PhoenixKitProjects.Hours`); scope
 `time:read`, like `GET /entries`.
 
+`tokens` and `cost_cents` also need `usage:read`. A key reads the projects it
+has `time:read` in; the usage figures are summed over the ones of those where
+it has `usage:read` too, and `usage_projects` lists them. With `usage:read` in
+none of them, `totals` carries no `tokens` or `cost_cents` and
+`usage_projects` is `[]`. A sub-project whose grant withholds usage therefore
+narrows only the usage figures, never the minutes.
+
 ## Not in v1
 
 - **Webhooks** on task events (the module already broadcasts them on PubSub) —
