@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
 
   alias PhoenixKit.Utils.TimeZone
   alias PhoenixKitProjects.L10n
+  alias PhoenixKitProjects.Web.Components.FormParts
 
   setup %{conn: conn} do
     scope = fake_scope()
@@ -78,7 +79,9 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       html = render_hook(view, "pkp_zone", %{"zone" => "Asia/Tokyo"})
-      assert html =~ TimeZone.label("Asia/Tokyo")
+      assert html =~ FormParts.zone_display("Asia/Tokyo")
+      assert html =~ "Tokyo time (UTC+9)"
+      refute html =~ "the site uses"
       assert html =~ ~s(phx-hook="PkpZone")
 
       html = render_click(view, "deadline_preset", %{"preset" => "hour"})
@@ -98,7 +101,7 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
     test "the project form names the zone beside the scheduled start", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/new")
       html = render_hook(view, "pkp_zone", %{"zone" => "America/Lima"})
-      assert html =~ TimeZone.label("America/Lima")
+      assert html =~ FormParts.zone_display("America/Lima")
     end
   end
 
@@ -164,6 +167,31 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
 
       assert html =~ "pkp-frame-close"
       assert html =~ "pkp-offline"
+    end
+
+    # Max, 2026-11-25: the ✕ sat low beside a form's title, and an opening
+    # popup was a thin strip with a spinner. The ✕ is centred on the frame's
+    # header row by a hook; until the frame's LiveView joins, a skeleton
+    # shaped like it holds the place.
+    test "the ✕ follows the frame's header row; a skeleton shaped like the frame is in place",
+         %{conn: conn} do
+      html = open_form(host(conn), fixture_project())
+
+      assert html =~ ~r/id="popup-host-frame-[^"]+-close"[^>]*phx-hook="PkpFrameClose"/s or
+               html =~ ~r/phx-hook="PkpFrameClose"[^>]*id="popup-host-frame-[^"]+-close"/s
+
+      assert html =~ ~s(data-pkp-skeleton="form")
+      refute html =~ "popup-host-frame-spinner"
+      assert html =~ "data-pkp-frame-head"
+    end
+  end
+
+  describe "the zone note's wording" do
+    test "a named zone by its city and current offset; a bare offset as an offset" do
+      assert FormParts.zone_display("Asia/Tokyo") == "Tokyo time (UTC+9)"
+      assert FormParts.zone_display("America/Lima") == "Lima time (UTC−5)"
+      assert FormParts.zone_display("Etc/UTC") == "UTC"
+      assert FormParts.zone_display("5.5") == "UTC+5:30"
     end
   end
 end

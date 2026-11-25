@@ -157,7 +157,7 @@ msgid "< 1 hour"
 msgstr "< 1 tund"
 
 #: lib/phoenix_kit_projects/web/list_ui.ex:112
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1968
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1970
 #, elixir-autogen, elixir-format
 msgid "Actions"
 msgstr "Toimingud"
@@ -165,7 +165,7 @@ msgstr "Toimingud"
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:1128
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5808
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6272
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2554
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2561
 #: lib/phoenix_kit_projects/web/project_members_live.ex:573
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:847
 #, elixir-autogen, elixir-format
@@ -175,7 +175,7 @@ msgstr "Lisa"
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:2788
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5248
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5882
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3845
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3852
 #: lib/phoenix_kit_projects/web/task_form_live.ex:714
 #, elixir-autogen, elixir-format
 msgid "Add dependency"
@@ -205,9 +205,9 @@ msgstr "Arhiveeritud"
 #: lib/phoenix_kit_projects/web/components/move_project.ex:417
 #: lib/phoenix_kit_projects/web/portal_live.ex:508
 #: lib/phoenix_kit_projects/web/project_events_live.ex:760
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3300
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2242
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2287
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3307
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2244
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2289
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6740
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6786
 #: lib/phoenix_kit_projects/web/project_show_live.ex:8218
@@ -223,13 +223,13 @@ msgstr "Tühista"
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6236
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6256
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:656
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:112
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:116
 #: lib/phoenix_kit_projects/web/components/popup_host.ex:248
 #: lib/phoenix_kit_projects/web/components/popup_host.ex:249
 #: lib/phoenix_kit_projects/web/project_events_live.ex:632
 #: lib/phoenix_kit_projects/web/project_events_live.ex:669
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3224
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3609
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3231
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3616
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6701
 #: lib/phoenix_kit_projects/web/task_form_live.ex:741
 #: lib/phoenix_kit_projects/web/template_form_live.ex:586
@@ -364,7 +364,7 @@ msgstr "Arvesta ajakavas nädalavahetusi"
 msgid "Counts weekends (e.g. deliveries, external processes)"
 msgstr "Arvestab nädalavahetusi (nt tarned, välised protsessid)"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3214
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3221
 #: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:443
 #: lib/phoenix_kit_projects/web/task_form_live.ex:730
 #: lib/phoenix_kit_projects/web/template_form_live.ex:575
@@ -404,9 +404,9 @@ msgstr "Päevad"
 msgid "Default dependencies"
 msgstr "Vaikesõltuvused"
 
-#: lib/phoenix_kit_projects/assignees.ex:1213
+#: lib/phoenix_kit_projects/assignees.ex:1218
 #: lib/phoenix_kit_projects/web/project_form_live.ex:317
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2466
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2473
 #: lib/phoenix_kit_projects/web/project_members_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Department"
@@ -465,7 +465,7 @@ msgstr "Iga rühm algab ülesandest, millest miski muu ei sõltu. Mitmes rühmas
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:693
 #: lib/phoenix_kit_projects/web/project_form_live.ex:574
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:466
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2029
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2031
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1268
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2664
 #: lib/phoenix_kit_projects/web/project_show_live.ex:7444
@@ -529,15 +529,15 @@ msgstr "Rühmad"
 #: lib/phoenix_kit_projects/hours/report.ex:162
 #: lib/phoenix_kit_projects/web/components/duration_input.ex:46
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:67
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:186
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1336
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2453
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:188
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1338
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2455
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6472
 #, elixir-autogen, elixir-format
 msgid "Hours"
 msgstr "Tunnid"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2360
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2367
 #, elixir-autogen, elixir-format
 msgid "Immediately (set up tasks first)"
 msgstr "Kohe (seadista esmalt ülesanded)"
@@ -601,8 +601,8 @@ msgstr "Nimi"
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:767
 #: lib/phoenix_kit_projects/web/project_form_live.ex:518
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2758
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2759
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2765
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2766
 #: lib/phoenix_kit_projects/web/projects_live.ex:1096
 #: lib/phoenix_kit_projects/web/projects_live.ex:1099
 #, elixir-autogen, elixir-format
@@ -700,12 +700,12 @@ msgstr "Ava kommentaarid"
 
 #: lib/phoenix_kit_projects/hours/report.ex:158
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:904
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2464
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1282
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1487
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1606
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1873
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2384
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2471
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1284
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1489
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1608
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1875
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2386
 #: lib/phoenix_kit_projects/web/project_members_live.ex:548
 #: lib/phoenix_kit_projects/web/time_live.ex:522
 #, elixir-autogen, elixir-format
@@ -719,19 +719,19 @@ msgstr "Vali kuupäev ja kellaaeg, millal projekt algab. Vaikimisi praegu; vali 
 
 #: lib/phoenix_kit_projects/api_access.ex:49
 #: lib/phoenix_kit_projects/hours/report.ex:159
-#: lib/phoenix_kit_projects/resource_links.ex:203
-#: lib/phoenix_kit_projects/resource_links.ex:203
+#: lib/phoenix_kit_projects/resource_links.ex:205
+#: lib/phoenix_kit_projects/resource_links.ex:205
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:886
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:1007
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:234
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:93
 #: lib/phoenix_kit_projects/web/project_form_live.ex:686
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:711
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1481
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1608
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1964
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2135
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2390
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1483
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1610
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1966
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2137
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2392
 #: lib/phoenix_kit_projects/web/project_show_live.ex:8163
 #: lib/phoenix_kit_projects/web/time_live.ex:385
 #, elixir-autogen, elixir-format
@@ -780,7 +780,7 @@ msgstr "Projektide nimekiri muutus; palun proovi uuesti."
 #: lib/phoenix_kit_projects/web/project_form_live.ex:612
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:58
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:98
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1324
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1326
 #: lib/phoenix_kit_projects/web/project_members_live.ex:87
 #: lib/phoenix_kit_projects/web/project_members_live.ex:98
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:84
@@ -815,9 +815,9 @@ msgstr "Projekt uuendatud."
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:36
 #: lib/phoenix_kit_projects/web/overview_live.ex:71
 #: lib/phoenix_kit_projects/web/overview_live.ex:1107
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2770
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2771
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:187
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2777
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2778
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:189
 #: lib/phoenix_kit_projects/web/project_show_live.ex:354
 #: lib/phoenix_kit_projects/web/projects_live.ex:122
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:54
@@ -845,7 +845,7 @@ msgstr "Kirjet ei leitud."
 msgid "Remaining:"
 msgstr "Aega jäänud:"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3832
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3839
 #: lib/phoenix_kit_projects/web/task_form_live.ex:701
 #, elixir-autogen, elixir-format
 msgid "Removing…"
@@ -869,8 +869,8 @@ msgstr "Käimas"
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6245
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6285
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:628
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3618
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2289
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3625
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2291
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:639
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3103
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6743
@@ -889,9 +889,9 @@ msgstr "Salvesta"
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:627
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:925
 #: lib/phoenix_kit_projects/web/outline_list.ex:1120
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3616
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2243
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2288
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3623
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2245
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2290
 #: lib/phoenix_kit_projects/web/project_members_live.ex:599
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:638
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2844
@@ -912,7 +912,7 @@ msgstr "Salvestan…"
 msgid "Scheduled"
 msgstr "Plaanitud"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2361
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2368
 #, elixir-autogen, elixir-format
 msgid "Scheduled date"
 msgstr "Plaanitud kuupäev"
@@ -945,7 +945,7 @@ msgid "Something went wrong while creating the project. Please try again."
 msgstr "Projekti loomisel läks midagi valesti. Palun proovi uuesti."
 
 #: lib/phoenix_kit_projects/errors.ex:51
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4038
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4045
 #, elixir-autogen, elixir-format
 msgid "Something went wrong. Please try again."
 msgstr "Midagi läks valesti. Palun proovi uuesti."
@@ -956,18 +956,18 @@ msgid "Standalone"
 msgstr "Iseseisev"
 
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:489
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2358
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2365
 #, elixir-autogen, elixir-format
 msgid "Start"
 msgstr "Alusta"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2376
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2383
 #: lib/phoenix_kit_projects/web/project_show_live.ex:8395
 #, elixir-autogen, elixir-format
 msgid "Start date and time"
 msgstr "Alguskuupäev ja kellaaeg"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2318
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2325
 #, elixir-autogen, elixir-format
 msgid "Start from scratch"
 msgstr "Alusta nullist"
@@ -996,7 +996,7 @@ msgid "Starting…"
 msgstr "Alustan…"
 
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:698
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:406
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:455
 #: lib/phoenix_kit_projects/web/helpers.ex:182
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:89
 #, elixir-autogen, elixir-format
@@ -1005,21 +1005,21 @@ msgstr "Olek"
 
 #: lib/phoenix_kit_projects/hours/report.ex:160
 #: lib/phoenix_kit_projects/invoicing.ex:321
-#: lib/phoenix_kit_projects/resource_links.ex:274
+#: lib/phoenix_kit_projects/resource_links.ex:276
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:233
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4683
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:151
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:98
 #: lib/phoenix_kit_projects/web/helpers.ex:181
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:491
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1283
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1494
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1607
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1965
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2196
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2205
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2396
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2407
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1285
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1496
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1609
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1967
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2198
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2207
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2398
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2409
 #: lib/phoenix_kit_projects/web/project_show_live.ex:8122
 #, elixir-autogen, elixir-format
 msgid "Task"
@@ -1117,9 +1117,9 @@ msgstr "Selle projekti ülesanded, mis peavad lõppema enne, kui seda saab alust
 msgid "Tasks with no dependency relationships yet."
 msgstr "Ülesanded ilma sõltuvusteta."
 
-#: lib/phoenix_kit_projects/assignees.ex:1203
+#: lib/phoenix_kit_projects/assignees.ex:1208
 #: lib/phoenix_kit_projects/web/project_form_live.ex:306
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2465
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2472
 #: lib/phoenix_kit_projects/web/project_members_live.ex:752
 #, elixir-autogen, elixir-format
 msgid "Team"
@@ -1312,7 +1312,7 @@ msgstr "ei saa sõltuda iseendast"
 msgid "completed"
 msgstr "lõpetatud"
 
-#: lib/phoenix_kit_projects/projects.ex:5861
+#: lib/phoenix_kit_projects/projects.ex:5976
 #, elixir-autogen, elixir-format
 msgid "conflicting dependency change in flight, please retry"
 msgstr "sõltuvuste muutus on käimas, palun proovi uuesti"
@@ -1449,12 +1449,12 @@ msgstr "täna"
 msgid "tomorrow"
 msgstr "homme"
 
-#: lib/phoenix_kit_projects/projects.ex:5820
+#: lib/phoenix_kit_projects/projects.ex:5935
 #, elixir-autogen, elixir-format
 msgid "must be a task of the same project"
 msgstr "peab olema sama projekti ülesanne"
 
-#: lib/phoenix_kit_projects/projects.ex:5830
+#: lib/phoenix_kit_projects/projects.ex:5945
 #, elixir-autogen, elixir-format
 msgid "would create a dependency cycle"
 msgstr "tekitaks sõltuvuste tsükli"
@@ -1473,7 +1473,7 @@ msgstr "jah"
 msgid "yesterday"
 msgstr "eile"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3180
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3187
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:623
 #, elixir-autogen, elixir-format
 msgid "—"
@@ -1530,7 +1530,7 @@ msgstr "Ülevaade"
 #: lib/phoenix_kit_projects/web/crumbs.ex:45
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:66
 #: lib/phoenix_kit_projects/web/outline_list.ex:1111
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3054
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3061
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:91
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6815
 #: lib/phoenix_kit_projects/web/task_form_live.ex:581
@@ -1790,8 +1790,8 @@ msgstr "Loomise kuupäev"
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5634
 #: lib/phoenix_kit_projects/web/components/time_input.ex:273
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:487
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1605
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2148
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1607
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2150
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3081
 #: lib/phoenix_kit_projects/web/time_live.ex:351
 #, elixir-autogen, elixir-format
@@ -1837,8 +1837,8 @@ msgstr "Projektimooduli vaikeväärtused."
 #: lib/phoenix_kit_projects/web/outline_list.ex:1224
 #: lib/phoenix_kit_projects/web/project_events_live.ex:626
 #: lib/phoenix_kit_projects/web/project_events_live.ex:629
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2037
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2040
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2039
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2042
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:813
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2735
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2738
@@ -1978,7 +1978,7 @@ msgid "Inside, only where it fits"
 msgstr "Riba sees, ainult kui mahub"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5215
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3822
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3829
 #, elixir-autogen, elixir-format
 msgid "Items in this project that must finish before this sub-project can start."
 msgstr "Selle projekti elemendid, mis peavad lõppema enne, kui seda alamprojekti saab alustada."
@@ -2092,7 +2092,7 @@ msgstr "Käimasolevaid ülesandeid pole."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5224
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5255
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3852
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3859
 #, elixir-autogen, elixir-format
 msgid "No other items in this project to depend on."
 msgstr "Selles projektis pole teisi elemente, millest sõltuda."
@@ -2135,8 +2135,8 @@ msgstr "Diagrammi jaoks pole veel ülesandeid."
 msgid "No tasks to place on the calendar yet."
 msgstr "Kalendrisse pole veel ühtegi ülesannet paigutada."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2231
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3397
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2238
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3404
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:820
 #, elixir-autogen, elixir-format
 msgid "None"
@@ -2302,9 +2302,9 @@ msgstr "Kalendri lugemine"
 #: lib/phoenix_kit_projects/web/components/task_files.ex:88
 #: lib/phoenix_kit_projects/web/components/task_files.ex:124
 #: lib/phoenix_kit_projects/web/project_files_live.ex:295
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2445
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3357
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3834
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2452
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3364
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3841
 #: lib/phoenix_kit_projects/web/project_members_live.ex:692
 #: lib/phoenix_kit_projects/web/project_members_live.ex:733
 #, elixir-autogen, elixir-format
@@ -2365,7 +2365,7 @@ msgstr "Ajakava"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5223
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5251
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3848
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3855
 #, elixir-autogen, elixir-format
 msgid "Select"
 msgstr "Vali"
@@ -2494,7 +2494,7 @@ msgid "Sub-project updated."
 msgstr "Alamprojekt uuendatud."
 
 #: lib/phoenix_kit_projects.ex:680
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1522
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1524
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:96
 #: lib/phoenix_kit_projects/web/widgets/project_schedule_widget.ex:110
 #, elixir-autogen, elixir-format
@@ -2603,7 +2603,7 @@ msgstr "Laine nihe (päeva kohta)"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:525
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:486
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1877
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1879
 #: lib/phoenix_kit_projects/web/time_live.ex:351
 #, elixir-autogen, elixir-format
 msgid "Week"
@@ -2727,7 +2727,7 @@ msgstr "Punane rõngas tähistab hilinenud ülesannet — pole tehtud, kuid plaa
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:900
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5995
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:119
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1056
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1058
 #, elixir-autogen, elixir-format
 msgid "Me"
 msgstr "Mina"
@@ -2764,19 +2764,19 @@ msgstr "Lisa isik…"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5990
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:102
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2513
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1593
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2187
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2216
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2520
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1595
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2189
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2218
 #, elixir-autogen, elixir-format
 msgid "Load more"
 msgstr "Laadi veel"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5991
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:103
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1594
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2188
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2217
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1596
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2190
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2219
 #, elixir-autogen, elixir-format
 msgid "Loading…"
 msgstr "Laadimine…"
@@ -2784,10 +2784,10 @@ msgstr "Laadimine…"
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:919
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5992
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:104
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2514
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1595
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2189
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2218
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2521
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1597
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2191
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2220
 #: lib/phoenix_kit_projects/web/project_members_live.ex:565
 #, elixir-autogen, elixir-format
 msgid "No matches"
@@ -2802,10 +2802,10 @@ msgstr "Eemalda %{name}"
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:918
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5989
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:101
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2512
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1592
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2186
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2215
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2519
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1594
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2188
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2217
 #: lib/phoenix_kit_projects/web/project_members_live.ex:564
 #, elixir-autogen, elixir-format
 msgid "Searching…"
@@ -2838,8 +2838,8 @@ msgstr "Sinu töö — määratud sulle, sinu meeskondadele või osakondadele"
 
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:914
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:84
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2527
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1545
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2534
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1547
 #: lib/phoenix_kit_projects/web/project_members_live.ex:559
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3101
 #, elixir-autogen, elixir-format
@@ -3176,7 +3176,7 @@ msgstr "Lisa esimene fail"
 
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:1128
 #: lib/phoenix_kit_projects/web/project_events_live.ex:762
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2555
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2562
 #: lib/phoenix_kit_projects/web/project_members_live.ex:572
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:846
 #: lib/phoenix_kit_projects/web/project_show_live.ex:7694
@@ -3199,14 +3199,14 @@ msgstr "Kõik valgetahvlid"
 #: lib/phoenix_kit_projects/hours/report.ex:89
 #: lib/phoenix_kit_projects/hours/report.ex:163
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6019
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1286
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1287
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1517
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1650
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2239
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2281
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2362
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2454
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1288
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1289
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1519
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1652
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2241
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2283
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2364
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2456
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6780
 #, elixir-autogen, elixir-format
 msgid "Billable"
@@ -3240,7 +3240,7 @@ msgid "Could not change the role."
 msgstr "Rolli muutmine ebaõnnestus."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:2395
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:754
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:756
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6415
 #, elixir-autogen, elixir-format
 msgid "Could not log the time."
@@ -3295,7 +3295,7 @@ msgid "Create the first one"
 msgstr "Loo esimene"
 
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:925
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3215
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3222
 #: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:442
 #, elixir-autogen, elixir-format
 msgid "Creating…"
@@ -3318,7 +3318,7 @@ msgid "Enable the module first."
 msgstr "Lülita kõigepealt moodul sisse."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:2388
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1111
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1113
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6419
 #, elixir-autogen, elixir-format
 msgid "Enter a positive amount of time."
@@ -3361,7 +3361,7 @@ msgstr "Fail eemaldatud."
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:795
 #: lib/phoenix_kit_projects/web/project_files_live.ex:63
 #: lib/phoenix_kit_projects/web/project_files_live.ex:228
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3275
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3282
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1295
 #, elixir-autogen, elixir-format
 msgid "Files"
@@ -3393,9 +3393,9 @@ msgid "Give the whiteboard a name (up to 160 characters)."
 msgstr "Anna valgetahvlile nimi (kuni 160 tähemärki)."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6022
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1364
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2128
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2244
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1366
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2130
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2246
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2671
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6752
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6793
@@ -3414,7 +3414,7 @@ msgid "Manage this project's modules & features"
 msgstr "Halda selle projekti mooduleid ja funktsioone"
 
 #: lib/phoenix_kit_projects/web/project_api_live.ex:152
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2469
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2476
 #: lib/phoenix_kit_projects/web/project_members_live.ex:652
 #: lib/phoenix_kit_projects/web/project_members_live.ex:781
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1732
@@ -3423,7 +3423,7 @@ msgid "Manager"
 msgstr "Juht"
 
 #: lib/phoenix_kit_projects/web/project_api_live.ex:153
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2470
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2477
 #: lib/phoenix_kit_projects/web/project_members_live.ex:651
 #: lib/phoenix_kit_projects/web/project_members_live.ex:782
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1733
@@ -3491,7 +3491,7 @@ msgid "No activity recorded yet."
 msgstr "Veel pole ühtegi tegevust."
 
 #: lib/phoenix_kit_projects/web/project_files_live.ex:255
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3282
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3289
 #, elixir-autogen, elixir-format
 msgid "No files yet."
 msgstr "Faile veel pole."
@@ -3507,7 +3507,7 @@ msgid "No whiteboards yet."
 msgstr "Valgetahvleid veel pole."
 
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:376
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1767
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1769
 #: lib/phoenix_kit_projects/web/project_show_live.ex:7804
 #, elixir-autogen, elixir-format
 msgid "Nothing here."
@@ -3663,7 +3663,7 @@ msgid "This feature is turned off for this project."
 msgstr "See funktsioon on selle projekti jaoks välja lülitatud."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:2385
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:749
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:751
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6412
 #, elixir-autogen, elixir-format
 msgid "Time logged."
@@ -3691,14 +3691,14 @@ msgid "Update"
 msgstr "Uuenda"
 
 #: lib/phoenix_kit_projects/web/project_api_live.ex:154
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2471
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2478
 #: lib/phoenix_kit_projects/web/project_members_live.ex:650
 #: lib/phoenix_kit_projects/web/project_members_live.ex:783
 #, elixir-autogen, elixir-format
 msgid "Viewer"
 msgstr "Vaataja"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2226
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2228
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6774
 #, elixir-autogen, elixir-format
 msgid "What was the time spent on?"
@@ -3730,8 +3730,8 @@ msgid "You don't have permission to change whiteboards."
 msgstr "Sul pole õigust valgetahvleid muuta."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:2392
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:693
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1104
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:695
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1106
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4796
 #, elixir-autogen, elixir-format
 msgid "You don't have permission to log time here."
@@ -3744,7 +3744,7 @@ msgstr "Sul pole õigust siin aega kirja panna."
 #: lib/phoenix_kit_projects/web/description_images.ex:138
 #: lib/phoenix_kit_projects/web/project_files_live.ex:186
 #: lib/phoenix_kit_projects/web/project_form_live.ex:1178
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4020
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4027
 #, elixir-autogen, elixir-format
 msgid "You don't have permission to manage files here."
 msgstr "Sul pole õigust siin faile hallata."
@@ -3792,7 +3792,7 @@ msgstr "nt sprindi ülevaatus"
 msgid "e.g. Sprint sketches"
 msgstr "nt sprindi visandid"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2217
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2224
 #, elixir-autogen, elixir-format
 msgid "%{count} feature on"
 msgid_plural "%{count} features on"
@@ -3806,7 +3806,7 @@ msgid_plural "%{count} months ago"
 msgstr[0] "%{count} kuu tagasi"
 msgstr[1] "%{count} kuud tagasi"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2200
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2207
 #, elixir-autogen, elixir-format
 msgid "%{count} permission changed"
 msgid_plural "%{count} permissions changed"
@@ -3892,8 +3892,8 @@ msgstr "Lisada ülesandeid"
 msgid "Add to library"
 msgstr "Lisa teeki"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2422
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2491
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2429
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2498
 #, elixir-autogen, elixir-format
 msgid "Add to project"
 msgstr "Lisa projekti"
@@ -3904,7 +3904,7 @@ msgid "Added from a project's quick-add; hidden from pickers until added to the 
 msgstr "Lisatud projekti kiirlisamisest; valijates peidus, kuni see teeki lisatakse."
 
 #: lib/phoenix_kit_projects/web/portal_live.ex:709
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1519
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1521
 #, elixir-autogen, elixir-format
 msgid "All"
 msgstr "Kõik"
@@ -3965,7 +3965,7 @@ msgstr "Tahvli aadress"
 msgid "Board address updated."
 msgstr "Tahvli aadress uuendatud."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2334
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2341
 #, elixir-autogen, elixir-format
 msgid "Brings extensions:"
 msgstr "Toob kaasa laiendused:"
@@ -3985,7 +3985,7 @@ msgstr "Muuta ülesande olekut"
 msgid "Choose a group first."
 msgstr "Vali kõigepealt rühm."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2816
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2823
 #, elixir-autogen, elixir-format
 msgid "Choose a starting point"
 msgstr "Vali lähtepunkt"
@@ -4072,7 +4072,7 @@ msgstr "Ülesannet ei õnnestunud uuendada."
 msgid "Create a draft invoice from all uninvoiced billable time?"
 msgstr "Kas luua kogu arveldamata ajast arve mustand?"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2870
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2877
 #, elixir-autogen, elixir-format
 msgid "Current setup:"
 msgstr "Praegune seadistus:"
@@ -4089,18 +4089,18 @@ msgstr "Praegune väärtus (pole saadaval)"
 msgid "Custom"
 msgstr "Kohandatud"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2177
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2186
 #, elixir-autogen, elixir-format
 msgid "Custom statuses"
 msgstr "Kohandatud olekud"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2879
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2886
 #, elixir-autogen, elixir-format
 msgid "Customize capabilities ↓"
 msgstr "Kohanda võimalusi ↓"
 
 #: lib/phoenix_kit_projects/web/components/access_panel.ex:174
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3516
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3523
 #, elixir-autogen, elixir-format
 msgid "Delete tasks"
 msgstr "Kustutada ülesandeid"
@@ -4127,7 +4127,7 @@ msgstr "Muuta kõigi ülesandeid"
 msgid "Enable the Customer billing extension for this project first."
 msgstr "Lülita kõigepealt selle projekti jaoks sisse kliendiarvelduse laiendus."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2547
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2554
 #, elixir-autogen, elixir-format
 msgid "Everyone in it gets this role, including people who join later."
 msgstr "Kõik selle liikmed saavad selle rolli, ka hiljem liitujad."
@@ -4147,17 +4147,17 @@ msgstr "Kõik, kes saavad projekte avada"
 msgid "Everyone with access can do everything by default. Restrict anything you'd rather keep to managers."
 msgstr "Kõik, kellel on juurdepääs, võivad vaikimisi kõike teha. Piira seda, mida soovid pigem juhtidele jätta."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3205
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3212
 #, elixir-autogen, elixir-format
 msgid "Everything here can be changed later in Modules & features."
 msgstr "Kõike siin saab hiljem muuta jaotises Moodulid ja funktsioonid."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3107
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3114
 #, elixir-autogen, elixir-format
 msgid "Extensions"
 msgstr "Laiendused"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2158
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2165
 #, elixir-autogen, elixir-format
 msgid "From a template"
 msgstr "Mallist"
@@ -4210,7 +4210,7 @@ msgstr "Teated ilmuvad siia, kui meeskond need avaldab."
 msgid "Just the people on it"
 msgstr "Ainult sellega seotud inimesed"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2186
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2193
 #, elixir-autogen, elixir-format
 msgid "Just you"
 msgstr "Ainult sina"
@@ -4239,7 +4239,7 @@ msgstr "Seo arveldusprofiil kliendiarvelduse laienduse seadetes."
 msgid "Low"
 msgstr "Madal"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2543
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2550
 #, elixir-autogen, elixir-format
 msgid "Manager — can also restrict what others do"
 msgstr "Juht — saab lisaks piirata, mida teised teevad"
@@ -4254,7 +4254,7 @@ msgstr "Juhid ja omanikud"
 msgid "Manual order"
 msgstr "Käsitsi järjestus"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2542
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2549
 #, elixir-autogen, elixir-format
 msgid "Member — normal access"
 msgstr "Liige — tavaline juurdepääs"
@@ -4278,7 +4278,7 @@ msgstr "Liikmed, sinu lisatud meeskonnad ja osakonnad ning saidi administraatori
 msgid "My Projects"
 msgstr "Minu projektid"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3084
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3091
 #, elixir-autogen, elixir-format
 msgid "Needs: %{list}"
 msgstr "Vajab: %{list}"
@@ -4303,7 +4303,7 @@ msgstr "Kirjeldust ei antud."
 msgid "No issues in this view"
 msgstr "Selles vaates teateid pole"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2162
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2169
 #, elixir-autogen, elixir-format
 msgid "No template"
 msgstr "Ilma mallita"
@@ -4313,7 +4313,7 @@ msgstr "Ilma mallita"
 msgid "No uninvoiced billable time to bill."
 msgstr "Arveldamata arveldatavat aega pole."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2453
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2460
 #, elixir-autogen, elixir-format
 msgid "Nobody else yet — the project starts private to you and site admins."
 msgstr "Veel mitte keegi teine — alguses näed projekti ainult sina ja saidi administraatorid."
@@ -4374,19 +4374,19 @@ msgstr "Osalus uuendatud."
 #: lib/phoenix_kit_projects/features.ex:587
 #: lib/phoenix_kit_projects/people_source.ex:38
 #: lib/phoenix_kit_projects/web/components/description_editor.ex:265
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2924
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1647
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1651
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2931
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1649
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1653
 #, elixir-autogen, elixir-format
 msgid "People"
 msgstr "Inimesed"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2999
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3006
 #, elixir-autogen, elixir-format
 msgid "People & permissions"
 msgstr "Inimesed ja õigused"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2820
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2827
 #, elixir-autogen, elixir-format
 msgid "Pick the closest fit — you can change everything below."
 msgstr "Vali kõige sobivam — allpool saad kõike muuta."
@@ -4487,7 +4487,7 @@ msgstr "Teatamine on siin suletud"
 msgid "Review submissions"
 msgstr "Vaata esitused üle"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2538
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2545
 #, elixir-autogen, elixir-format
 msgid "Role on this project"
 msgstr "Roll selles projektis"
@@ -4502,7 +4502,7 @@ msgstr "Uuenda linki"
 msgid "Save access"
 msgstr "Salvesta juurdepääs"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2169
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2177
 #, elixir-autogen, elixir-format
 msgid "Scheduled start"
 msgstr "Plaanitud algus"
@@ -4517,7 +4517,7 @@ msgstr "Sellele teatele lisatud ekraanipilt"
 msgid "Search for a person, team, or department first."
 msgstr "Otsi kõigepealt inimest, meeskonda või osakonda."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2510
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2517
 #, elixir-autogen, elixir-format
 msgid "Search people, teams, departments…"
 msgstr "Otsi inimesi, meeskondi, osakondi…"
@@ -4598,12 +4598,12 @@ msgstr "Sisse loginud kasutajad"
 msgid "Signed-in users can now reach this portal."
 msgstr "Sisse loginud kasutajad pääsevad nüüd sellele portaalile ligi."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2176
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2185
 #, elixir-autogen, elixir-format
 msgid "Site default statuses"
 msgstr "Saidi vaikeolekud"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2467
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2474
 #: lib/phoenix_kit_projects/web/project_members_live.ex:754
 #, elixir-autogen, elixir-format
 msgid "Site role"
@@ -4624,17 +4624,17 @@ msgstr "Mõned tahvlid nõuavad sisselogimist"
 msgid "Sort tasks"
 msgstr "Sordi ülesandeid"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2950
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2957
 #, elixir-autogen, elixir-format
 msgid "Start from"
 msgstr "Lähtekoht"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2170
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2178
 #, elixir-autogen, elixir-format
 msgid "Starts immediately"
 msgstr "Algab kohe"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2403
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2410
 #, elixir-autogen, elixir-format
 msgid "Statuses lock in when the project starts."
 msgstr "Olekud lukustuvad projekti alguses."
@@ -4675,7 +4675,7 @@ msgstr "Sildid, mida ülesannetele saab panna — vali need ülesande vormil."
 msgid "Task added to the library."
 msgstr "Ülesanne lisatud teeki."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3031
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3038
 #, elixir-autogen, elixir-format
 msgid "Task features"
 msgstr "Ülesannete funktsioonid"
@@ -4691,7 +4691,7 @@ msgstr "Ülesannete teegi filter"
 msgid "Teams"
 msgstr "Meeskonnad"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2337
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2344
 #, elixir-autogen, elixir-format
 msgid "Template capabilities carry over; your choices below win."
 msgstr "Malli võimalused kanduvad üle; sinu valikud allpool on ülimuslikud."
@@ -4781,7 +4781,7 @@ msgstr "Laadida faile üles"
 msgid "Urgent"
 msgstr "Kiireloomuline"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2541
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2548
 #, elixir-autogen, elixir-format
 msgid "Viewer — can look, not change"
 msgstr "Vaataja — võib vaadata, mitte muuta"
@@ -4806,15 +4806,15 @@ msgstr "Mida nad teha võivad"
 msgid "What you did, what you expected, and what happened instead."
 msgstr "Mida sa tegid, mida ootasid ja mis selle asemel juhtus."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2501
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1963
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2171
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2406
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2508
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1965
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2173
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2408
 #, elixir-autogen, elixir-format
 msgid "Who"
 msgstr "Kes"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3008
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3015
 #, elixir-autogen, elixir-format
 msgid "Who can do what"
 msgstr "Kes mida teha võib"
@@ -4844,7 +4844,7 @@ msgstr "Kes võib osaleda"
 msgid "With: %{list}"
 msgstr "Koos: %{list}"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2187
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2194
 #, elixir-autogen, elixir-format
 msgid "You + %{count} added"
 msgid_plural "You + %{count} added"
@@ -4867,8 +4867,8 @@ msgid "You create the project, so you own it — you can do everything."
 msgstr "Sina lood projekti, seega oled selle omanik — võid kõike teha."
 
 #: lib/phoenix_kit_projects/web/ai_translate_gate.ex:42
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3768
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3889
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3775
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3896
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3698
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6363
 #: lib/phoenix_kit_projects/web/write_gate.ex:42
@@ -4881,7 +4881,7 @@ msgstr "Sul pole õigust seda siin teha."
 msgid "You don't have permission to invoice this project."
 msgstr "Sul pole õigust seda projekti arveldada."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2415
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2422
 #, elixir-autogen, elixir-format
 msgid "You — Owner"
 msgstr "Sina — omanik"
@@ -4897,7 +4897,7 @@ msgid "and anyone added later"
 msgstr "ja kõik hiljem lisatud"
 
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2102
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2219
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2226
 #, elixir-autogen, elixir-format
 msgid "customized"
 msgstr "kohandatud"
@@ -5010,7 +5010,7 @@ msgstr "Seaded"
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5051
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5322
 #: lib/phoenix_kit_projects/web/components/confirm_action.ex:71
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2761
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2768
 #: lib/phoenix_kit_projects/web/task_form_live.ex:574
 #: lib/phoenix_kit_projects/web/template_form_live.ex:481
 #, elixir-autogen, elixir-format
@@ -5027,7 +5027,7 @@ msgstr "Lisa ülesannete teeki"
 msgid "Add the first task"
 msgstr "Lisa esimene ülesanne"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3391
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3398
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:884
 #, elixir-autogen, elixir-format
 msgid "Always"
@@ -5044,8 +5044,8 @@ msgid "From this many tasks"
 msgstr "Alates sellest ülesannete arvust"
 
 #: lib/phoenix_kit_projects/web/api_key_panel.ex:27
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3391
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3520
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3398
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3527
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:885
 #, elixir-autogen, elixir-format
 msgid "Never"
@@ -5092,7 +5092,7 @@ msgstr "Valgetahvlit ei õnnestunud luua."
 msgid "Nothing is turned on for this project yet."
 msgstr "Selle projekti jaoks pole veel midagi sisse lülitatud."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3057
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3064
 #, elixir-autogen, elixir-format
 msgid "A task list with its board, timeline and calendar. Off: a project made only of the tabs you pick below."
 msgstr "Ülesannete loend koos tahvli, ajajoone ja kalendriga. Väljas: projekt koosneb ainult allpool valitud vahekaartidest."
@@ -5102,7 +5102,7 @@ msgstr "Ülesannete loend koos tahvli, ajajoone ja kalendriga. Väljas: projekt 
 msgid "No tasks"
 msgstr "Ülesandeid pole"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2207
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2214
 #, elixir-autogen, elixir-format
 msgid "Off — no task list"
 msgstr "Väljas — ülesannete loendit pole"
@@ -5196,7 +5196,7 @@ msgstr "Anonüümne probleemide esitamine ja avalik olekuleht privaatse lingi ta
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5183
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5553
 #: lib/phoenix_kit_projects/web/helpers.ex:198
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3258
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3265
 #, elixir-autogen, elixir-format
 msgid "Assignees"
 msgstr "Vastutajad"
@@ -5488,7 +5488,7 @@ msgid "Warning"
 msgstr "Hoiatus"
 
 #: lib/phoenix_kit_projects/web/project_activity_live.ex:179
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2053
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2055
 #, elixir-autogen, elixir-format
 msgid "entries"
 msgstr "kirjet"
@@ -5498,7 +5498,7 @@ msgstr "kirjet"
 msgid "That project is archived — restore it before nesting it."
 msgstr "See projekt on arhiveeritud — taasta see enne alamprojektiks lisamist."
 
-#: lib/phoenix_kit_projects/resource_links.ex:264
+#: lib/phoenix_kit_projects/resource_links.ex:266
 #, elixir-autogen, elixir-format
 msgid "Task in %{project}"
 msgstr "Ülesanne projektis %{project}"
@@ -5530,7 +5530,7 @@ msgstr "Loo võti"
 
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:84
 #: lib/phoenix_kit_projects/web/helpers.ex:167
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2720
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2727
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:88
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:885
 #, elixir-autogen, elixir-format
@@ -5656,7 +5656,7 @@ msgstr "Baas-URL: %{url}"
 #: lib/phoenix_kit_projects/web/components/api_token_modal.ex:68
 #: lib/phoenix_kit_projects/web/components/api_token_modal.ex:94
 #: lib/phoenix_kit_projects/web/project_api_live.ex:232
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2328
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2330
 #, elixir-autogen, elixir-format
 msgid "Copied!"
 msgstr "Kopeeritud!"
@@ -5808,12 +5808,12 @@ msgstr "Kõik tehtud"
 msgid "Amend or remove its own time and usage entries"
 msgstr "Muuta või eemaldada oma aja- ja kasutuskirjeid"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3527
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3534
 #, elixir-autogen, elixir-format
 msgid "An agent always acts with the role of the person its key acts for; these rows narrow what it may do on top of that."
 msgstr "Agent tegutseb alati selle inimese rolliga, kelle nimel selle võti tegutseb; need read kitsendavad lisaks seda, mida ta teha tohib."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3522
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3529
 #, elixir-autogen, elixir-format
 msgid "Any task"
 msgstr "Kõik ülesanded"
@@ -5823,7 +5823,7 @@ msgstr "Kõik ülesanded"
 msgid "Ends"
 msgstr "Lõpeb"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1465
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1467
 #, elixir-autogen, elixir-format
 msgid "From"
 msgstr "Alates"
@@ -5831,7 +5831,7 @@ msgstr "Alates"
 #: lib/phoenix_kit_projects/calendar_display.ex:536
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:526
 #: lib/phoenix_kit_projects/web/components/running_card.ex:155
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2578
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2585
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:72
 #: lib/phoenix_kit_projects/web/project_show_live.ex:5774
 #: lib/phoenix_kit_projects/web/project_show_live.ex:7530
@@ -5847,7 +5847,7 @@ msgstr "Käimasolev"
 msgid "Ongoing — this project ends only when someone ends it"
 msgstr "Käimasolev — see projekt lõpeb ainult siis, kui keegi selle lõpetab"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3521
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3528
 #, elixir-autogen, elixir-format
 msgid "Only the ones it created"
 msgstr "Ainult need, mille ta ise lõi"
@@ -5867,7 +5867,7 @@ msgstr "Sõnastada ümber ülesandeid, mida ta ise ei loonud"
 msgid "Take over a task someone else started"
 msgstr "Võtta üle ülesanne, mille keegi teine töösse võttis"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3501
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3508
 #, elixir-autogen, elixir-format
 msgid "What an AI agent may do here"
 msgstr "Mida AI-agent siin teha tohib"
@@ -5903,12 +5903,12 @@ msgid "\"%{name}\" is now under \"%{parent}\"."
 msgstr "„%{name}“ on nüüd projekti „%{parent}“ all."
 
 #: lib/phoenix_kit_projects/hours/report.ex:109
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1778
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1780
 #, elixir-autogen, elixir-format
 msgid "%{amount} billable"
 msgstr "%{amount} arveldatav"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1796
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1798
 #, elixir-autogen, elixir-format
 msgid "%{count} entry"
 msgid_plural "%{count} entries"
@@ -5948,18 +5948,18 @@ msgid "A project cannot go under one of its own sub-projects."
 msgstr "Projekti ei saa panna tema enda alamprojekti alla."
 
 #: lib/phoenix_kit_projects/hours/report.ex:115
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:390
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:396
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1825
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:392
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:398
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1827
 #, elixir-autogen, elixir-format
 msgid "A removed task"
 msgstr "Eemaldatud ülesanne"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:887
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1692
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1773
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1985
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2437
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:889
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1694
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1775
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1987
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2439
 #, elixir-autogen, elixir-format
 msgid "AI"
 msgstr "AI"
@@ -5974,8 +5974,8 @@ msgstr "AI-agent"
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:461
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:488
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5954
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1661
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2376
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1663
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2378
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:113
 #, elixir-autogen, elixir-format
 msgid "AI cost"
@@ -5986,8 +5986,8 @@ msgstr "AI-kulu"
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:463
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:489
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5942
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1658
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2368
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1660
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2370
 #, elixir-autogen, elixir-format
 msgid "AI time"
 msgstr "AI-aeg"
@@ -5997,8 +5997,8 @@ msgstr "AI-aeg"
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:462
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:487
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5948
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1660
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2372
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1662
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2374
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:112
 #, elixir-autogen, elixir-format
 msgid "AI tokens"
@@ -6009,13 +6009,13 @@ msgstr "AI-tokenid"
 msgid "API keys that reach this project only through its parent"
 msgstr "API-võtmed, mis ulatuvad selle projektini ainult ülemprojekti kaudu"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1484
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1486
 #: lib/phoenix_kit_projects/web/time_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "All projects"
 msgstr "Kõik projektid"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1497
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1499
 #: lib/phoenix_kit_projects/web/project_show_live.ex:8124
 #, elixir-autogen, elixir-format
 msgid "All tasks"
@@ -6028,7 +6028,7 @@ msgstr "Kõik ülesanded"
 msgid "All time"
 msgstr "Kogu aeg"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2733
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2740
 #, elixir-autogen, elixir-format
 msgid "Also answers to: %{keys}."
 msgstr "Töötab ka: %{keys}."
@@ -6054,7 +6054,7 @@ msgstr "Ainult arhiveeritud"
 msgid "Assignee"
 msgstr "Vastutaja"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2314
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2316
 #, elixir-autogen, elixir-format
 msgid "Back to hours"
 msgstr "Tagasi tundide juurde"
@@ -6064,34 +6064,34 @@ msgstr "Tagasi tundide juurde"
 msgid "Billable hours"
 msgstr "Arveldatavad tunnid"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1519
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1521
 #, elixir-autogen, elixir-format
 msgid "Billable only"
 msgstr "Ainult arveldatav"
 
 #: lib/phoenix_kit_projects/hours/report.ex:70
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1385
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2383
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1387
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2385
 #, elixir-autogen, elixir-format
 msgid "By person"
 msgstr "Inimeste kaupa"
 
 #: lib/phoenix_kit_projects/hours/report.ex:72
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:214
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1398
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2389
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1400
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2391
 #, elixir-autogen, elixir-format
 msgid "By project"
 msgstr "Projektide kaupa"
 
 #: lib/phoenix_kit_projects/hours/report.ex:75
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1390
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2395
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1392
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2397
 #, elixir-autogen, elixir-format
 msgid "By task"
 msgstr "Ülesannete kaupa"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2336
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2338
 #, elixir-autogen, elixir-format
 msgid "CSV"
 msgstr "CSV"
@@ -6111,7 +6111,7 @@ msgstr "Vali, kuhu projekt teisaldada."
 msgid "Clear filters"
 msgstr "Tühjenda filtrid"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2327
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2329
 #, elixir-autogen, elixir-format
 msgid "Copy as text"
 msgstr "Kopeeri tekstina"
@@ -6121,58 +6121,58 @@ msgstr "Kopeeri tekstina"
 msgid "Could not move the project."
 msgstr "Projekti teisaldamine ebaõnnestus."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:809
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:811
 #, elixir-autogen, elixir-format
 msgid "Could not remove the entry."
 msgstr "Kande eemaldamine ebaõnnestus."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:799
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:801
 #, elixir-autogen, elixir-format
 msgid "Could not update the entry."
 msgstr "Kande muutmine ebaõnnestus."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2332
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2334
 #, elixir-autogen, elixir-format
 msgid "Download CSV"
 msgstr "Laadi alla CSV"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2262
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2264
 #, elixir-autogen, elixir-format
 msgid "Edit entry"
 msgstr "Muuda kannet"
 
 #: lib/phoenix_kit_projects/hours/report.ex:142
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1652
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1659
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1946
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2401
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2455
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1654
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1661
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1948
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2403
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2457
 #, elixir-autogen, elixir-format
 msgid "Entries"
 msgstr "Kanded"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1212
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1214
 #, elixir-autogen, elixir-format
 msgid "Entry not found."
 msgstr "Kannet ei leitud."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:806
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:808
 #, elixir-autogen, elixir-format
 msgid "Entry removed."
 msgstr "Kanne eemaldatud."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:789
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:791
 #, elixir-autogen, elixir-format
 msgid "Entry updated."
 msgstr "Kanne muudetud."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1490
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1492
 #, elixir-autogen, elixir-format
 msgid "Everyone"
 msgstr "Kõik"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:488
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1923
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1925
 #: lib/phoenix_kit_projects/web/time_live.ex:982
 #, elixir-autogen, elixir-format
 msgid "Fri"
@@ -6183,7 +6183,7 @@ msgstr "R"
 msgid "From %{date}"
 msgstr "Alates %{date}"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2350
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2352
 #, elixir-autogen, elixir-format
 msgid "Generated %{at}"
 msgstr "Koostatud %{at}"
@@ -6198,31 +6198,31 @@ msgstr "Tähtaja ületanud ülesannetega"
 msgid "Health"
 msgstr "Seisund"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1328
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1330
 #, elixir-autogen, elixir-format
 msgid "Hours are turned off for this project."
 msgstr "Tunnid on selles projektis välja lülitatud."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1687
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1715
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1689
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1717
 #, elixir-autogen, elixir-format
 msgid "Hours per day"
 msgstr "Tunnid päevade kaupa"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1268
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1272
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1270
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1274
 #, elixir-autogen, elixir-format
 msgid "Hours — %{project}"
 msgstr "Tunnid — %{project}"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1273
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1275
 #, elixir-autogen, elixir-format
 msgid "Hours — all projects"
 msgstr "Tunnid — kõik projektid"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6004
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2164
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2268
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2166
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2270
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6764
 #, elixir-autogen, elixir-format
 msgid "How long"
@@ -6269,7 +6269,7 @@ msgid "Modules and their settings"
 msgstr "Moodulid ja nende seaded"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:484
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1919
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1921
 #: lib/phoenix_kit_projects/web/time_live.ex:978
 #, elixir-autogen, elixir-format
 msgid "Mon"
@@ -6319,7 +6319,7 @@ msgstr "Järgmine tähtaeg"
 msgid "Next event"
 msgstr "Järgmine sündmus"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1375
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1377
 #, elixir-autogen, elixir-format
 msgid "No time logged in this period."
 msgstr "Sellel perioodil pole aega kirja pandud."
@@ -6329,22 +6329,22 @@ msgstr "Sellel perioodil pole aega kirja pandud."
 msgid "Not archived"
 msgstr "Arhiveerimata"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1519
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1521
 #, elixir-autogen, elixir-format
 msgid "Not billable"
 msgstr "Ei ole arveldatav"
 
 #: lib/phoenix_kit_projects/hours/report.ex:164
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1967
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2224
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2409
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1969
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2226
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2411
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6733
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6772
 #, elixir-autogen, elixir-format
 msgid "Note"
 msgstr "Märkus"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1604
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1606
 #, elixir-autogen, elixir-format
 msgid "Nothing"
 msgstr "Mitte midagi"
@@ -6364,7 +6364,7 @@ msgstr "Nüüd projekti „%{parent}“ alamprojekt. Selle ülesanded, alamproje
 msgid "Open tasks"
 msgstr "Avatud ülesanded"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:490
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:492
 #, elixir-autogen, elixir-format
 msgid "Others"
 msgstr "Teised"
@@ -6376,28 +6376,28 @@ msgstr "Tähtaja ületanud ülesanded"
 
 #: lib/phoenix_kit_projects/hours/report.ex:66
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:75
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1456
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2347
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1458
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2349
 #, elixir-autogen, elixir-format
 msgid "Period"
 msgstr "Periood"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1135
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1137
 #, elixir-autogen, elixir-format
 msgid "Pick a person from the list."
 msgstr "Vali inimene nimekirjast."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1152
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1154
 #, elixir-autogen, elixir-format
 msgid "Pick a task of this project."
 msgstr "Vali selle projekti ülesanne."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1176
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1178
 #, elixir-autogen, elixir-format
 msgid "Pick the day the work was done."
 msgstr "Vali päev, mil töö tehti."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2318
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2320
 #, elixir-autogen, elixir-format
 msgid "Print or save as PDF"
 msgstr "Prindi või salvesta PDF-ina"
@@ -6407,29 +6407,29 @@ msgstr "Prindi või salvesta PDF-ina"
 msgid "Put it under another project"
 msgstr "Pane teise projekti alla"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1355
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1357
 #, elixir-autogen, elixir-format
 msgid "Report"
 msgstr "Aruanne"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:489
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1924
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1926
 #: lib/phoenix_kit_projects/web/time_live.ex:983
 #, elixir-autogen, elixir-format
 msgid "Sat"
 msgstr "L"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1788
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1790
 #, elixir-autogen, elixir-format
 msgid "Show all"
 msgstr "Näita kõiki"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1788
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1790
 #, elixir-autogen, elixir-format
 msgid "Show fewer"
 msgstr "Näita vähem"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1128
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1130
 #, elixir-autogen, elixir-format
 msgid "Sign in to log time."
 msgstr "Aja kirjapanekuks logi sisse."
@@ -6441,7 +6441,7 @@ msgstr "Aja kirjapanekuks logi sisse."
 #: lib/phoenix_kit_projects/notices.ex:869
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:317
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:52
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1096
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1098
 #: lib/phoenix_kit_projects/web/project_show_live.ex:8147
 #, elixir-autogen, elixir-format
 msgid "Someone"
@@ -6464,7 +6464,7 @@ msgid "State"
 msgstr "Seis"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:490
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1925
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1927
 #: lib/phoenix_kit_projects/web/time_live.ex:984
 #, elixir-autogen, elixir-format
 msgid "Sun"
@@ -6475,13 +6475,13 @@ msgstr "P"
 msgid "Take along from \"%{parent}\""
 msgstr "Võta kaasa projektist „%{parent}“"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1167
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1169
 #, elixir-autogen, elixir-format
 msgid "The day cannot be in the future."
 msgstr "Päev ei saa olla tulevikus."
 
 #: lib/phoenix_kit_projects/hours/report.ex:135
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2426
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2428
 #, elixir-autogen, elixir-format
 msgid "The first %{shown} of %{total} entries."
 msgstr "Esimesed %{shown} kannet %{total}-st."
@@ -6492,27 +6492,27 @@ msgid "The project is already there."
 msgstr "Projekt on juba seal."
 
 #: lib/phoenix_kit_projects/hours/report.ex:114
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1824
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1826
 #, elixir-autogen, elixir-format
 msgid "The project itself"
 msgstr "Projekt ise"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2284
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2286
 #, elixir-autogen, elixir-format
 msgid "The project's activity keeps the figure before and after."
 msgstr "Projekti tegevuslogi säilitab näidu enne ja pärast."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2431
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2433
 #, elixir-autogen, elixir-format
 msgid "The report as text"
 msgstr "Aruanne tekstina"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2729
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2736
 #, elixir-autogen, elixir-format
 msgid "The short name of this project: its tasks are %{example}, and the key works in links and on the API. You can change it — the old key keeps working."
 msgstr "Selle projekti lühinimi: selle ülesanded on %{example} ning võti töötab linkides ja API-s. Võid seda muuta — vana võti jääb tööle."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2736
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2743
 #, elixir-autogen, elixir-format
 msgid "The short name of this project: its tasks will be %{example}, … Leave it empty to get %{suggestion}."
 msgstr "Selle projekti lühinimi: selle ülesanded on %{example}, … Jäta tühjaks, siis saab võtmeks %{suggestion}."
@@ -6522,7 +6522,7 @@ msgstr "Selle projekti lühinimi: selle ülesanded on %{example}, … Jäta tüh
 msgid "There is no other project you can add it to."
 msgstr "Pole teist projekti, mille alla saaksid selle panna."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1210
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1212
 #, elixir-autogen, elixir-format
 msgid "This entry is on an invoice and cannot be changed here."
 msgstr "See kanne on arvel ja seda ei saa siin muuta."
@@ -6533,7 +6533,7 @@ msgid "This month"
 msgstr "See kuu"
 
 #: lib/phoenix_kit_projects/hours/period.ex:35
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1858
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1860
 #: lib/phoenix_kit_projects/web/time_live.ex:361
 #, elixir-autogen, elixir-format
 msgid "This week"
@@ -6545,7 +6545,7 @@ msgid "This year"
 msgstr "See aasta"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:487
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1922
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1924
 #: lib/phoenix_kit_projects/web/time_live.ex:981
 #, elixir-autogen, elixir-format
 msgid "Thu"
@@ -6558,9 +6558,9 @@ msgstr "N"
 #: lib/phoenix_kit_projects/web/components/time_input.ex:367
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:68
 #: lib/phoenix_kit_projects/web/project_history_live.ex:140
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1966
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2408
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2452
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1968
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2410
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2454
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3089
 #: lib/phoenix_kit_projects/web/time_live.ex:65
 #: lib/phoenix_kit_projects/web/time_live.ex:85
@@ -6569,40 +6569,40 @@ msgstr "N"
 msgid "Time"
 msgstr "Aeg"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1849
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1851
 #, elixir-autogen, elixir-format
 msgid "Timesheet"
 msgstr "Tööajatabel"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1473
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1475
 #, elixir-autogen, elixir-format
 msgid "To"
 msgstr "Kuni"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2341
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2343
 #, elixir-autogen, elixir-format
 msgid "To print, use the button or your browser's Print (Ctrl+P or ⌘P) and choose \"Save as PDF\" for a file."
 msgstr "Printimiseks kasuta nuppu või brauseri printimist (Ctrl+P või ⌘P); faili saamiseks vali „Salvesta PDF-ina“."
 
 #: lib/phoenix_kit_projects/hours/report.ex:86
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1895
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1897
 #, elixir-autogen, elixir-format
 msgid "Total"
 msgstr "Kokku"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1376
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1378
 #, elixir-autogen, elixir-format
 msgid "Try a longer period, or clear the filters."
 msgstr "Proovi pikemat perioodi või tühjenda filtrid."
 
 #: lib/phoenix_kit_projects/calendar_display.ex:485
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1920
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1922
 #: lib/phoenix_kit_projects/web/time_live.ex:979
 #, elixir-autogen, elixir-format
 msgid "Tue"
 msgstr "T"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1329
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1331
 #, elixir-autogen, elixir-format
 msgid "Turn on the work ledger in the project's modules & features to track time here."
 msgstr "Aja jälgimiseks lülita projekti moodulite ja funktsioonide all sisse tööpäevik."
@@ -6613,14 +6613,14 @@ msgid "Until %{date}"
 msgstr "Kuni %{date}"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:486
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1921
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1923
 #: lib/phoenix_kit_projects/web/time_live.ex:980
 #, elixir-autogen, elixir-format
 msgid "Wed"
 msgstr "K"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1962
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2405
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1964
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2407
 #, elixir-autogen, elixir-format
 msgid "When"
 msgstr "Millal"
@@ -6630,7 +6630,7 @@ msgstr "Millal"
 msgid "With archived"
 msgstr "Koos arhiveeritutega"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1211
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1213
 #, elixir-autogen, elixir-format
 msgid "You don't have permission to change this entry."
 msgstr "Sul pole õigust seda kannet muuta."
@@ -6641,33 +6641,33 @@ msgid "You may not move this project there."
 msgstr "Sa ei tohi seda projekti sinna teisaldada."
 
 #: lib/phoenix_kit_projects/hours/report.ex:125
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2014
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2424
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2016
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2426
 #, elixir-autogen, elixir-format
 msgid "billable"
 msgstr "arveldatav"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1286
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1288
 #, elixir-autogen, elixir-format
 msgid "billable only"
 msgstr "ainult arveldatav"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2015
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2017
 #, elixir-autogen, elixir-format
 msgid "invoiced"
 msgstr "arvel"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1287
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1289
 #, elixir-autogen, elixir-format
 msgid "not billable only"
 msgstr "ainult mittearveldatav"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1620
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1622
 #, elixir-autogen, elixir-format
 msgid "times in %{zone}"
 msgstr "ajad vööndis %{zone}"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1619
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1621
 #, elixir-autogen, elixir-format
 msgid "times in UTC"
 msgstr "ajad UTC-s"
@@ -6725,47 +6725,47 @@ msgstr "Ülesanne uuendati, kuid selle kirjeldust ei õnnestunud salvestada."
 msgid "ongoing"
 msgstr "käimasolev"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2628
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2635
 #, elixir-autogen, elixir-format
 msgid "End project"
 msgstr "Lõpeta projekt"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2631
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2638
 #, elixir-autogen, elixir-format
 msgid "End this project"
 msgstr "Lõpeta see projekt"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2613
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2620
 #, elixir-autogen, elixir-format
 msgid "Ended %{when}"
 msgstr "Lõpetatud %{when}"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2619
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2626
 #, elixir-autogen, elixir-format
 msgid "Finished with it for good?"
 msgstr "Kas projekt on lõplikult valmis?"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4088
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4095
 #, elixir-autogen, elixir-format
 msgid "Project ended."
 msgstr "Projekt lõpetatud."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4088
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4095
 #, elixir-autogen, elixir-format
 msgid "Project reopened."
 msgstr "Projekt uuesti avatud."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2616
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2623
 #, elixir-autogen, elixir-format
 msgid "Reopen it"
 msgstr "Ava uuesti"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4091
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4098
 #, elixir-autogen, elixir-format
 msgid "That could not be done."
 msgstr "Seda ei õnnestunud teha."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2627
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2634
 #, elixir-autogen, elixir-format
 msgid "The project is marked completed and leaves the active lists. Its tasks stay as they are, and it can be reopened here."
 msgstr "Projekt märgitakse lõpetatuks ja kaob aktiivsete nimekirjadest. Selle ülesanded jäävad nii, nagu on, ja projekti saab siin uuesti avada."
@@ -6785,7 +6785,7 @@ msgstr "Inimeste tunnid"
 msgid "Total hours"
 msgstr "Tunnid kokku"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1799
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1801
 #, elixir-autogen, elixir-format
 msgid "%{own} on the task itself, %{below} on its subtasks"
 msgstr "%{own} ülesandel endal, %{below} selle alamülesannetel"
@@ -6803,7 +6803,7 @@ msgstr[1] "%{count} eemaldatud ülesandel on tunnid, märkmed või muu töö, se
 msgid "AI %{amount}"
 msgstr "AI %{amount}"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1656
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1658
 #, elixir-autogen, elixir-format
 msgid "AI agents"
 msgstr "AI-agendid"
@@ -6820,8 +6820,8 @@ msgstr "AI-arvud on AI enda teatatud. Täielikud märkmed avanevad ülesande rea
 msgid "AI notes"
 msgstr "AI-märkmed"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1285
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1510
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1287
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1512
 #, elixir-autogen, elixir-format
 msgid "AI only"
 msgstr "Ainult AI"
@@ -6831,29 +6831,29 @@ msgstr "Ainult AI"
 msgid "Add and close"
 msgstr "Lisa ja sulge"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3434
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3441
 #, elixir-autogen, elixir-format
 msgid "Always a text list — type, paste, Enter for the next"
 msgstr "Alati tekstiloend — kirjuta, kleebi, Enter järgmise jaoks"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3435
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3442
 #, elixir-autogen, elixir-format
 msgid "Always task cards"
 msgstr "Alati ülesandekaardid"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3433
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3440
 #, elixir-autogen, elixir-format
 msgid "Automatic — a text list until a feature needs more room"
 msgstr "Automaatne — tekstiloend, kuni mõni funktsioon vajab rohkem ruumi"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5983
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2180
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2182
 #, elixir-autogen, elixir-format
 msgid "Back to me"
 msgstr "Tagasi minule"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1586
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2205
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1588
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2207
 #, elixir-autogen, elixir-format
 msgid "Clear %{label}"
 msgstr "Tühjenda: %{label}"
@@ -6898,7 +6898,7 @@ msgstr "Enter lisab selle ja alustab järgmist · Esc sulgeb"
 msgid "Estimate and dates"
 msgstr "Hinnang ja kuupäevad"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1949
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1951
 #, elixir-autogen, elixir-format
 msgid "Group by"
 msgstr "Rühmita"
@@ -6919,19 +6919,19 @@ msgstr "Peida alamülesanded"
 msgid "Hours and AI usage"
 msgstr "Tunnid ja AI-kasutus"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3430
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3437
 #, elixir-autogen, elixir-format
 msgid "How it looks"
 msgstr "Kuidas see välja näeb"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5936
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1649
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2356
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1651
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2358
 #, elixir-autogen, elixir-format
 msgid "Human time"
 msgstr "Inimeste aeg"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1533
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1535
 #, elixir-autogen, elixir-format
 msgid "Include"
 msgstr "Kaasa"
@@ -6952,7 +6952,7 @@ msgid "Log time for other people"
 msgstr "Panna aega kirja teiste eest"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5987
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2184
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2186
 #, elixir-autogen, elixir-format
 msgid "Me — or search a person"
 msgstr "Mina — või otsi inimest"
@@ -6967,7 +6967,7 @@ msgstr "Salvestamata"
 msgid "Not saved — check your connection."
 msgstr "Salvestamata — kontrolli ühendust."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1863
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1865
 #, elixir-autogen, elixir-format
 msgid "Nothing logged for %{from} – %{to}."
 msgstr "Ajavahemikus %{from} – %{to} pole midagi kirja pandud."
@@ -6977,13 +6977,13 @@ msgstr "Ajavahemikus %{from} – %{to} pole midagi kirja pandud."
 msgid "One of the lines could not be saved."
 msgstr "Üht rida ei õnnestunud salvestada."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1508
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1510
 #, elixir-autogen, elixir-format
 msgid "People and AI"
 msgstr "Inimesed ja AI"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1284
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1509
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1286
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1511
 #, elixir-autogen, elixir-format
 msgid "People only"
 msgstr "Ainult inimesed"
@@ -7042,7 +7042,7 @@ msgstr "Kirjeldust ei õnnestunud salvestada."
 msgid "The list could not be saved."
 msgstr "Loendit ei õnnestunud salvestada."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2211
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2213
 #, elixir-autogen, elixir-format
 msgid "The project itself — or search a task"
 msgstr "Projekt ise — või otsi ülesannet"
@@ -7053,7 +7053,7 @@ msgstr "Projekt ise — või otsi ülesannet"
 msgid "The task could not be moved there."
 msgstr "Ülesannet ei saanud sinna liigutada."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3427
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3434
 #, elixir-autogen, elixir-format
 msgid "The task list"
 msgstr "Ülesannete loend"
@@ -7080,7 +7080,7 @@ msgstr "Seda projekti enam ei ole."
 msgid "This task is in the task library: renaming it here renames it in every project that uses it."
 msgstr "See ülesanne on ülesannete teegis: siin ümbernimetamine muudab nime kõigis projektides, mis seda kasutavad."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3447
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3454
 #, elixir-autogen, elixir-format
 msgid "Tick a task when its last subtask is ticked"
 msgstr "Märgi ülesanne tehtuks, kui selle viimane alamülesanne on tehtud"
@@ -7121,12 +7121,12 @@ msgstr "Kirjuta ülesanne ja vajuta Enter. Kleebi loend, et lisada mitu."
 msgid "Type the task"
 msgstr "Kirjuta ülesanne"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3478
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3485
 #, elixir-autogen, elixir-format
 msgid "Unticked, a feature stays in the task's form and off the card."
 msgstr "Märkimata funktsioon jääb ülesande vormi ja kaardile seda ei tule."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3476
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3483
 #, elixir-autogen, elixir-format
 msgid "What the task cards show"
 msgstr "Mida ülesandekaardid näitavad"
@@ -7136,9 +7136,9 @@ msgstr "Mida ülesandekaardid näitavad"
 msgid "Who it is assigned to"
 msgstr "Kellele see on määratud"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1284
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1285
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1505
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1286
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1287
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1507
 #, elixir-autogen, elixir-format
 msgid "Whose time"
 msgstr "Kelle aeg"
@@ -7192,12 +7192,12 @@ msgstr[1] "Kas kustutada see ülesanne ja selle %{count} alamülesannet? Seda ei
 msgid "Delete this task? This cannot be undone."
 msgstr "Kas kustutada see ülesanne? Seda ei saa tagasi võtta."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3462
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3469
 #, elixir-autogen, elixir-format
 msgid "In the text list, an × at the end of each line deletes it"
 msgstr "Tekstiloendis kustutab rea lõpus olev × selle"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3473
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3480
 #, elixir-autogen, elixir-format
 msgid "In the text list, drag handles before each line"
 msgstr "Tekstiloendis lohistamispide iga rea ees"
@@ -7747,7 +7747,7 @@ msgstr "Päringuna loetakse iga pöördumine. Tokenid, AI-aeg ja kulu on see, mi
 msgid "Tasks table"
 msgstr "Ülesannete tabel"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:677
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:676
 #, elixir-autogen, elixir-format
 msgid "%{project} taken away from %{key}."
 msgstr "%{project} võeti võtmelt %{key} ära."
@@ -8662,7 +8662,7 @@ msgstr "Vabastab"
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5213
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5845
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:804
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3820
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3827
 #: lib/phoenix_kit_projects/web/project_show_live.ex:7254
 #, elixir-autogen, elixir-format
 msgid "Waits on"
@@ -8742,7 +8742,7 @@ msgstr "%{hours} h kirja pandud"
 #: lib/phoenix_kit_projects/l10n.ex:190
 #: lib/phoenix_kit_projects/web/api_keys_usage.ex:516
 #: lib/phoenix_kit_projects/web/components/task_times.ex:78
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1749
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1751
 #, elixir-autogen, elixir-format
 msgid "%{month} %{day}"
 msgstr "%{day}. %{month}"
@@ -8753,7 +8753,7 @@ msgid "Actually worked"
 msgstr "Tegelikult töötatud"
 
 #: lib/phoenix_kit_projects/web/helpers.ex:178
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3374
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3381
 #, elixir-autogen, elixir-format
 msgid "Address"
 msgstr "Aadress"
@@ -8777,7 +8777,7 @@ msgstr "Määratud, ilma ajata"
 
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:492
 #: lib/phoenix_kit_projects/web/helpers.ex:179
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3380
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3387
 #, elixir-autogen, elixir-format
 msgid "Button text"
 msgstr "Nupu tekst"
@@ -8814,7 +8814,7 @@ msgstr "Tehtud kell %{time}"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5049
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5317
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2759
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2766
 #: lib/phoenix_kit_projects/web/task_form_live.ex:572
 #: lib/phoenix_kit_projects/web/template_form_live.ex:479
 #, elixir-autogen, elixir-format
@@ -8848,7 +8848,7 @@ msgid "Its deadline is close"
 msgstr "Tähtaeg on lähedal"
 
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:491
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3369
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3376
 #, elixir-autogen, elixir-format
 msgid "Link"
 msgstr "Link"
@@ -8888,7 +8888,7 @@ msgstr "Miski ei oota seda ülesannet."
 msgid "Now"
 msgstr "Praegu"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3381
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3388
 #: lib/phoenix_kit_projects/web/project_show_live.ex:5917
 #, elixir-autogen, elixir-format
 msgid "Open link"
@@ -8938,14 +8938,14 @@ msgstr "Määra tähtaeg"
 msgid "Set when the task is started and done; correct them here if they were pressed late."
 msgstr "Pannakse kirja, kui ülesanne võetakse töösse ja märgitakse tehtuks; paranda siin, kui nuppu vajutati hiljem."
 
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:223
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:272
 #, elixir-autogen, elixir-format
 msgid "Something here needs fixing"
 msgstr "Siin on midagi parandada"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6082
 #: lib/phoenix_kit_projects/web/helpers.ex:171
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2156
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2158
 #, elixir-autogen, elixir-format
 msgid "Started at"
 msgstr "Alustamise aeg"
@@ -8955,7 +8955,7 @@ msgstr "Alustamise aeg"
 msgid "Tasks that wait for this one to finish."
 msgstr "Ülesanded, mis ootavad, kuni see on tehtud."
 
-#: lib/phoenix_kit_projects/assignees.ex:1203
+#: lib/phoenix_kit_projects/assignees.ex:1208
 #, elixir-autogen, elixir-format
 msgid "Team · %{department}"
 msgstr "Meeskond · %{department}"
@@ -9017,7 +9017,7 @@ msgstr "Sul pole sellele lehele juurdepääsu."
 msgid "You don't have permission to change this task."
 msgstr "Sul pole õigust seda ülesannet muuta."
 
-#: lib/phoenix_kit_projects/web/components/assignee_faces.ex:131
+#: lib/phoenix_kit_projects/web/components/assignee_faces.ex:152
 #, elixir-autogen, elixir-format
 msgid "and %{count} more"
 msgstr "ja veel %{count}"
@@ -9177,7 +9177,7 @@ msgstr "Kas arhiveerida projekt „%{name}“?"
 msgid "Billable time"
 msgstr "Arveldatav aeg"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3353
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3360
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "Change"
@@ -9208,7 +9208,7 @@ msgstr "Tähtaeg: %{title}"
 msgid "Default assignment"
 msgstr "Vaikimisi vastutaja"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2035
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2037
 #, elixir-autogen, elixir-format
 msgid "Delete %{amount} logged by %{name}?"
 msgstr "Kas kustutada %{amount}, mille pani kirja %{name}?"
@@ -9271,7 +9271,7 @@ msgid "Does not repeat"
 msgstr "Ei kordu"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:6049
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3289
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3296
 #, elixir-autogen, elixir-format
 msgid "Drop files here or choose them"
 msgstr "Lohista failid siia või vali need"
@@ -9283,7 +9283,7 @@ msgstr "Lohista failid siia või vali need"
 msgid "End date"
 msgstr "Lõppkuupäev"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2626
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2633
 #, elixir-autogen, elixir-format
 msgid "End this project?"
 msgstr "Kas lõpetada see projekt?"
@@ -9304,7 +9304,7 @@ msgid "Every…"
 msgstr "Iga…"
 
 #: lib/phoenix_kit_projects/features.ex:584
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2315
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2322
 #, elixir-autogen, elixir-format
 msgid "From template"
 msgstr "Mallist"
@@ -9325,13 +9325,13 @@ msgid "Go back to a private link?"
 msgstr "Kas minna tagasi privaatsele lingile?"
 
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:527
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2578
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2585
 #, elixir-autogen, elixir-format
 msgid "Has an end"
 msgstr "Sellel on lõpp"
 
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:493
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2576
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2583
 #, elixir-autogen, elixir-format
 msgid "How it ends"
 msgstr "Kuidas see lõpeb"
@@ -9351,7 +9351,7 @@ msgstr "Kaasa projekti enda kommentaarid"
 msgid "It comes off every task that has it."
 msgstr "See eemaldatakse kõigilt ülesannetelt, millel see on."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2599
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2606
 #, elixir-autogen, elixir-format
 msgid "It finishes when its last task is done."
 msgstr "See lõpeb, kui selle viimane ülesanne on tehtud."
@@ -9371,7 +9371,7 @@ msgstr "Sellel on oma alamprojektid, mis ei saa olla ülesande all."
 msgid "It is hidden from the main lists and kept in the database."
 msgstr "See peidetakse põhiloenditest ja jääb andmebaasi alles."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2597
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2604
 #, elixir-autogen, elixir-format
 msgid "It never finishes on its own: with every task done it is all caught up, and it ends only when someone ends it."
 msgstr "See ei lõpe kunagi iseenesest: kui kõik ülesanded on tehtud, on see lihtsalt järjel ning lõpeb alles siis, kui keegi selle lõpetab."
@@ -9570,7 +9570,7 @@ msgstr "Vana token lakkab kohe töötamast."
 msgid "The project is archived."
 msgstr "Projekt arhiveeritakse."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2036
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2038
 #, elixir-autogen, elixir-format
 msgid "The project's activity keeps a record of it."
 msgstr "Projekti tegevuslogisse jääb sellest kirje."
@@ -9592,7 +9592,7 @@ msgid "There is no room for another level of sub-projects."
 msgstr "Rohkem alamprojektide tasemeid lisada ei saa."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:1015
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4029
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4036
 #, elixir-autogen, elixir-format
 msgid "This kind of file is not accepted."
 msgstr "Seda tüüpi faili ei võeta vastu."
@@ -9608,13 +9608,13 @@ msgid "Time logging on the project"
 msgstr "Aja arvestus projektil"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:1013
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4027
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4034
 #, elixir-autogen, elixir-format
 msgid "Too large (at most %{mb} MB)."
 msgstr "Liiga suur (kuni %{mb} MB)."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:1016
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4030
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4037
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr "Korraga on liiga palju faile."
@@ -9625,9 +9625,9 @@ msgstr "Korraga on liiga palju faile."
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:1017
 #: lib/phoenix_kit_projects/web/description_images.ex:87
 #: lib/phoenix_kit_projects/web/description_images.ex:133
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3914
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4014
-#: lib/phoenix_kit_projects/web/project_form_live.ex:4031
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3921
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4021
+#: lib/phoenix_kit_projects/web/project_form_live.ex:4038
 #, elixir-autogen, elixir-format
 msgid "Upload failed. Please try again."
 msgstr "Üleslaadimine ebaõnnestus. Proovi uuesti."
@@ -10058,7 +10058,7 @@ msgctxt "permission"
 msgid "Log time"
 msgstr "Panna aega kirja"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1145
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1147
 #, elixir-autogen, elixir-format
 msgid "Pick a task: this project keeps time on its tasks only."
 msgstr "Vali ülesanne: selles projektis kirjutatakse aega ainult ülesannetele."
@@ -10068,7 +10068,7 @@ msgstr "Vali ülesanne: selles projektis kirjutatakse aega ainult ülesannetele.
 msgid "Save the task first to add images."
 msgstr "Piltide lisamiseks salvesta kõigepealt ülesanne."
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:2212
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:2214
 #, elixir-autogen, elixir-format
 msgid "Search a task"
 msgstr "Otsi ülesannet"
@@ -10403,7 +10403,7 @@ msgstr "Hiljutised"
 msgid "Search the library"
 msgstr "Otsi teegist"
 
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:102
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:106
 #, elixir-autogen
 msgid "Untitled"
 msgstr "Nimetu"
@@ -10416,8 +10416,8 @@ msgstr "Nimetu"
 msgid "Task name"
 msgstr "Ülesande nimi"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2680
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2681
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2687
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2688
 #, elixir-autogen
 msgid "Project name"
 msgstr "Projekti nimi"
@@ -10430,7 +10430,7 @@ msgstr "Malli nimi"
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5166
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5527
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2700
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2707
 #: lib/phoenix_kit_projects/web/task_form_live.ex:634
 #: lib/phoenix_kit_projects/web/template_form_live.ex:544
 #, elixir-autogen
@@ -10460,12 +10460,12 @@ msgstr "Jah"
 msgid "No"
 msgstr "Ei"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3343
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3350
 #, elixir-autogen
 msgid "Cover image"
 msgstr "Kaanepilt"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3353
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3360
 #, elixir-autogen
 msgid "Choose an image"
 msgstr "Vali pilt"
@@ -10487,72 +10487,72 @@ msgstr "Piltide lisamiseks salvesta see esmalt."
 msgid "is not a list of assignees"
 msgstr "ei ole vastutajate loend"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3389
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3396
 #, elixir-autogen
 msgid "Show the button"
 msgstr "Nupu näitamine"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3391
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3398
 #, elixir-autogen
 msgid "On its own page only"
 msgstr "Ainult projekti enda lehel"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3395
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3402
 #, elixir-autogen
 msgid "Icon"
 msgstr "Ikoon"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3397
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3404
 #, elixir-autogen
 msgid "↗ Opens elsewhere"
 msgstr "↗ Avaneb mujal"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3397
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3404
 #, elixir-autogen
 msgid "↖ Back"
 msgstr "↖ Tagasi"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3397
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3404
 #, elixir-autogen
 msgid "← Arrow"
 msgstr "← Nool"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3401
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3408
 #, elixir-autogen
 msgid "Opens"
 msgstr "Avaneb"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3403
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3410
 #, elixir-autogen
 msgid "In a new tab"
 msgstr "Uuel vahekaardil"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3403
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3410
 #, elixir-autogen
 msgid "Here, without a reload"
 msgstr "Siin, ilma lehte uuesti laadimata"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3412
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3419
 #, elixir-autogen
 msgid "Header"
 msgstr "Päis"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3413
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3420
 #, elixir-autogen
 msgid "“Ongoing” beside the name"
 msgstr "„Käimasolev“ nime kõrval"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3413
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3420
 #, elixir-autogen
 msgid "Since when it runs"
 msgstr "Millest alates see käib"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3413
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3420
 #, elixir-autogen
 msgid "How many tasks are open"
 msgstr "Mitu ülesannet on avatud"
 
-#: lib/phoenix_kit_projects/web/project_hours_live.ex:1349
+#: lib/phoenix_kit_projects/web/project_hours_live.ex:1351
 #, elixir-autogen
 msgid "Started %{date}"
 msgstr "Alustatud %{date}"
@@ -10603,7 +10603,7 @@ msgstr "Loobu muudatustest"
 msgid "Unsaved changes"
 msgstr "Salvestamata muudatused"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3776
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3783
 #, elixir-autogen
 msgid "Could not change the dependency."
 msgstr "Sõltuvust ei õnnestunud muuta."
@@ -10618,12 +10618,12 @@ msgstr "Loo arve"
 msgid "Add an image"
 msgstr "Lisa pilt"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3281
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3288
 #, elixir-autogen, elixir-format
 msgid "Remove this file from the project?"
 msgstr "Kas eemaldada see fail projektist?"
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2324
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2331
 #, elixir-autogen, elixir-format
 msgid "1 task from this template"
 msgid_plural "%{count} tasks from this template"
@@ -11119,7 +11119,7 @@ msgstr "Ava ülesanne"
 msgid "Hide sub-project tasks"
 msgstr "Peida alamprojekti ülesanded"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:683
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:682
 #, elixir-autogen, elixir-format
 msgid "%{project} taken away from %{key}: it now has no access there, though a project above it still has."
 msgstr "%{project} võeti võtmelt %{key} ära: seal tal enam ligipääsu pole, kuigi ülemisel projektil veel on."
@@ -11134,8 +11134,8 @@ msgstr "Selle ülesande all on mõnes projektis alamprojekt. Liiguta või kustut
 msgid "Connection lost — reconnecting. Saving works again once it is back."
 msgstr "Ühendus katkes – ühendan uuesti. Salvestamine töötab jälle, kui ühendus on tagasi."
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:2984
-#: lib/phoenix_kit_projects/web/project_form_live.ex:3329
+#: lib/phoenix_kit_projects/web/project_form_live.ex:2991
+#: lib/phoenix_kit_projects/web/project_form_live.ex:3336
 #, elixir-autogen, elixir-format
 msgid "Count weekends"
 msgstr "Arvesta nädalavahetusi"
@@ -11145,20 +11145,10 @@ msgstr "Arvesta nädalavahetusi"
 msgid "Pick one of the offered lists."
 msgstr "Vali üks pakutud loenditest."
 
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:145
-#, elixir-autogen, elixir-format
-msgid "Times are in %{zone}"
-msgstr "Ajad on vööndis %{zone}"
-
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:941
 #, elixir-autogen, elixir-format
 msgid "You no longer have access to this project."
 msgstr "Sul pole enam sellele projektile ligipääsu."
-
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:146
-#, elixir-autogen, elixir-format
-msgid "the site uses %{zone}"
-msgstr "sait kasutab vööndit %{zone}"
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2694
 #, elixir-autogen, elixir-format
@@ -11210,3 +11200,13 @@ msgstr "%{actor} kommenteeris projekti %{project}"
 #, elixir-autogen, elixir-format
 msgid "%{actor} commented on “%{task}”"
 msgstr "%{actor} kommenteeris ülesannet „%{task}“"
+
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:171
+#, elixir-autogen, elixir-format
+msgid "%{city} time (%{offset})"
+msgstr "%{city} aeg (%{offset})"
+
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:154
+#, elixir-autogen, elixir-format
+msgid "You see and enter times in %{zone}; others see them in their own time."
+msgstr "Näed ja sisestad ajad ajavööndis %{zone}; teised näevad neid oma aja järgi."
