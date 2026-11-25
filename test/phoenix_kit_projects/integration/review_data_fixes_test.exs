@@ -186,4 +186,37 @@ defmodule PhoenixKitProjects.Integration.ReviewDataFixesTest do
     assert {:error, cs} = Projects.add_dependency(b.uuid, a.uuid)
     assert "would create a dependency cycle" in errors_on(cs).depends_on_uuid
   end
+
+  test "a reopen from a stale todo copy reopens the done row and clears its stamps" do
+    project = fixture_project()
+
+    {:ok, a} =
+      Projects.create_assignment(%{
+        "project_uuid" => project.uuid,
+        "task_uuid" => fixture_task().uuid,
+        "status" => "todo"
+      })
+
+    a = Projects.get_assignment(a.uuid)
+
+    {:ok, _} =
+      Projects.update_assignment_status(a, %{
+        "status" => "done",
+        "completed_at" => DateTime.utc_now()
+      })
+
+    # The caller still holds the `todo` copy: no status change on it, yet it
+    # names the reopen. The row was done; it must end todo with no stamps,
+    # never done without a completion time.
+    {:ok, _} =
+      Projects.update_assignment_status(a, %{
+        "status" => "todo",
+        "completed_at" => nil,
+        "completed_by_uuid" => nil
+      })
+
+    fresh = Projects.get_assignment(a.uuid)
+    assert fresh.status == "todo"
+    assert is_nil(fresh.completed_at)
+  end
 end

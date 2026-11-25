@@ -316,10 +316,17 @@ defmodule PhoenixKitProjects.Projects do
     else
       # Re-read each: a row under another row of the same task went with
       # that row's branch and is simply gone when its turn comes.
+      # A row that no longer names this task (made a sub-project's link
+      # meanwhile: same uuid, the task cleared) is not this delete's to take:
+      # following it would delete that sub-project (codex).
       Enum.each(rows, fn row ->
         case repo().get(Assignment, row.uuid) do
-          nil -> :ok
-          fresh -> delete_assignment(fresh)
+          %Assignment{task_uuid: task_uuid, child_project_uuid: nil} = fresh
+          when task_uuid == t.uuid ->
+            delete_assignment(fresh)
+
+          _ ->
+            :ok
         end
       end)
 
@@ -1605,6 +1612,15 @@ defmodule PhoenixKitProjects.Projects do
   # `delete_assignment/1`) so a rollback can't leak a `:project_deleted`.
   @spec delete_project_tree_in_tx(Project.t()) :: [Project.t()]
   defp delete_project_tree_in_tx(%Project{} = project) do
+    # The project row first, before the cascade touches a task row: the
+    # order every status write takes (`locked_update/3`). Deleting first
+    # locked the task rows (the cascade runs before the project's own
+    # DELETE) while a status write held the project and waited on a task:
+    # each waited on the other (codex).
+    repo().one(
+      from(p in Project, where: p.uuid == ^project.uuid, select: p.uuid, lock: "FOR UPDATE")
+    )
+
     child_uuids =
       repo().all(
         from(a in Assignment,
@@ -4758,9 +4774,14 @@ defmodule PhoenixKitProjects.Projects do
   # be that one, or nothing is written: `{:error, :stale}`. Answered without
   # a rollback — nothing was written — so a caller's own transaction around
   # it (the next-up confirm) is not poisoned and may go on.
-  defp update_tracking_status(%Ecto.Changeset{} = cs, %Assignment{} = a, expect \\ nil) do
-    if Map.has_key?(cs.changes, :status) or is_binary(expect) do
-      case repo().transaction(fn -> locked_update(cs, a, expect) end) do
+  defp update_tracking_status(
+         %Ecto.Changeset{} = cs,
+         %Assignment{} = a,
+         expect \\ nil,
+         attrs \\ nil
+       ) do
+    if Map.has_key?(cs.changes, :status) or is_binary(expect) or names_status?(attrs) do
+      case repo().transaction(fn -> locked_update(cs, a, expect, attrs) end) do
         {:ok, :stale} -> {:error, :stale}
         other -> other
       end
@@ -4769,7 +4790,10 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  defp locked_update(cs, a, expect) do
+  defp names_status?(attrs) when is_map(attrs), do: match?({:ok, _}, fetch_attr(attrs, :status))
+  defp names_status?(_), do: false
+
+  defp locked_update(cs, a, expect, attrs) do
     # The project row first, then the task's: the order every writer of the
     # list takes (`Outline.with_project_lock/2`, the reorder, and the
     # settling that follows this write). Locked the other way round inside
@@ -4794,8 +4818,26 @@ defmodule PhoenixKitProjects.Projects do
 
     if is_binary(expect) and was != expect,
       do: :stale,
-      else: update_or_rollback(cs, was)
+      else: update_or_rollback(against_row(cs, was, attrs), was)
   end
+
+  # Judged against the row as locked, not the caller's struct: when the
+  # status the caller names differs from the row's, the status and the
+  # completion stamps it names are written even where the struct already
+  # held them (a reopen from a stale `in_progress` copy kept `completed_at`;
+  # one from a stale `todo` copy cleared the stamps and left the row done —
+  # codex). When the row already has that status nothing is forced.
+  defp against_row(%Ecto.Changeset{} = cs, was, attrs) when is_map(attrs) do
+    target = Ecto.Changeset.get_field(cs, :status)
+
+    if names_status?(attrs) and target != was do
+      cs |> Ecto.Changeset.force_change(:status, target) |> force_completion_stamps(attrs)
+    else
+      cs
+    end
+  end
+
+  defp against_row(cs, _was, _attrs), do: cs
 
   defp update_or_rollback(cs, was) do
     case repo().update(cs) do
@@ -5142,8 +5184,7 @@ defmodule PhoenixKitProjects.Projects do
     with {:ok, {updated, was}} <-
            a
            |> Assignment.status_changeset(attrs)
-           |> force_completion_stamps(attrs)
-           |> update_tracking_status(a, Keyword.get(opts, :expect)) do
+           |> update_tracking_status(a, Keyword.get(opts, :expect), attrs) do
       settle_outline(updated, was)
 
       ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
@@ -5766,10 +5807,20 @@ defmodule PhoenixKitProjects.Projects do
       from(a in Assignment, where: a.uuid == ^assignment_uuid, select: a.project_uuid)
       |> repo().one()
 
+    # The project ROW, the lock a task conversion and every list writer
+    # holds (`Outline.with_project_lock/2`): an advisory lock of its own let
+    # an add validate both rows in this project while a conversion was
+    # moving one of them out, then insert after the conversion's cleanup —
+    # an edge across two projects (codex). Waiting on the row, the add sees
+    # the moved rows and `same_project?/2` refuses it.
     if project_uuid do
-      repo().query!("SELECT pg_advisory_xact_lock(hashtext($1))", [
-        "pkp_deps:" <> project_uuid
-      ])
+      repo().one(
+        from(p in Project,
+          where: p.uuid == ^project_uuid,
+          select: p.uuid,
+          lock: "FOR NO KEY UPDATE"
+        )
+      )
     end
 
     :ok
