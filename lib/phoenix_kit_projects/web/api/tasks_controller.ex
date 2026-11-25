@@ -878,7 +878,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   defp delete_branch(conn, a, below, key) do
-    delete = fn -> Projects.delete_assignment(a) end
+    # The rows checked above are the rows deleted: decided again under the
+    # project lock, a task moved under this one meanwhile refuses the delete.
+    delete = fn -> Projects.delete_assignment(a, expect_below: Enum.map(below, & &1.uuid)) end
 
     case Notices.removing(a, ApiKey.accountable_uuid(key), api_metadata(key, %{}), delete) do
       {:ok, _} ->
@@ -892,6 +894,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
         sync_project_completion(conn)
         json(conn, %{deleted: a.uuid, also_deleted: Enum.map(below, & &1.uuid)})
+
+      {:error, :branch_changed} ->
+        Json.error(
+          conn,
+          :conflict,
+          "branch_changed",
+          "The tasks under this task changed while it was being deleted; read it again and retry."
+        )
 
       {:error, _} ->
         Json.error(conn, :conflict, "conflict", "The task could not be deleted.")

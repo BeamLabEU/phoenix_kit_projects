@@ -295,12 +295,48 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  @doc "Deletes a task and broadcasts `:task_deleted`."
-  @spec delete_task(Task.t()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t()}
+  @doc """
+  Deletes a task and broadcasts `:task_deleted`.
+
+  Every project row using the task goes first, each through
+  `delete_assignment/1` — the page's own delete, which takes its subtasks,
+  portal files and one-off tasks along and announces each row. Left to the
+  database's cascade, the rows went unannounced, their subtasks' one-off
+  tasks stayed, and a sub-project row under one was cascaded away, leaving
+  the sub-project standalone (codex). As on the page, a task with a
+  sub-project somewhere below it is refused (`{:error, :subproject_below}`):
+  that project is moved or deleted on its own first.
+  """
+  @spec delete_task(Task.t()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t() | atom()}
   def delete_task(%Task{} = t) do
-    with {:ok, deleted} <- repo().delete(t) do
-      ProjectsPubSub.broadcast_task(:task_deleted, %{uuid: deleted.uuid, title: deleted.title})
-      {:ok, deleted}
+    rows = from(a in Assignment, where: a.task_uuid == ^t.uuid) |> repo().all()
+
+    if Enum.any?(rows, &subproject_below?/1) do
+      {:error, :subproject_below}
+    else
+      # Re-read each: a row under another row of the same task went with
+      # that row's branch and is simply gone when its turn comes.
+      Enum.each(rows, fn row ->
+        case repo().get(Assignment, row.uuid) do
+          nil -> :ok
+          fresh -> delete_assignment(fresh)
+        end
+      end)
+
+      # A one-off task went with its last row.
+      case repo().get(Task, t.uuid) do
+        nil -> {:ok, t}
+        task -> repo().delete(task)
+      end
+      |> case do
+        {:ok, deleted} ->
+          ProjectsPubSub.broadcast_task(:task_deleted, %{uuid: deleted.uuid, title: deleted.title})
+
+          {:ok, deleted}
+
+        error ->
+          error
+      end
     end
   end
 
@@ -418,7 +454,7 @@ defmodule PhoenixKitProjects.Projects do
   def reorder_tasks(ordered_uuids, opts) when is_list(ordered_uuids) do
     unique_uuids = dedupe_uuids(ordered_uuids)
 
-    case write_task_positions(unique_uuids) do
+    case write_task_positions(unique_uuids, Keyword.get(opts, :ad_hoc, :exclude)) do
       {:ok, 0} ->
         # All uuids stale — silent no-op (no audit row); the LV will
         # snap back to persisted state on its next reload.
@@ -434,7 +470,13 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  defp write_task_positions(unique_uuids) do
+  # Only rows of the half the caller reorders (`:ad_hoc`, default the
+  # library): the One-off lens's administrator-only rule was keyed on the
+  # lens, so a library reorder naming one-off uuids renumbered rows of
+  # projects the caller cannot open (vibe).
+  defp write_task_positions(unique_uuids, ad_hoc) do
+    rows = fn uuid -> Task |> where([t], t.uuid == ^uuid) |> filter_ad_hoc(ad_hoc) end
+
     repo().transaction(fn ->
       pairs = Enum.with_index(unique_uuids, 1)
 
@@ -442,8 +484,7 @@ defmodule PhoenixKitProjects.Projects do
       # wouldn't collide with the source rows still holding their old
       # values.
       Enum.each(pairs, fn {uuid, idx} ->
-        from(t in Task, where: t.uuid == ^uuid)
-        |> repo().update_all(set: [position: -idx])
+        uuid |> rows.() |> repo().update_all(set: [position: -idx])
       end)
 
       # Pass 2: stamp the final positives. `update_all` returns
@@ -452,9 +493,7 @@ defmodule PhoenixKitProjects.Projects do
       # table).
       pairs
       |> Enum.reduce(0, fn {uuid, idx}, total ->
-        {n, _} =
-          from(t in Task, where: t.uuid == ^uuid)
-          |> repo().update_all(set: [position: idx])
+        {n, _} = uuid |> rows.() |> repo().update_all(set: [position: idx])
 
         total + n
       end)
@@ -1571,11 +1610,25 @@ defmodule PhoenixKitProjects.Projects do
     # board's uuid, with no FK — the cascade below cannot reach them.
     _ = PhoenixKitProjects.Whiteboards.delete_shapes_for_project(project.uuid)
 
+    # The project's one-off tasks: the cascade takes the rows (the foreign
+    # key points from the row to the task) and left each task behind, as an
+    # orphan in the library's One-off lens (codex). Read before, removed
+    # once no row uses them, as a deleted task row does.
+    one_offs =
+      from(a in Assignment,
+        join: t in assoc(a, :task),
+        where: a.project_uuid == ^project.uuid and t.ad_hoc == true,
+        select: a.task_uuid
+      )
+      |> repo().all()
+
     deleted =
       case repo().delete(project) do
         {:ok, d} -> d
         {:error, cs} -> repo().rollback(cs)
       end
+
+    Enum.each(Enum.uniq(one_offs), &delete_one_off_task/1)
 
     descendants =
       Enum.flat_map(child_uuids, fn cu ->
@@ -2551,24 +2604,14 @@ defmodule PhoenixKitProjects.Projects do
     template_assignments = list_assignments(template.uuid)
     template_deps = list_all_dependencies(template.uuid)
 
-    # `:serializable` on the outer transaction so the cycle-check guard
-    # inside `add_dependency/2` (called via `clone_one_dependency_in_tx/1`)
-    # actually runs at serializable isolation. Postgres only honors the
-    # isolation level set on the outermost transaction; the nested
-    # `repo().transaction(..., isolation: :serializable)` inside
-    # `add_dependency/2` would otherwise become a savepoint at the
-    # outer transaction's level (`read_committed` by default), silently
-    # dropping the cycle-race protection the docstring advertises.
-    # Template clones are short and rare; the isolation cost is negligible.
-    repo().transaction(
-      fn ->
-        project = attrs |> create_project_in_tx(opts) |> inherit_status_slug_in_tx(template)
-        uuid_map = clone_assignments_in_tx(template_assignments, project)
-        clone_dependencies_in_tx(template_deps, uuid_map)
-        project
-      end,
-      isolation: :serializable
-    )
+    # `add_dependency/3`'s project lock covers the cloned edges: it is held
+    # until this transaction commits.
+    repo().transaction(fn ->
+      project = attrs |> create_project_in_tx(opts) |> inherit_status_slug_in_tx(template)
+      uuid_map = clone_assignments_in_tx(template_assignments, project)
+      clone_dependencies_in_tx(template_deps, uuid_map)
+      project
+    end)
     |> case do
       {:ok, project} ->
         # Every per-row create/dep broadcast inside the clone transaction was
@@ -3011,45 +3054,52 @@ defmodule PhoenixKitProjects.Projects do
     :ok
   end
 
+  # The link row is locked before the child is read, and written in the same
+  # transaction: two rollups of one child (a Done and a reopen a moment
+  # apart) take turns, and the later reads the child as the earlier left it.
+  # Read first and written later, a slow rollup wrote an old "done" over the
+  # reopen's open state (codex).
   defp propagate_rollup_to_parent(child_project_uuid, depth) do
-    case repo().one(from(a in Assignment, where: a.child_project_uuid == ^child_project_uuid)) do
-      nil ->
-        :ok
+    repo().transaction(fn ->
+      with %Assignment{} = link <-
+             repo().one(
+               from(a in Assignment,
+                 where: a.child_project_uuid == ^child_project_uuid,
+                 lock: "FOR NO KEY UPDATE"
+               )
+             ),
+           %{} = rollup <- child_project_rollup(child_project_uuid, link) do
+        # What its finish unlocks, read before the write as the page's "next
+        # up" reads it for a task ticked by hand.
+        next_up = subproject_next_up(link, rollup)
 
-      link ->
-        case child_project_rollup(child_project_uuid, link) do
-          nil ->
-            :ok
-
-          rollup ->
-            write_rollup(link, rollup, depth)
+        case link |> Assignment.subproject_changeset(rollup) |> repo().update() do
+          {:ok, updated} -> {link, updated, next_up}
+          {:error, _cs} -> :skip
         end
+      else
+        _ -> :skip
+      end
+    end)
+    |> case do
+      {:ok, {link, updated, next_up}} -> after_rollup(link, updated, next_up, depth)
+      _ -> :ok
     end
   end
 
-  defp write_rollup(link, rollup, depth) do
-    # What its finish unlocks, read before the write as the page's "next
-    # up" reads it for a task ticked by hand.
-    next_up = subproject_next_up(link, rollup)
+  defp after_rollup(link, updated, next_up, depth) do
+    ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+      uuid: updated.uuid,
+      project_uuid: updated.project_uuid
+    })
 
-    case link |> Assignment.subproject_changeset(rollup) |> repo().update() do
-      {:ok, updated} ->
-        ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
-          uuid: updated.uuid,
-          project_uuid: updated.project_uuid
-        })
+    PhoenixKitProjects.Handoffs.batch(fn ->
+      broadcast_status_changed(updated, link.status, :auto)
+    end)
 
-        PhoenixKitProjects.Handoffs.batch(fn ->
-          broadcast_status_changed(updated, link.status, :auto)
-        end)
+    note_finished_subproject(updated, next_up)
 
-        note_finished_subproject(updated, next_up)
-
-        recompute_project_completion(updated.project_uuid, depth + 1)
-
-      {:error, _cs} ->
-        :ok
-    end
+    recompute_project_completion(updated.project_uuid, depth + 1)
   end
 
   # A sub-project that finishes by itself (`subproject_auto`) releases
@@ -3420,8 +3470,7 @@ defmodule PhoenixKitProjects.Projects do
 
       %Assignment{review_status: "pending"} = assignment ->
         assignment
-        |> Ecto.Changeset.change(review_status: Atom.to_string(decision))
-        |> repo().update()
+        |> decide_pending(decision)
         |> case do
           {:ok, updated} ->
             log_activity(%{
@@ -3443,12 +3492,33 @@ defmodule PhoenixKitProjects.Projects do
 
             {:ok, updated}
 
-          error ->
-            error
+          {:already, nil} ->
+            {:error, :not_found}
+
+          {:already, already} ->
+            {:ok, already}
         end
 
       already ->
         {:ok, already}
+    end
+  end
+
+  # Written only while the row is still pending: two reviewers who both read
+  # `pending` could each record their decision, the later overwriting the
+  # earlier with both audited (codex). The one who loses the race gets the
+  # row as the first decided it, as for any already decided row.
+  defp decide_pending(%Assignment{uuid: uuid}, decision) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    from(a in Assignment,
+      where: a.uuid == ^uuid and a.review_status == "pending",
+      select: a
+    )
+    |> repo().update_all(set: [review_status: Atom.to_string(decision), updated_at: now])
+    |> case do
+      {1, [updated]} -> {:ok, updated}
+      {0, _} -> {:already, repo().get(Assignment, uuid)}
     end
   end
 
@@ -3800,23 +3870,28 @@ defmodule PhoenixKitProjects.Projects do
   brand-new and can't already be an ancestor), so no cycle guard runs here. A
   future "link existing project as a sub-project" path MUST add an ancestor
   check before assigning `child_project_uuid`.
+
+  `actor_uuid:` — who creates it. They get the owner seat on the new
+  project, as `create_project/2` gives the creator of any project; without
+  it the person who made a sub-project held no role on it and its own Open
+  link answered "Project not found" (kimi).
   """
-  @spec create_subproject(uuid(), map()) ::
+  @spec create_subproject(uuid(), map(), keyword()) ::
           {:ok, %{child_project: Project.t(), assignment: Assignment.t()}}
           | {:error, :parent_not_found | :too_deep | Ecto.Changeset.t()}
-  def create_subproject(parent_project_uuid, child_attrs) do
+  def create_subproject(parent_project_uuid, child_attrs, opts \\ []) do
     case get_project(parent_project_uuid) do
       nil ->
         {:error, :parent_not_found}
 
       parent ->
         if room_for_subproject?(parent),
-          do: do_create_subproject(parent, child_attrs),
+          do: do_create_subproject(parent, child_attrs, opts),
           else: {:error, :too_deep}
     end
   end
 
-  defp do_create_subproject(%Project{} = parent, child_attrs) do
+  defp do_create_subproject(%Project{} = parent, child_attrs, opts) do
     parent_project_uuid = parent.uuid
 
     # The child copies the parent's completion mode unless told otherwise:
@@ -3839,8 +3914,15 @@ defmodule PhoenixKitProjects.Projects do
       })
 
     repo().transaction(fn ->
+      # Under the link lock `move_project/2` and `link_subproject/2` take,
+      # the room checked again: checked only before, a move deepening the
+      # parent meanwhile let the child land past the depth the tree reads
+      # walk (codex).
+      lock_subproject_links()
+      unless room_for_subproject?(parent), do: repo().rollback(:too_deep)
+
       child =
-        case create_project(attrs) do
+        case create_project(attrs, Keyword.take(opts, [:actor_uuid])) do
           {:ok, c} -> c
           {:error, cs} -> repo().rollback(cs)
         end
@@ -4307,17 +4389,11 @@ defmodule PhoenixKitProjects.Projects do
     if is_nil(tree) do
       {:error, :task_not_found}
     else
-      # `:serializable` so the closure cycle-check + the chained
-      # `add_dependency/2` calls (which themselves want serializable)
-      # share one outer transaction. Postgres only honors the isolation
-      # set on the outermost; nested `repo().transaction(_, isolation:
-      # :serializable)` calls become savepoints at the outer's level.
-      repo().transaction(
-        fn ->
-          do_create_assignments_with_closure(tree, project_uuid, attrs, excluded)
-        end,
-        isolation: :serializable
-      )
+      # One transaction for the rows and their edges; `add_dependency/3`'s
+      # project lock is held until it commits.
+      repo().transaction(fn ->
+        do_create_assignments_with_closure(tree, project_uuid, attrs, excluded)
+      end)
       |> case do
         {:ok, %{root: root, extras: extras} = result} ->
           # Every per-row create/dep broadcast inside the serializable closure
@@ -4680,6 +4756,19 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp locked_update(cs, a, expect) do
+    # The project row first, then the task's: the order every writer of the
+    # list takes (`Outline.with_project_lock/2`, the reorder, and the
+    # settling that follows this write). Locked the other way round inside
+    # one transaction (the next-up dialog's), a Done and a reorder of the
+    # same task waited on each other until Postgres aborted one (codex).
+    repo().one(
+      from(p in Project,
+        where: p.uuid == ^a.project_uuid,
+        select: p.uuid,
+        lock: "FOR NO KEY UPDATE"
+      )
+    )
+
     was =
       repo().one(
         from(x in Assignment,
@@ -5039,6 +5128,7 @@ defmodule PhoenixKitProjects.Projects do
     with {:ok, {updated, was}} <-
            a
            |> Assignment.status_changeset(attrs)
+           |> force_completion_stamps(attrs)
            |> update_tracking_status(a, Keyword.get(opts, :expect)) do
       settle_outline(updated, was)
 
@@ -5050,6 +5140,31 @@ defmodule PhoenixKitProjects.Projects do
       broadcast_status_changed(updated, was)
 
       {:ok, updated}
+    end
+  end
+
+  # The completion stamps a caller names are written whatever the struct it
+  # holds says. Cast against a stale struct, a reopen's `completed_at: nil`
+  # was "no change" when the struct was read before someone else completed
+  # the task — the row ended up `todo` with a completion time (codex).
+  @completion_stamps [:completed_at, :completed_by_uuid]
+  defp force_completion_stamps(%Ecto.Changeset{valid?: true} = cs, attrs) when is_map(attrs) do
+    Enum.reduce(@completion_stamps, cs, fn field, acc ->
+      # The cast value (a time already truncated to the column), forced so
+      # the update writes it even when the stale struct held the same.
+      case fetch_attr(attrs, field) do
+        {:ok, _} -> Ecto.Changeset.force_change(acc, field, Ecto.Changeset.get_field(acc, field))
+        :error -> acc
+      end
+    end)
+  end
+
+  defp force_completion_stamps(cs, _attrs), do: cs
+
+  defp fetch_attr(attrs, field) do
+    case Map.fetch(attrs, field) do
+      {:ok, _} = found -> found
+      :error -> Map.fetch(attrs, Atom.to_string(field))
     end
   end
 
@@ -5163,7 +5278,7 @@ defmodule PhoenixKitProjects.Projects do
   # of `position` never interleave (zai).
   defp locked_assignment_positions(project_uuid, unique_uuids) do
     case PhoenixKitProjects.Outline.with_project_lock(project_uuid, fn _project ->
-           write_assignment_positions(unique_uuids)
+           write_assignment_positions(project_uuid, unique_uuids)
          end) do
       {:ok, {:ok, count}} -> {:ok, count}
       {:ok, {:error, reason}} -> {:error, reason}
@@ -5171,19 +5286,22 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  defp write_assignment_positions(unique_uuids) do
+  # Only rows still in this project: the scope check ran before the lock,
+  # and a task converted into a sub-project meanwhile has moved its branch
+  # to the child, whose order this plan must not rewrite (codex).
+  defp write_assignment_positions(project_uuid, unique_uuids) do
     repo().transaction(fn ->
       pairs = Enum.with_index(unique_uuids, 1)
 
       Enum.each(pairs, fn {uuid, idx} ->
-        from(a in Assignment, where: a.uuid == ^uuid)
+        from(a in Assignment, where: a.uuid == ^uuid and a.project_uuid == ^project_uuid)
         |> repo().update_all(set: [position: -idx])
       end)
 
       pairs
       |> Enum.reduce(0, fn {uuid, idx}, total ->
         {n, _} =
-          from(a in Assignment, where: a.uuid == ^uuid)
+          from(a in Assignment, where: a.uuid == ^uuid and a.project_uuid == ^project_uuid)
           |> repo().update_all(set: [position: idx])
 
         total + n
@@ -5267,14 +5385,23 @@ defmodule PhoenixKitProjects.Projects do
   row is deleted first (the `child_project_uuid` FK is `ON DELETE RESTRICT`, so
   the child can't be removed while it's still referenced), then the child tree
   via `delete_project_tree_in_tx/1`. Both in one transaction.
+
+  `expect_below:` (a list of uuids) — the rows the caller checked and
+  agreed to take with a task (the API's `cascade=true`, its per-row
+  policy). Decided again under the project lock: if what sits under the
+  task is no longer exactly that, nothing is deleted and the answer is
+  `{:error, :branch_changed}` — a subtask moved under it meanwhile was
+  deleted unseen and unchecked (codex).
   """
-  @spec delete_assignment(Assignment.t()) ::
+  @spec delete_assignment(Assignment.t(), keyword()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t() | term()}
-  def delete_assignment(%Assignment{child_project_uuid: nil} = a) do
-    delete_task_branch(a)
+  def delete_assignment(a, opts \\ [])
+
+  def delete_assignment(%Assignment{child_project_uuid: nil} = a, opts) do
+    delete_task_branch(a, Keyword.get(opts, :expect_below))
   end
 
-  def delete_assignment(%Assignment{child_project_uuid: child_uuid} = a)
+  def delete_assignment(%Assignment{child_project_uuid: child_uuid} = a, _opts)
       when is_binary(child_uuid),
       do: delete_subproject_row(a, child_uuid)
 
@@ -5296,16 +5423,24 @@ defmodule PhoenixKitProjects.Projects do
     |> Enum.any?(&(not is_nil(&1.child)))
   end
 
-  defp delete_task_branch(%Assignment{} = a) do
+  defp delete_task_branch(%Assignment{} = a, expect_below) do
     # Read and deleted under the project lock the task writers take, so a
     # row or a submission added meanwhile is either seen here or added
     # after the delete (codex) — never cascaded away unseen.
     PhoenixKitProjects.Outline.with_project_lock(a.project_uuid, fn _project ->
       below = branch_below(a)
 
-      if Enum.any?(below, &(not is_nil(&1.child))),
-        do: {:row_by_row, below},
-        else: delete_branch_in_lock(a, Enum.map(below, & &1.uuid))
+      cond do
+        is_list(expect_below) and
+            MapSet.new(below, & &1.uuid) != MapSet.new(expect_below) ->
+          repo().rollback(:branch_changed)
+
+        Enum.any?(below, &(not is_nil(&1.child))) ->
+          {:row_by_row, below}
+
+        true ->
+          delete_branch_in_lock(a, Enum.map(below, & &1.uuid))
+      end
     end)
     |> case do
       {:ok, {:row_by_row, below}} ->
@@ -5519,21 +5654,15 @@ defmodule PhoenixKitProjects.Projects do
   handles the `A == B` case; this function handles multi-hop cycles
   (`A → B`, then `B → A`).
 
-  The cycle check + insert run inside a `:serializable` transaction.
-  Without this, two concurrent calls — `add_dependency(A, B)` and
-  `add_dependency(B, A)` — could each read an acyclic graph, both
-  pass the check, both insert, and produce a cycle (the unique pair
-  index doesn't catch this; it only rejects identical duplicate
-  edges). At `:serializable` Postgres aborts the loser with
-  `serialization_failure` (`SQLSTATE 40001`); we catch that and
-  return a friendly changeset error so the caller can retry.
-
-  When called from inside another transaction (e.g. via
-  `create_project_from_template/2` → `clone_template/2`), the inner
-  `repo().transaction/2` becomes a savepoint and Postgres ignores
-  the inner `isolation:` keyword — the protection only holds if the
-  outer transaction is itself opened at `:serializable` (which
-  `clone_template/2` does).
+  The cycle check and the insert run under a per-project advisory lock
+  (`pkp_deps:<project>`), held to the end of the transaction. Without it
+  two concurrent calls — `add_dependency(A, B)` and `add_dependency(B, A)`
+  — could each read an acyclic graph, both pass the check and both insert
+  a cycle (the unique pair index rejects only identical edges). An earlier
+  version asked for `isolation: :serializable` instead, which Ecto's
+  Postgres adapter does not apply: the transactions ran at read committed.
+  Called inside another transaction (a template clone, a closure pull) the
+  lock is held until that one commits, so the batch is covered too.
   """
   @spec add_dependency(uuid(), uuid(), keyword()) ::
           {:ok, Dependency.t()} | {:error, Ecto.Changeset.t()}
@@ -5553,41 +5682,40 @@ defmodule PhoenixKitProjects.Projects do
 
   defp do_add_dependency_in_serializable_tx(assignment_uuid, depends_on_uuid, changeset, opts) do
     result =
-      repo().transaction(
-        fn ->
-          cond do
-            # The pair lives in one project (`Dependency`'s contract): a form
-            # posting another project's task would otherwise wire it in and
-            # show its title and status under "Waits on".
-            not same_project?(assignment_uuid, depends_on_uuid) ->
-              cs =
-                Ecto.Changeset.add_error(
-                  changeset,
-                  :depends_on_uuid,
-                  gettext("must be a task of the same project")
-                )
+      repo().transaction(fn ->
+        lock_project_dependencies(assignment_uuid)
 
-              repo().rollback(%{cs | action: :insert})
+        cond do
+          # The pair lives in one project (`Dependency`'s contract): a form
+          # posting another project's task would otherwise wire it in and
+          # show its title and status under "Waits on".
+          not same_project?(assignment_uuid, depends_on_uuid) ->
+            cs =
+              Ecto.Changeset.add_error(
+                changeset,
+                :depends_on_uuid,
+                gettext("must be a task of the same project")
+              )
 
-            would_create_cycle?(assignment_uuid, depends_on_uuid) ->
-              cs =
-                Ecto.Changeset.add_error(
-                  changeset,
-                  :depends_on_uuid,
-                  gettext("would create a dependency cycle")
-                )
+            repo().rollback(%{cs | action: :insert})
 
-              repo().rollback(%{cs | action: :insert})
+          would_create_cycle?(assignment_uuid, depends_on_uuid) ->
+            cs =
+              Ecto.Changeset.add_error(
+                changeset,
+                :depends_on_uuid,
+                gettext("would create a dependency cycle")
+              )
 
-            true ->
-              case repo().insert(changeset) do
-                {:ok, dep} -> dep
-                {:error, cs} -> repo().rollback(cs)
-              end
-          end
-        end,
-        isolation: :serializable
-      )
+            repo().rollback(%{cs | action: :insert})
+
+          true ->
+            case repo().insert(changeset) do
+              {:ok, dep} -> dep
+              {:error, cs} -> repo().rollback(cs)
+            end
+        end
+      end)
 
     case result do
       {:ok, dep} ->
@@ -5614,6 +5742,23 @@ defmodule PhoenixKitProjects.Projects do
       else
         reraise e, __STACKTRACE__
       end
+  end
+
+  # One writer of a project's dependency graph at a time (see
+  # `add_dependency/3`). Keyed on the project of the waiting task; a task
+  # that does not exist takes no lock and fails the same-project check.
+  defp lock_project_dependencies(assignment_uuid) do
+    project_uuid =
+      from(a in Assignment, where: a.uuid == ^assignment_uuid, select: a.project_uuid)
+      |> repo().one()
+
+    if project_uuid do
+      repo().query!("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        "pkp_deps:" <> project_uuid
+      ])
+    end
+
+    :ok
   end
 
   # Returns true when `depends_on_uuid` already reaches `assignment_uuid`
@@ -5844,7 +5989,7 @@ defmodule PhoenixKitProjects.Projects do
     rows = Task |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude)) |> repo().all()
     ordered_uuids = task_strategy_order(rows, strategy)
 
-    case write_task_positions(ordered_uuids) do
+    case write_task_positions(ordered_uuids, Keyword.get(opts, :ad_hoc, :exclude)) do
       {:ok, count} ->
         log_strategy_reorder("task", strategy, :all, count, List.first(ordered_uuids), opts)
         :ok
@@ -5903,6 +6048,7 @@ defmodule PhoenixKitProjects.Projects do
     rows =
       Task
       |> where([t], t.uuid in ^unique_uuids)
+      |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude))
       |> repo().all()
 
     do_permute_in_place(
@@ -6088,4 +6234,9 @@ defmodule PhoenixKitProjects.Projects do
         )
     })
   end
+
+  # The link lock `link_subproject/2` and `move_project/2` take (see
+  # `@subproject_link_lock`), for `create_subproject/3`'s re-check.
+  defp lock_subproject_links,
+    do: repo().query!("SELECT pg_advisory_xact_lock($1)", [@subproject_link_lock])
 end
