@@ -983,7 +983,14 @@ defmodule PhoenixKitProjects.Projects do
     # `accessible_project_uuids/1`, not `accessible_projects/1` — this only
     # needs the uuid set to narrow a WHERE clause, and the full-struct form
     # would load every accessible project just to throw the rest away.
-    uuids = PhoenixKitProjects.Members.accessible_project_uuids(user_uuid)
+    #
+    # Plus everything nested under those (Max, 2026-11-25): a sub-project is
+    # read by whoever reads a project above it (`Authz`), so a list, count
+    # or bucket never leaves out one its page would open. One read per level.
+    uuids =
+      user_uuid
+      |> PhoenixKitProjects.Members.accessible_project_uuids()
+      |> subtrees_uuids()
 
     from(p in query, where: p.uuid in ^uuids)
   end
@@ -3799,6 +3806,13 @@ defmodule PhoenixKitProjects.Projects do
   def subtree_uuids(project_uuid) when is_binary(project_uuid) do
     do_subtree([project_uuid], [], @max_parent_depth)
   end
+
+  @doc "Several projects and everything nested under each — one read per level."
+  @spec subtrees_uuids([uuid()]) :: [uuid()]
+  def subtrees_uuids([]), do: []
+
+  def subtrees_uuids(project_uuids) when is_list(project_uuids),
+    do: do_subtree(Enum.uniq(project_uuids), [], @max_parent_depth)
 
   defp do_subtree([], acc, _hops), do: Enum.reverse(acc)
   defp do_subtree(level, acc, 0), do: Enum.reverse(Enum.reverse(level) ++ acc)
