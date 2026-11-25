@@ -1147,7 +1147,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/hours",
         summary:
-          "Logged time summed for a period: `totals` (people's minutes, billable minutes, an agent's `ai_minutes`, tokens, cost, entries, people) and one grouping in `groups` — by person (default), by task or by day. Reads the project and, unless `include_subprojects=false`, everything nested under it. A period is cut on when the work was done (`occurred_at`, else when it was recorded); days are UTC days. The same figures as the Hours tab.",
+          "Logged time summed for a period: `totals` (people's minutes, billable minutes, an agent's `ai_minutes`, tokens, cost, entries, people) and one grouping in `groups` — by person (default), by task or by day. Reads the project and, unless `include_subprojects=false`, everything nested under it. A period is cut on when the work was done (`occurred_at`, else when it was recorded); days are UTC days. The same figures as the Hours tab. `tokens` and `cost_cents` need `usage:read`: they are summed over the projects where the key has it, which `usage_projects` lists (absent from `totals` when it has it nowhere).",
         auth: true,
         scope: "time:read",
         action: "view",
