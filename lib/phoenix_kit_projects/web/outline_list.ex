@@ -220,7 +220,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   menu's "Make it a subtask of the task above", `outline_nest` "in"): a
   row with a sibling above it that is not a sub-project. One pass.
   """
-  @spec nest_in_set([Assignment.t()]) :: MapSet.t()
+  @spec nest_in_set([Assignment.t()]) :: %{optional(String.t()) => true}
   def nest_in_set(rows) when is_list(rows) do
     rows
     |> Enum.group_by(& &1.parent_uuid)
@@ -228,13 +228,13 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       siblings
       |> Enum.chunk_every(2, 1, :discard)
       |> Enum.flat_map(fn [above, a] ->
-        if Assignment.subproject?(above), do: [], else: [a.uuid]
+        if Assignment.subproject?(above), do: [], else: [{a.uuid, true}]
       end)
     end)
-    |> MapSet.new()
+    |> Map.new()
   end
 
-  def nest_in_set(_), do: MapSet.new()
+  def nest_in_set(_), do: %{}
 
   @doc "The events this module answers (all start with `outline_`)."
   @spec event?(String.t()) :: boolean()

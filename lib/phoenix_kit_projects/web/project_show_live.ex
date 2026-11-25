@@ -7301,7 +7301,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               if assigns[:list_whole?] != false and
                    length(@visible_assignments) == length(@assignments),
                  do: OutlineList.nest_in_set(@assignments),
-                 else: MapSet.new() %>
+                 else: %{} %>
             <%= for a <- OutlineList.unfolded(@visible_assignments, ol_folded) do %>
               <%!-- The row a link named (`focus_task/2`) takes focus as the
                    page mounts, which is what scrolls it into view: the
@@ -7644,7 +7644,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           can: @outline_can,
                           count: Map.get(@outline_counts, a.uuid),
                           folded: MapSet.member?(ol_folded, a.uuid),
-                          nest_in: MapSet.member?(ol_nest_in, a.uuid),
+                          nest_in: Map.has_key?(ol_nest_in, a.uuid),
                           focus: assigns[:outline_focus] == a.uuid,
                           fresh: assigns[:outline_fresh] == a.uuid
                         }
