@@ -2510,8 +2510,11 @@
   // A filtered list (rows hidden) keeps the old sibling-only reorder: the
   // row above on screen is not necessarily the row above in the plan.
   // The server does the move (`list_drop` → `Outline.move/3`) and redraws
-  // the list; a refused move answers `pkp-list:revert` and the cards go
-  // back where they were.
+  // the list. The drop is optimistic: the cards stay where they were
+  // dropped, at their new levels, which is what the server draws, so its
+  // patch moves nothing (a reset to the old place first made the card jump
+  // back and forth — Max, 2026-11-25). A refused move answers
+  // `pkp-list:revert` and the cards go back where they were.
   var LIST_STYLE_ID = "pkp-list-drag-style";
   var LIST_CSS = [
     ".pkp-list-lifted{display:none!important}",
@@ -2584,6 +2587,66 @@
     return item && item.querySelector(":scope > .card, :scope > [data-pkp-card]");
   }
 
+  // A row's level as the server draws it: its indent, `data-depth`, and the
+  // top-level card's reach into the arrows' gutter (`pkp-row-card`).
+  function saveRowLevel(row) {
+    var card = rowCard(row);
+    return {
+      el: row, margin: row.style.marginLeft, depth: row.dataset.depth,
+      card: card, rowCard: !!(card && card.classList.contains("pkp-row-card"))
+    };
+  }
+
+  function restoreRowLevel(st) {
+    st.el.style.marginLeft = st.margin;
+    if (st.depth == null) delete st.el.dataset.depth;
+    else st.el.dataset.depth = st.depth;
+    if (st.card) st.card.classList.toggle("pkp-row-card", st.rowCard);
+  }
+
+  function setRowLevel(row, depth) {
+    row.style.marginLeft = (depth * 2) + "rem";
+    row.dataset.depth = String(depth);
+    var card = rowCard(row);
+    if (card) card.classList.toggle("pkp-row-card", depth === 0);
+  }
+
+  // The optimistic landing of a drop that moves: the card at its new
+  // level, the subtasks it carried right under it, each shifted by as many
+  // levels as the card. Answers each row's level as it was, for a refusal.
+  function landListMove(d, target) {
+    var shift = target.depth - d.start.depth;
+    var saved = [d.savedItem].concat(d.lifted.map(saveRowLevel));
+    setRowLevel(d.item, target.depth);
+    var ref = d.item;
+    d.lifted.forEach(function (n) {
+      ref.after(n);
+      ref = n;
+      n.classList.remove("pkp-list-lifted");
+      setRowLevel(n, (parseInt(n.dataset.depth || "0", 10) || 0) + shift);
+    });
+    return saved;
+  }
+
+  // A refused drop: the card back where it was picked up (next to the row it
+  // sat beside, so a row another session added keeps its place), the branch
+  // it carried back under it, every row at its old level.
+  function revertListMove(container, last) {
+    var item = last.item;
+    if (!item || !item.isConnected) return;
+    var moving = (last.saved || []).map(function (st) { return st.el; });
+    var anchored = function (n) { return n && n.isConnected && n !== item && moving.indexOf(n) < 0; };
+    if (anchored(last.next)) container.insertBefore(item, last.next);
+    else if (anchored(last.prev)) last.prev.after(item);
+    else container.insertBefore(item, container.children[last.index] || null);
+    var ref = item;
+    (last.saved || []).forEach(function (st) {
+      if (!st.el.isConnected) return;
+      if (st.el !== item) { ref.after(st.el); ref = st.el; }
+      restoreRowLevel(st);
+    });
+  }
+
   var ListDrag = {
     mounted: function () {
       var self = this;
@@ -2601,11 +2664,7 @@
         var last = self.lastMove;
         if (!payload || !last || last.id !== payload.uuid) return;
         self.lastMove = null;
-        var item = last.item;
-        if (!item || !item.isConnected) return;
-        if (last.next && last.next.isConnected && last.next !== item) self.el.insertBefore(item, last.next);
-        else if (last.prev && last.prev.isConnected) last.prev.after(item);
-        else self.el.insertBefore(item, self.el.children[last.index] || null);
+        revertListMove(self.el, last);
       });
       loadSortable().then(function () {
         if (!self.gone) self.init();
@@ -2670,10 +2729,12 @@
           // and its neighbours, to put it back on a refusal.
           var startRows = listRows(el).map(rowInfo);
           var startIdx = startRows.findIndex(function (r) { return r.id === start.id; });
+          // The row after its whole branch: the branch moves with the card
+          // now, so its first subtask is no anchor to come back to.
+          var after = lifted.length ? lifted[lifted.length - 1].nextElementSibling : item.nextElementSibling;
           self.lastMove = {
             id: start.id, item: item,
-            // Its own subtasks stay in place while it moves: back before them.
-            prev: item.previousElementSibling, next: item.nextElementSibling,
+            prev: item.previousElementSibling, next: after,
             index: Array.prototype.indexOf.call(el.children, item)
           };
           self.dragging = {
@@ -2684,6 +2745,7 @@
             // preview gives the card the class its landing level will
             // have, or the indent was cancelled ("not deep enough", Max).
             card: rowCard(item), rowCard: !!(rowCard(item) && rowCard(item).classList.contains("pkp-row-card")),
+            savedItem: saveRowLevel(item),
             from: startIdx >= 0 ? listDropTarget(startRows, startIdx, start.depth, 0, self.indentPx()) : null
           };
           el.classList.add("pkp-list-dragging");
@@ -2704,9 +2766,22 @@
           // as the preview was (unhiding them first put the row below back
           // and undid the level the card had shown).
           var target = d.nest ? self.target(d) : null;
-          d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
-          d.item.style.marginLeft = d.margin;
-          if (d.card) d.card.classList.toggle("pkp-row-card", d.rowCard);
+          var moves = d.nest && target && !(d.from && d.from.parent === target.parent && d.from.after === target.after);
+
+          if (moves) {
+            // Optimistic (Max, 2026-11-25: the card "in its old place for a
+            // bit, then the new place" — a stutter): the card stays where it
+            // was dropped, at its new level, with its subtasks right under
+            // it, each moved by as many levels as the card. That is what the
+            // server draws next, so its patch changes nothing on screen. A
+            // refusal (`pkp-list:revert`) puts every row back as saved.
+            var saved = landListMove(d, target);
+            if (self.lastMove && self.lastMove.id === d.start.id) self.lastMove.saved = saved;
+          } else {
+            d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
+            d.item.style.marginLeft = d.margin;
+            if (d.card) d.card.classList.toggle("pkp-row-card", d.rowCard);
+          }
 
           if (!d.nest) {
             if (evt.oldIndex === evt.newIndex) return;
@@ -2716,8 +2791,7 @@
           }
 
           // The row vanished under the drag (a patch replaced it): no guess.
-          if (!target) return;
-          if (d.from && d.from.parent === target.parent && d.from.after === target.after) return;
+          if (!moves) return;
           self.pushEvent(el.dataset.dropEvent || "list_drop", {
             id: id, parent: target.parent, after: target.after
           });
@@ -2766,6 +2840,9 @@
 
   window.PhoenixKitProjectsInternals = window.PhoenixKitProjectsInternals || {};
   window.PhoenixKitProjectsInternals.listDropTarget = listDropTarget;
+  window.PhoenixKitProjectsInternals.landListMove = landListMove;
+  window.PhoenixKitProjectsInternals.revertListMove = revertListMove;
+  window.PhoenixKitProjectsInternals.saveRowLevel = saveRowLevel;
   window.PhoenixKitProjectsInternals.keepRich = keepRich;
   window.PhoenixKitProjectsInternals.restoreRich = restoreRich;
   window.PhoenixKitProjectsInternals.noteServer = noteServer;

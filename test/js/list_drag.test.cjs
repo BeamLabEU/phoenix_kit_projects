@@ -134,3 +134,84 @@ test("a top-level card previewed one level in drops its gutter reach", () => {
 test("a subtask previewed at the top level takes the gutter reach", () => {
   assert.deepEqual(previewAt(0, ["card"]), { margin: "0rem", rowCard: true });
 });
+
+
+// The drop itself is optimistic (Max, 2026-11-25: dropping a task showed it
+// "in its old place for a bit and then it going to the new place"): a drop
+// that moves leaves every row as the server will draw it — the card at its
+// new level, the subtasks it carried right under it, shifted by as many
+// levels — and a refusal puts each row back as it was.
+function fakeList(spec) {
+  const list = { children: [] };
+  const at = (n) => list.children.indexOf(n);
+  list.insertBefore = (n, ref) => {
+    const i = at(n);
+    if (i >= 0) list.children.splice(i, 1);
+    const j = ref ? at(ref) : -1;
+    list.children.splice(j >= 0 ? j : list.children.length, 0, n);
+  };
+  const rows = spec.map(([id, depth]) => {
+    const card = { classList: fakeClassList(depth === 0 ? ["card", "pkp-row-card"] : ["card"]) };
+    const row = {
+      id,
+      dataset: { id, depth: String(depth) },
+      style: { marginLeft: depth * 2 + "rem" },
+      classList: fakeClassList([]),
+      isConnected: true,
+      querySelector: () => card,
+      card,
+      after(n) {
+        const i = at(n);
+        if (i >= 0) list.children.splice(i, 1);
+        list.children.splice(at(row) + 1, 0, n);
+      }
+    };
+    list.children.push(row);
+    return row;
+  });
+  const byId = Object.fromEntries(rows.map((x) => [x.id, x]));
+  const state = () =>
+    list.children.map((x) => `${x.id}:${x.dataset.depth}:${x.style.marginLeft}:${x.card.classList.has("pkp-row-card") ? "gutter" : "-"}`);
+  return { list, byId, state };
+}
+
+const internals = () => loaded.PhoenixKitProjectsInternals;
+
+test("a drop that nests leaves the card and its branch as the server draws them", () => {
+  // A, B (with subtask B1), C — B dragged under A, B1 carried along.
+  const { list, byId, state } = fakeList([["A", 0], ["B", 0], ["B1", 1], ["C", 0]]);
+  const { saveRowLevel, landListMove } = internals();
+  const B = byId.B;
+  const d = { item: B, start: { id: "B", depth: 0 }, lifted: [byId.B1], savedItem: saveRowLevel(B) };
+  // While dragging the branch's row is out of the list; the card sits after A.
+  list.children.splice(list.children.indexOf(byId.B1), 1);
+  list.children.push(byId.B1); // wherever the lift left it
+  landListMove(d, { depth: 1, parent: "A", after: null });
+  assert.deepEqual(state(), ["A:0:0rem:gutter", "B:1:2rem:-", "B1:2:4rem:-", "C:0:0rem:gutter"]);
+});
+
+test("a refused drop puts every row back at its old place and level", () => {
+  const { list, byId, state } = fakeList([["A", 0], ["B", 0], ["B1", 1], ["C", 0]]);
+  const { saveRowLevel, landListMove, revertListMove } = internals();
+  const before = state();
+  const B = byId.B;
+  // As onStart records it: the row after the whole branch.
+  const last = { item: B, prev: byId.A, next: byId.C, index: 1 };
+  const d = { item: B, start: { id: "B", depth: 0 }, lifted: [byId.B1], savedItem: saveRowLevel(B) };
+  // Dragged below C, out one level would be impossible; take: B after C, nested under C.
+  list.insertBefore(B, null);
+  last.saved = landListMove(d, { depth: 1, parent: "C", after: null });
+  assert.deepEqual(state(), ["A:0:0rem:gutter", "C:0:0rem:gutter", "B:1:2rem:-", "B1:2:4rem:-"]);
+  revertListMove(list, last);
+  assert.deepEqual(state(), before);
+});
+
+test("a subtask dropped out to the top level takes the gutter reach", () => {
+  const { list, byId, state } = fakeList([["A", 0], ["A1", 1], ["B", 0]]);
+  const { saveRowLevel, landListMove } = internals();
+  const A1 = byId.A1;
+  const d = { item: A1, start: { id: "A1", depth: 1 }, lifted: [], savedItem: saveRowLevel(A1) };
+  list.insertBefore(A1, null); // dropped last
+  landListMove(d, { depth: 0, parent: null, after: "B" });
+  assert.deepEqual(state(), ["A:0:0rem:gutter", "B:0:0rem:gutter", "A1:0:0rem:gutter"]);
+});
