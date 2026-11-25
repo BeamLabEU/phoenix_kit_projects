@@ -2281,9 +2281,47 @@
   // and types the values back in once the forms are there. Hidden inputs
   // are not replayed: they are the forms' own bookkeeping, and the rich
   // editors' text is theirs to keep.
+  // What the server rendered for each Leaf sync input, noted the moment the
+  // input enters the page. The input is type="hidden", whose value
+  // ATTRIBUTE follows every .value Leaf writes while the person types, so
+  // the attribute cannot say what the server had (grok, 2026-11-25: the
+  // restore never fired in visual mode). A WeakMap keyed by the element:
+  // LiveView keeps the element across patches and would strip a data
+  // attribute it did not render.
+  var serverValues = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function noteServer(sync) {
+    if (serverValues && sync && !serverValues.has(sync)) {
+      serverValues.set(sync, sync.getAttribute("value") || "");
+    }
+  }
+
+  function serverOf(sync) {
+    return serverValues && serverValues.has(sync) ? serverValues.get(sync) : sync.getAttribute("value") || "";
+  }
+
+  function noteSyncInputs(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (root.matches && root.matches("input[data-leaf-sync-input]")) noteServer(root);
+    if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll("input[data-leaf-sync-input]"), noteServer);
+  }
+
+  var watchingSync = false;
+  function watchSyncInputs() {
+    if (watchingSync || typeof MutationObserver !== "function" || !document.body) return;
+    watchingSync = true;
+    noteSyncInputs(document.body);
+    new MutationObserver(function (records) {
+      records.forEach(function (r) {
+        Array.prototype.forEach.call(r.addedNodes || [], noteSyncInputs);
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
   // The rich (Leaf) editors of one frame: each editor's text as the person
-  // left it, and what the server had rendered for it (its hidden sync
-  // input's value attribute), so a newer server value is never overwritten.
+  // left it (its live sync input; Leaf's markdown textarea as a fallback)
+  // and what the server had rendered for it, so a newer server value is
+  // never overwritten.
   function keepRich(dialog) {
     return Array.prototype.slice
       .call(dialog.querySelectorAll("[data-editor-id]"))
@@ -2292,12 +2330,12 @@
         var md = document.getElementById(id + "-markdown-textarea");
         var sync = dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + id + '"]');
         var visual = ed.querySelector("[data-editor-visual]");
-        var markdown = md ? md.value : sync ? sync.value : null;
+        var markdown = sync ? sync.value : md ? md.value : null;
         return {
           id: id,
           markdown: markdown,
           html: visual ? visual.innerHTML : null,
-          server: sync ? sync.getAttribute("value") || "" : null
+          server: sync ? serverOf(sync) : null
         };
       })
       .filter(function (e) {
@@ -2322,7 +2360,7 @@
     var last = null;
     kept.forEach(function (e) {
       var sync = dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + e.id + '"]');
-      if (!sync || (sync.getAttribute("value") || "") !== e.server) return;
+      if (!sync || serverOf(sync) !== e.server) return;
       window.dispatchEvent(new CustomEvent("phx:leaf-command:" + e.id, {
         detail: { action: "set_content", content: e.markdown, html: e.html || "" }
       }));
@@ -2336,6 +2374,7 @@
 
   var KeepStack = {
     mounted: function () {
+      watchSyncInputs();
       this.read();
     },
     updated: function () {
@@ -2389,44 +2428,55 @@
         self.replay(kept.values, 0, kept.rich || []);
       }, 50);
     },
-    // Waits (up to ~10 s) for the restored frames' forms, then types the
-    // kept values back in, one input event per form so the server hears it.
-    replay: function (values, tries, rich) {
+    // Waits (up to ~10 s) for the restored frames, then types each frame's
+    // kept values back in as soon as THAT frame is ready (its form, and its
+    // rich editors if it had kept text), one input event per form so the
+    // server hears it. A frame whose editor never comes back no longer holds
+    // the others up (kimi): at the deadline its plain values still go in.
+    replay: function (values, tries, rich, done) {
       var self = this;
       rich = rich || [];
+      done = done || [];
       var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
-      var ready =
-        dialogs.length >= values.length &&
-        dialogs.every(function (d, i) {
-          var formReady = !values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]");
-          return formReady && richReady(d, rich[i] || []);
-        });
-      if (!ready) {
-        if (tries < 50) setTimeout(function () { self.replay(values, tries + 1, rich); }, 200);
-        return;
+      var last = tries >= 50;
+      var pending = false;
+      for (var i = 0; i < values.length; i++) {
+        if (done[i]) continue;
+        var d = dialogs[i];
+        var formReady = d && (!values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]"));
+        var richOk = d && richReady(d, rich[i] || []);
+        if (formReady && (richOk || last)) {
+          replayFrame(d, values[i] || [], richOk ? rich[i] || [] : []);
+          done[i] = true;
+        } else {
+          pending = true;
+        }
       }
-      dialogs.forEach(function (dialog, i) {
-        var saved = values[i] || [];
-        var form = dialog.querySelector("form[phx-change]");
-        var restoredRich = restoreRich(dialog, rich[i] || []);
-        if (!form || (saved.length === 0 && !restoredRich)) return;
-        var last = restoredRich;
-        saved.forEach(function (field) {
-          var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
-          Array.prototype.forEach.call(els, function (el) {
-            if (el.type === "hidden") return;
-            if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
-              if (el.value === field.value) el.checked = field.checked;
-            } else if (el.type !== "checkbox" && el.type !== "radio") {
-              el.value = field.value;
-            }
-            last = el;
-          });
-        });
-        if (last) last.dispatchEvent(new Event("input", { bubbles: true }));
-      });
+      if (pending && !last) {
+        setTimeout(function () { self.replay(values, tries + 1, rich, done); }, 200);
+      }
     }
   };
+
+  function replayFrame(dialog, saved, kept) {
+    var form = dialog.querySelector("form[phx-change]");
+    var restoredRich = restoreRich(dialog, kept);
+    if (!form || (saved.length === 0 && !restoredRich)) return;
+    var last = restoredRich;
+    saved.forEach(function (field) {
+      var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
+      Array.prototype.forEach.call(els, function (el) {
+        if (el.type === "hidden") return;
+        if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
+          if (el.value === field.value) el.checked = field.checked;
+        } else if (el.type !== "checkbox" && el.type !== "radio") {
+          el.value = field.value;
+        }
+        last = el;
+      });
+    });
+    if (last) last.dispatchEvent(new Event("input", { bubbles: true }));
+  }
 
   // ── PkpListDrag: the card list's drag, levels included ─────────────
   //
@@ -2704,6 +2754,8 @@
   window.PhoenixKitProjectsInternals.listDropTarget = listDropTarget;
   window.PhoenixKitProjectsInternals.keepRich = keepRich;
   window.PhoenixKitProjectsInternals.restoreRich = restoreRich;
+  window.PhoenixKitProjectsInternals.noteServer = noteServer;
+  window.PhoenixKitProjectsInternals.keepStackReplay = function (values, rich) { KeepStack.replay(values, 50, rich); };
 
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,

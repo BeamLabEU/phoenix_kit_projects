@@ -42,10 +42,12 @@ function matches(n, sel) {
   if ((m = sel.match(/^\[data-editor-id(?:="([^"]+)")?\]$/))) return m[1] ? n.attrs["data-editor-id"] === m[1] : "data-editor-id" in n.attrs;
   if ((m = sel.match(/^input\[type="hidden"\]\[data-leaf-sync-input="([^"]+)"\]$/))) return n.attrs.type === "hidden" && n.attrs["data-leaf-sync-input"] === m[1];
   if (sel === "[data-editor-visual]") return "data-editor-visual" in n.attrs;
+  if (sel === "form[phx-change]" || sel === ".phx-connected form[phx-change]") return n.attrs.tag === "form";
+  if ((m = sel.match(/^\[name="([^"]+)"\]$/))) return n.attrs.name === m[1];
   return false;
 }
 
-function load(byId) {
+function load(byId, dialogs = []) {
   const events = [];
   const document = Object.assign(stub(), {});
   const window = {
@@ -58,11 +60,17 @@ function load(byId) {
   window.window = window;
   function CustomEvent(type, init) { this.type = type; this.detail = init && init.detail; }
   const docProxy = new Proxy(document, {
-    get: (t, k) => (k === "getElementById" ? (id) => byId[id] || null : t[k])
+    get: (t, k) =>
+      k === "getElementById"
+        ? (id) => byId[id] || null
+        : k === "querySelectorAll"
+          ? (sel) => (sel === "dialog[data-frame-ref]" ? dialogs : [])
+          : t[k]
   });
   window.document = docProxy;
   const ctx = vm.createContext({
     window, document: docProxy, console, CustomEvent, CSS: { escape: (s) => s },
+    Event: function (type) { this.type = type; },
     setTimeout, clearTimeout, MutationObserver: function () { return stub(); },
     getComputedStyle: () => stub(), navigator: stub(), location: stub(), history: stub()
   });
@@ -112,4 +120,49 @@ test("a newer server value is never overwritten", () => {
   assert.equal(events.length, 0);
   assert.equal(a.sync.value, "Someone else's");
   assert.equal(last, null);
+});
+
+// Visual mode, the editor's usual one (grok): the sync input is
+// type="hidden", whose value ATTRIBUTE follows every .value Leaf writes, so
+// it cannot say what the server had. The hook notes the server's value when
+// the input enters the page and compares against that.
+test("visual mode: typed text is kept and restored though the hidden input's attribute followed it", () => {
+  const { api, events } = load({});
+  const before = frame("ed-v", { typed: "Old text", server: "Old text" });
+  api.noteServer(before.sync);
+  // Leaf writes the typed text: for type=hidden the attribute follows.
+  before.sync.value = "My new text";
+  before.sync.attrs.value = "My new text";
+  const kept = JSON.parse(JSON.stringify(api.keepRich(before.dialog)));
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].markdown, "My new text");
+  assert.equal(kept[0].server, "Old text");
+
+  // The rejoin renders the stored value again; it is noted as it arrives.
+  const after = frame("ed-v", { typed: "Old text", server: "Old text" });
+  api.noteServer(after.sync);
+  const last = api.restoreRich(after.dialog, kept);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].detail.content, "My new text");
+  assert.equal(last, after.sync);
+});
+
+test("one frame whose editor never comes back does not hold the others' fields", () => {
+  const input = (name) => {
+    const n = el({ name, type: "text", value: "" });
+    n.dispatchEvent = () => {};
+    return n;
+  };
+  const formA = el({ tag: "form" }, [input("title")]);
+  const formB = el({ tag: "form" }, [input("note")]);
+  const dialogA = el({}, [formA]); // its rich editor never comes back
+  const dialogB = el({}, [formB]);
+  const { api } = load({}, [dialogA, dialogB]);
+  api.keepStackReplay(
+    [[{ name: "title", value: "Typed A", checked: null }], [{ name: "note", value: "Typed B", checked: null }]],
+    [[{ id: "gone", markdown: "x", html: "", server: "" }], []]
+  );
+  assert.equal(formB.children[0].value, "Typed B");
+  // At the deadline A's plain field goes in too, without its lost editor.
+  assert.equal(formA.children[0].value, "Typed A");
 });
