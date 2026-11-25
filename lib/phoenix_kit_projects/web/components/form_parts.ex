@@ -203,8 +203,6 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
       else: "UTC#{sign}#{hours}:#{String.pad_leading(Integer.to_string(minutes), 2, "0")}"
   end
 
-  defp utc_offset_label(_), do: "UTC"
-
   # ── Tabs ───────────────────────────────────────────────────────────
 
   # Each pane's icon, the same wherever the pane appears.
