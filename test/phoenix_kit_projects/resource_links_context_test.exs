@@ -112,6 +112,35 @@ defmodule PhoenixKitProjects.ResourceLinksContextTest do
              Enum.sort([deeper.uuid, a.uuid])
   end
 
+  describe "a bare user uuid (core's delivery-time check)" do
+    test "a deactivated member sees nothing; an active one sees their project", %{main: main} do
+      # The first account of a fresh database is the Owner, who cannot be
+      # deactivated: someone else holds that seat.
+      _owner = embed_user_uuid!()
+
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "gone-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok, _} = Members.add_member(main, user.uuid, role: "member")
+
+      assert ResourceLinks.visible_resource_uuids([main.uuid], user_uuid: user.uuid) == [
+               main.uuid
+             ]
+
+      {:ok, _} = Auth.update_user_status(user, %{"is_active" => false})
+      assert ResourceLinks.visible_resource_uuids([main.uuid], user_uuid: user.uuid) == []
+    end
+
+    test "a holder of projects.admin_all with no seat sees the project", %{main: main} do
+      # embed_user_uuid!/0 holds "*", which every module key honours.
+      admin = embed_user_uuid!()
+      assert ResourceLinks.visible_resource_uuids([main.uuid], user_uuid: admin) == [main.uuid]
+    end
+  end
+
   test "subtree_uuids walks down, root first", %{main: main, editor: editor} do
     {:ok, %{child_project: deeper}} =
       Projects.create_subproject(editor.uuid, %{"name" => "Walls"})

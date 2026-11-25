@@ -165,7 +165,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
   """
   @spec search_resources(String.t(), keyword()) :: [map()]
   def search_resources(query, opts) do
-    scope = Keyword.get(opts, :scope) || Keyword.get(opts, :user_uuid)
+    scope = viewer(Keyword.get(opts, :scope) || Keyword.get(opts, :user_uuid))
     lang = L10n.current_content_lang()
 
     accessible =
@@ -302,7 +302,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
   """
   @spec visible_resource_uuids([String.t()], keyword()) :: [String.t()]
   def visible_resource_uuids(uuids, opts) do
-    scope = Keyword.get(opts, :scope) || Keyword.get(opts, :user_uuid)
+    scope = viewer(Keyword.get(opts, :scope) || Keyword.get(opts, :user_uuid))
 
     case accessible_project_uuids(scope) do
       :none ->
@@ -393,6 +393,24 @@ defmodule PhoenixKitProjects.ResourceLinks do
   end
 
   defp narrow_to_context(accessible, _context), do: accessible
+
+  # Core asks for a bare user uuid when it delivers (a mention added on an
+  # edit): read as is, a deactivated account still "saw" every project its
+  # membership row named, and a holder of `projects.admin_all` with no seat
+  # saw none — the uuid carries no permissions. The account is loaded: an
+  # inactive one sees nothing, an active one is judged by its real scope.
+  defp viewer(uuid) when is_binary(uuid) do
+    case PhoenixKit.Users.Auth.get_user(uuid) do
+      %{is_active: true} = user -> PhoenixKit.Users.Auth.Scope.for_user(user)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  defp viewer(scope), do: scope
 
   defp accessible_project_uuids(nil), do: :none
 
