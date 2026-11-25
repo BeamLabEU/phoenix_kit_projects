@@ -613,7 +613,43 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     end
   end
 
+  # After a reconnect the stack is rebuilt from the session only (a task in
+  # the address); the browser hands back the frames that were open. Taken
+  # only while nothing is open, each through the same checks an `:opened`
+  # passes: an embeddable LV, a session stripped of the host's own keys,
+  # the depth cap.
+  def handle_event("pkp_restore_stack", %{"frames" => frames}, socket) when is_list(frames) do
+    if socket.assigns.modal_stack == [] do
+      {:noreply, Enum.reduce(frames, socket, &restore_frame/2)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp restore_frame(%{"lv" => lv_str, "session" => session}, socket)
+       when is_binary(lv_str) and is_map(session) do
+    with true <- length(socket.assigns.modal_stack) < socket.assigns.max_stack_depth,
+         {:ok, lv} <- WebHelpers.decode_embeddable_lv(lv_str),
+         true <- string_keyed?(session) do
+      push_frame(socket, lv, WebHelpers.sanitize_session_overrides(session))
+    else
+      _ -> socket
+    end
+  end
+
+  defp restore_frame(_frame, socket), do: socket
+
+  defp string_keyed?(map), do: Enum.all?(map, fn {k, _} -> is_binary(k) end)
+
+  defp restore_list(stack) do
+    stack
+    |> Enum.map(&%{"lv" => Atom.to_string(&1.lv), "session" => Map.get(&1, :origin, %{})})
+    |> Jason.encode!()
+  rescue
+    _ -> "[]"
+  end
 
   # A frame holding unsaved edits closes only through its ✕'s confirmation
   # (`:confirmed`): Esc and the backdrop are ignored on it in the browser,
@@ -764,6 +800,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       frame_ref: frame_ref,
       lv: lv,
       session: stamped_session,
+      # What opened it, before the host's own keys were stamped: what the
+      # browser hands back to restore the frame after a reconnect.
+      origin: child_session,
       id: "embed-#{frame_ref}-#{lv_slug(lv)}",
       task_ref: frame_task_ref(lv, child_session)
     }
@@ -841,6 +880,16 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       </:frame>
     </.popup_host>
     <ConfirmAction.confirm_action_modal confirm={assigns[:confirm_action]} />
+    <%!-- What is open, for the browser to hand back after a dropped
+         connection (`PkpKeepStack`, Max 2026-11-25: the popup closed when
+         his internet flickered, and what he had typed was gone). --%>
+    <div
+      id={"pkp-keep-stack-#{topic_suffix(@host_topic)}"}
+      phx-hook="PkpKeepStack"
+      data-frames={restore_list(@modal_stack)}
+      hidden
+    >
+    </div>
     <%!-- The open task in the page's address (`PkpDrawerUrl`), only
          when the host named the parameter. --%>
     <div

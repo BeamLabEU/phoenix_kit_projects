@@ -36,6 +36,12 @@
  *
  * PkpCalendarWorkday: a calendar's Week and Day grids open at the start of
  * the work day instead of midnight.
+ *
+ * PkpZone: tells a form the browser's time zone (an IANA name), so a viewer
+ * whose profile names none types and reads times in their own zone.
+ *
+ * PkpKeepStack: a popup host's open frames survive a dropped connection —
+ * handed back to the server on reconnect, with what was typed in them.
  */
 (function () {
   "use strict";
@@ -2236,6 +2242,121 @@
     else document.addEventListener("DOMContentLoaded", startLeafLayer);
   }
 
+  // PkpZone (Max, 2026-11-25): times in each person's own zone. Sent once
+  // per mount; the server keeps a profile's zone over it.
+  var Zone = {
+    mounted: function () {
+      var zone = null;
+      try {
+        zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      } catch (_e) {
+        zone = null;
+      }
+      if (zone) this.pushEvent("pkp_zone", { zone: zone });
+    }
+  };
+
+  // PkpKeepStack (Max, 2026-11-25: "my internet flickered and the popup
+  // closed and when I opened it again some of the fields were reset"). The
+  // host's stack lives in its process; a rejoin rebuilds it from the
+  // session alone, so a form opened from a button was gone. This element
+  // carries the open frames (what opened each, `data-frames`); on a
+  // disconnect it keeps them and the values typed in each frame's form, and
+  // on the rejoin, if the host came back with nothing open, it hands them
+  // back (`pkp_restore_stack` — the server checks each like any opening)
+  // and types the values back in once the forms are there. Hidden inputs
+  // are not replayed: they are the forms' own bookkeeping, and the rich
+  // editors' text is theirs to keep.
+  var KeepStack = {
+    mounted: function () {
+      this.read();
+    },
+    updated: function () {
+      this.read();
+    },
+    read: function () {
+      try {
+        this.frames = JSON.parse(this.el.dataset.frames || "[]");
+      } catch (_e) {
+        this.frames = [];
+      }
+    },
+    disconnected: function () {
+      if (!this.frames || this.frames.length === 0) {
+        this.kept = null;
+        return;
+      }
+      var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
+      this.kept = {
+        frames: this.frames,
+        values: dialogs.map(function (dialog) {
+          var form = dialog.querySelector("form[phx-change]");
+          if (!form) return [];
+          return Array.prototype.slice
+            .call(form.elements)
+            .filter(function (el) {
+              return el.name && el.type !== "hidden" && el.type !== "file" && el.type !== "submit" && el.type !== "button";
+            })
+            .map(function (el) {
+              return {
+                name: el.name,
+                value: el.value,
+                checked: el.type === "checkbox" || el.type === "radio" ? el.checked : null
+              };
+            });
+        })
+      };
+    },
+    reconnected: function () {
+      var kept = this.kept;
+      this.kept = null;
+      if (!kept) return;
+      var self = this;
+      // The rejoin's own render first: the host may have reopened a task
+      // from the address, and then nothing is handed back.
+      setTimeout(function () {
+        self.read();
+        if (self.frames.length > 0) return;
+        self.pushEvent("pkp_restore_stack", { frames: kept.frames });
+        self.replay(kept.values, 0);
+      }, 50);
+    },
+    // Waits (up to ~10 s) for the restored frames' forms, then types the
+    // kept values back in, one input event per form so the server hears it.
+    replay: function (values, tries) {
+      var self = this;
+      var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
+      var ready =
+        dialogs.length >= values.length &&
+        dialogs.every(function (d, i) {
+          return !values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]");
+        });
+      if (!ready) {
+        if (tries < 50) setTimeout(function () { self.replay(values, tries + 1); }, 200);
+        return;
+      }
+      dialogs.forEach(function (dialog, i) {
+        var saved = values[i] || [];
+        var form = dialog.querySelector("form[phx-change]");
+        if (!form || saved.length === 0) return;
+        var last = null;
+        saved.forEach(function (field) {
+          var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
+          Array.prototype.forEach.call(els, function (el) {
+            if (el.type === "hidden") return;
+            if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
+              if (el.value === field.value) el.checked = field.checked;
+            } else if (el.type !== "checkbox" && el.type !== "radio") {
+              el.value = field.value;
+            }
+            last = el;
+          });
+        });
+        if (last) last.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+  };
+
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,
     PkpPop: Pop,
@@ -2247,6 +2368,8 @@
     PkpTabScroll: TabScroll,
     PkpDrawerUrl: DrawerUrl,
     PkpUrlMirror: UrlMirror,
-    PkpCalendarWorkday: CalendarWorkday
+    PkpCalendarWorkday: CalendarWorkday,
+    PkpZone: Zone,
+    PkpKeepStack: KeepStack
   };
 })();
