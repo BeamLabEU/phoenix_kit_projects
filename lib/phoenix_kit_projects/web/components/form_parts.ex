@@ -33,6 +33,8 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   import PhoenixKitAI.Components.AITranslate, only: [ai_multilang_tabs: 1]
 
   alias PhoenixKit.Modules.Languages
+  alias PhoenixKit.Utils.TimeZone
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Web.Components.{AssignmentStatusBadge, ConfirmAction}
 
   # ── Header ─────────────────────────────────────────────────────────
@@ -127,8 +129,8 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   attr(:class, :any, default: nil)
 
   def zone_note(assigns) do
-    viewer = assigns.zone || PhoenixKitProjects.L10n.viewer_zone()
-    site = PhoenixKitProjects.L10n.site_zone()
+    viewer = assigns.zone || L10n.viewer_zone()
+    site = L10n.site_zone()
 
     assigns =
       assign(assigns,
@@ -146,10 +148,10 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
     """
   end
 
-  defp zone_name(value), do: PhoenixKit.Utils.TimeZone.label(value)
+  defp zone_name(value), do: TimeZone.label(value)
 
   defp same_zone?(a, b) do
-    PhoenixKit.Utils.TimeZone.effectively_same?(a, b)
+    TimeZone.effectively_same?(a, b)
   rescue
     _ -> false
   end
