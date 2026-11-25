@@ -68,6 +68,10 @@ defmodule PhoenixKitProjects.CommentNotices do
         Notices.notify("projects.comment_added", subject,
           actor_uuid: comment.user_uuid,
           recipients: recipients(type, subject, comment),
+          # The words in core's quote block, never in the line: the quote
+          # is withheld from a reader who lost access by delivery time, the
+          # line is not (zai).
+          quote: comment.content,
           metadata: %{
             "comment" => comment.uuid,
             "excerpt" => Notices.excerpt(comment.content)
@@ -101,6 +105,7 @@ defmodule PhoenixKitProjects.CommentNotices do
       Notices.notify("projects.comment_added", a,
         actor_uuid: comment.user_uuid,
         recipients: Enum.uniq(People.assignee_user_uuids(a) ++ mentioned(comment)),
+        quote: (comment.metadata || %{})["summary"] || comment.content,
         metadata: %{
           "comment" => comment.uuid,
           "note" => kind,

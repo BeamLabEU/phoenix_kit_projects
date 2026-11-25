@@ -241,7 +241,10 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
 
     assert [n] = notices("projects.comment_added", bob.user)
     assert n.metadata["notification_text"] =~ "changed the direction"
-    assert n.metadata["notification_text"] =~ "18 mm"
+    # The words ride the quote block, never the line: the block is withheld
+    # from a reader who lost access by delivery time, the line is not (zai).
+    refute n.metadata["notification_text"] =~ "18 mm"
+    assert n.metadata["quote"]["text"] =~ "18 mm"
     # It opens the task on its AI notes, where the note is (codex): one
     # fragment, the note's own anchor.
     assert n.metadata["notification_link"] =~ "task_tab=notes"
@@ -330,7 +333,8 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     PhoenixKitProjects.CommentNotices.on_comment_published("assignment", a.uuid, approved)
 
     assert [n] = notices("projects.comment_added", bob.user)
-    assert n.metadata["notification_text"] =~ "Blum or Hettich?"
+    assert n.metadata["quote"]["text"] =~ "Blum or Hettich?"
+    refute n.metadata["notification_text"] =~ "Blum or Hettich?"
   end
 
   test "a deleted note's words leave the notices that quoted it", ctx do
@@ -344,6 +348,7 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     assert [n] = notices("projects.comment_added", bob.user)
     refute n.metadata["notification_text"] =~ "secret supplier"
     refute Map.has_key?(n.metadata, "excerpt")
+    refute Map.has_key?(n.metadata, "quote")
   end
 
   test "removing a task tells the people of every task it takes with it", ctx do

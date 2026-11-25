@@ -234,6 +234,7 @@ defmodule PhoenixKitProjects.Notices do
       new_meta =
         meta
         |> Map.delete("excerpt")
+        |> Map.delete("quote")
         |> Map.put("notification_text", text)
         |> Map.put("comment_deleted", true)
 
@@ -623,6 +624,25 @@ defmodule PhoenixKitProjects.Notices do
 
   defp text("projects.assignment_removed", c),
     do: gettext("%{actor} removed your task “%{task}”", actor: c.actor, task: c.task)
+
+  # With the words in the quote block, the line names the act only: the
+  # block is what a reader who lost access does not get (zai). A core
+  # without the block keeps the excerpt in the line (the clauses below).
+  defp text("projects.comment_added", %{meta: %{"quote" => %{}}} = c) do
+    case {c.subject, c.meta["note"]} do
+      {%Assignment{}, "redirect"} ->
+        gettext("%{actor} changed the direction of “%{task}”", actor: c.actor, task: c.task)
+
+      {%Assignment{}, note} when is_binary(note) ->
+        gettext("%{actor} added a note to “%{task}”", actor: c.actor, task: c.task)
+
+      {%Assignment{}, _} ->
+        gettext("%{actor} commented on “%{task}”", actor: c.actor, task: c.task)
+
+      _ ->
+        gettext("%{actor} commented on %{project}", actor: c.actor, project: c.project)
+    end
+  end
 
   defp text(
          "projects.comment_added",
