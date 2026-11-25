@@ -2343,6 +2343,7 @@
         if (!item || !item.isConnected) return;
         if (last.next && last.next.isConnected && last.next !== item) self.el.insertBefore(item, last.next);
         else if (last.prev && last.prev.isConnected) last.prev.after(item);
+        else self.el.insertBefore(item, self.el.children[last.index] || null);
       });
       loadSortable().then(function () {
         if (!self.gone) self.init();
@@ -2410,7 +2411,8 @@
           self.lastMove = {
             id: start.id, item: item,
             // Its own subtasks stay in place while it moves: back before them.
-            prev: item.previousElementSibling, next: item.nextElementSibling
+            prev: item.previousElementSibling, next: item.nextElementSibling,
+            index: Array.prototype.indexOf.call(el.children, item)
           };
           self.dragging = {
             item: item, nest: nest, start: start, lifted: lifted,

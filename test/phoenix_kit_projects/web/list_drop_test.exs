@@ -107,12 +107,12 @@ defmodule PhoenixKitProjects.Web.ListDropTest do
     assert by_title(p, "Second").parent_uuid == first.uuid
   end
 
-  test "an empty project has Add a task at the top, and no third one below", %{conn: conn} do
+  test "an empty project has Add a task at the top as well as at the foot", %{conn: conn} do
     p = project()
     {view, html} = page(conn, p)
 
     assert has_element?(view, "#project-quick-top-#{p.uuid}")
-    refute html =~ ~s(phx-click="outline_add_first")
+    assert html =~ ~s(phx-click="outline_add_first")
     assert html =~ "Add the first task"
   end
 

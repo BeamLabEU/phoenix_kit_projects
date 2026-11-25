@@ -81,4 +81,11 @@ defmodule PhoenixKitProjects.Web.SubprojectAccessTest do
 
     refute Authz.can?(ctx.scope, Projects.get_project(ctx.child.uuid), :view)
   end
+
+  test "nothing is inherited past a template in the middle", ctx do
+    {:ok, _} = Members.add_member(ctx.parent, ctx.user.uuid, role: "member")
+    {:ok, _} = Projects.update_project(ctx.child, %{"is_template" => true})
+
+    refute Authz.can?(ctx.scope, Projects.get_project(ctx.grandchild.uuid), :view)
+  end
 end

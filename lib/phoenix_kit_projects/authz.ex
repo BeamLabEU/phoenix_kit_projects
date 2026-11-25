@@ -414,9 +414,13 @@ defmodule PhoenixKitProjects.Authz do
         false
 
       uuid ->
+        # Nearest first, and no further than the first template on the way
+        # up: what sits above a template is not this project's line.
         uuid
         |> PhoenixKitProjects.Projects.parent_chain()
-        |> Enum.any?(&(&1.is_template != true and own_can?(subject, &1, :view, nil)))
+        |> Enum.reverse()
+        |> Enum.take_while(&(&1.is_template != true))
+        |> Enum.any?(&own_can?(subject, &1, :view, nil))
     end
   rescue
     _ -> false

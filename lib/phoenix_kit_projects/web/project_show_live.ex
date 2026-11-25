@@ -4948,7 +4948,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     can = socket.assigns[:outline_can] || %{}
 
     whole? =
-      length(socket.assigns[:visible_assignments] || []) == length(socket.assigns.assignments)
+      socket.assigns[:list_whole?] != false and
+        length(socket.assigns[:visible_assignments] || []) == length(socket.assigns.assignments)
 
     with true <- can[:edit] == true,
          %Assignment{} = a <- own.(id),
@@ -7666,11 +7667,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            design. Feature-gated on render like the "Add task" button. --%>
       <%!-- Cards: a task is added right here and typed into its row. The
            sheet ("Add task" at the top) stays for one with details. --%>
-      <%!-- An empty project has the quick-add line at the top and the
-           empty state's own button: a third "Add a task" below them only
-           repeated them. --%>
       <button
-        :if={@fx.tasks and not @is_template and @outline_can.edit and @assignments != []}
+        :if={@fx.tasks and not @is_template and @outline_can.edit}
         type="button"
         phx-click="outline_add_first"
         phx-disable-with={gettext("Adding…")}
