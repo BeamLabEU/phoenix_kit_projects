@@ -13,7 +13,6 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
   alias PhoenixKitProjects.{ApiAccess, ApiKeys, Authz, Extensions}
   alias PhoenixKitProjects.Schemas.{ApiKey, Project}
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs, Json}
-  alias PhoenixKitProjects.Web.ApiKeyPanel
 
   # A home the key can no longer use (`Auth`): who the key is and what it
   # reaches elsewhere, nothing about the home itself.
@@ -103,8 +102,27 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
   defp acting_for(%ApiKey{user_uuid: uuid} = key) when is_binary(uuid) do
     # `person_uuid`: their staff record, what `assignee: "me"` resolves to
     # (nil until they have one; `"me"` creates it, `Assignee.ensure_person_uuid/1`)
-    %{uuid: uuid, name: ApiKeyPanel.user_name(uuid), person_uuid: Assignee.person_uuid(key)}
+    %{uuid: uuid, name: api_name(uuid), person_uuid: Assignee.person_uuid(key)}
   end
 
   defp acting_for(_key), do: nil
+
+  # The API never hands out an email (`Assignee.person_name/1`'s rule; the
+  # key pages' `ApiKeyPanel.user_name/1` falls back to one): first and last
+  # name, else the username, else nil — the uuid says who.
+  defp api_name(uuid) do
+    case PhoenixKit.Users.Auth.get_user(uuid) do
+      %{} = user ->
+        Assignee.person_name(%{user: user}) ||
+          case Map.get(user, :username) do
+            name when is_binary(name) and name != "" -> name
+            _ -> nil
+          end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
 end
