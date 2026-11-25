@@ -37,14 +37,16 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
             class="flex gap-3 py-2 border-b border-base-200 last:border-b-0"
           >
             <%!-- A fixed square, the icon centred: the icon is inline, so a
-                 padded box took the line's height and came out oval. --%>
+                 padded box took the line's height and came out oval. The
+                 text starts 4 px down so its first line (20 px) is centred
+                 on the 28 px circle (Max, 2026-11-25: they did not line up). --%>
             <div class={[
-              "mt-0.5 shrink-0 self-start flex items-center justify-center w-7 h-7 rounded-full",
+              "shrink-0 self-start flex items-center justify-center w-7 h-7 rounded-full",
               tone(e)
             ]}>
               <.icon name={icon_for(e)} class="w-4 h-4 block" />
             </div>
-            <div class="min-w-0 flex-1">
+            <div class="min-w-0 flex-1 pt-1">
               <div class="flex flex-wrap items-baseline gap-x-2">
                 <span class="text-sm">
                   <span :if={e.auto != true and actor_first?(e)} class="font-medium">{e.actor || gettext("Someone")}</span>
