@@ -242,6 +242,11 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     assert [n] = notices("projects.comment_added", bob.user)
     assert n.metadata["notification_text"] =~ "changed the direction"
     assert n.metadata["notification_text"] =~ "18 mm"
+    # It opens the task on its AI notes, where the note is (codex): one
+    # fragment, the note's own anchor.
+    assert n.metadata["notification_link"] =~ "task_tab=notes"
+    assert n.metadata["notification_link"] =~ ~r/#pk-comment-[0-9a-f-]{36}$/
+    assert length(String.split(n.metadata["notification_link"], "#")) == 2
 
     {:ok, agent} = TaskNotes.validate(%{"summary" => "Exported the DXF"}, "agent_note")
     {:ok, _} = TaskNotes.create(a, agent, user_uuid: alice.user)
@@ -278,6 +283,9 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
     assert [n] = notices("projects.comment_added", carl.user)
     # It opens on the comment: one fragment, the comment's own anchor.
     assert n.metadata["notification_link"] =~ ~r/#pk-comment-#{comment.uuid}$/
+    # …in the task's discussion, the tab the task opens on.
+    assert n.metadata["notification_link"] =~ "/tasks?task="
+    refute n.metadata["notification_link"] =~ "task_tab="
     assert length(String.split(n.metadata["notification_link"], "#")) == 2
 
     assert Repo.all(
@@ -285,6 +293,23 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
                where: e.action == "mention.created" and e.target_uuid == ^carl.user
              )
            ) == []
+  end
+
+  test "a project comment's notice opens the project's Comments tab on the comment", ctx do
+    %{alice: alice, carl: carl} = ctx.people
+    {:ok, _} = PhoenixKit.Settings.update_setting("mentions_enabled", "true")
+    on_exit(fn -> PhoenixKit.Settings.update_setting("mentions_enabled", "false") end)
+    {:ok, token} = Token.to_string(:user, "user", carl.user, "Carl")
+
+    {:ok, comment} =
+      PhoenixKitComments.create_comment("project", ctx.project.uuid, alice.user, %{
+        content: "Please look " <> token
+      })
+
+    assert [n] = notices("projects.comment_added", carl.user)
+    # The project page may show no discussion at all; its Comments tab
+    # always mounts the thread, so the anchor has something to land on.
+    assert n.metadata["notification_link"] =~ ~r{/comments#pk-comment-#{comment.uuid}$}
   end
 
   test "a comment held for moderation tells nobody until it is approved, then tells its people",

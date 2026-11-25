@@ -751,19 +751,36 @@ defmodule PhoenixKitProjects.Notices do
   defp action_label(_action, %Assignment{}), do: gettext("Open task")
   defp action_label(_action, %Project{}), do: gettext("Open project")
 
-  # A comment's notice opens on the comment: its anchor replaces the row's
-  # (one fragment only — the thread's JumpToComment hook matches the whole
-  # hash, and `#task-X#pk-comment-Y` matched nothing).
-  defp link("projects.comment_added", subject, %{"comment" => comment})
+  # A comment's notice opens on the comment, where its thread is mounted:
+  # the project's Comments tab for a project's discussion (the project page
+  # itself may show none), the task's AI notes for a note (the task opens
+  # on its discussion otherwise), the task's discussion for a comment. Its
+  # anchor replaces the row's — one fragment only: the thread's
+  # JumpToComment hook matches the whole hash, and `#task-X#pk-comment-Y`
+  # matched nothing.
+  defp link("projects.comment_added", subject, %{"comment" => comment} = meta)
        when is_binary(comment) do
-    subject
-    |> link()
-    |> String.split("#", parts: 2)
-    |> hd()
-    |> Kernel.<>("#pk-comment-" <> comment)
+    base =
+      case {subject, meta} do
+        {%Project{} = p, _} ->
+          Paths.project_comments(p)
+
+        {%Assignment{} = a, %{"note" => note}} when is_binary(note) ->
+          a |> link() |> without_fragment() |> with_query("task_tab=notes")
+
+        _ ->
+          subject |> link() |> without_fragment()
+      end
+
+    base <> "#pk-comment-" <> comment
   end
 
   defp link(action, subject, _meta), do: link(action, subject)
+
+  defp without_fragment(url), do: url |> String.split("#", parts: 2) |> hd()
+
+  defp with_query(url, pair),
+    do: if(String.contains?(url, "?"), do: url <> "&" <> pair, else: url <> "?" <> pair)
 
   defp link("projects.assignment_removed", %Assignment{} = a), do: Paths.project(a.project_uuid)
   defp link(_action, subject), do: link(subject)

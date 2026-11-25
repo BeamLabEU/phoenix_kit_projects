@@ -457,7 +457,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            |> load_comment_counts()
            |> load_ledger()
            |> load_labels()
-           |> focus_task(Map.get(params, "task"))}
+           |> focus_task(Map.get(params, "task"))
+           |> assign(:focus_task_tab, task_tab(Map.get(params, "task_tab")))}
         else
           {:ok,
            socket
@@ -506,14 +507,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # What the drawer opens with when the page was reached through a link to
   # a task: the task's view, as the row's title opens it.
-  defp popup_open(%{focus_task: uuid, project: project}) when is_binary(uuid) do
+  # `?task_tab=` opens the task on that section: a note's notice links to
+  # the AI notes, where the note is (a link to the task alone opened the
+  # discussion, with nothing there to scroll to).
+  defp popup_open(%{focus_task: uuid, project: project} = assigns) when is_binary(uuid) do
+    session = view_session(%{project_uuid: project.uuid, uuid: uuid})
+
     %{
       "lv" => Atom.to_string(PhoenixKitProjects.Web.AssignmentViewLive),
-      "session" => view_session(%{project_uuid: project.uuid, uuid: uuid})
+      "session" =>
+        if(assigns[:focus_task_tab],
+          do: Map.put(session, "tab", assigns.focus_task_tab),
+          else: session
+        )
     }
   end
 
   defp popup_open(_assigns), do: nil
+
+  defp task_tab(tab) when tab in ["comments", "history", "notes"], do: tab
+  defp task_tab(_), do: nil
 
   # The session the task view opens with from this page: it says this page
   # runs the view's next step (its `:intent`s, `subscribe_intents/1`), so
