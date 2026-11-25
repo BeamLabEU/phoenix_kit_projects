@@ -123,16 +123,8 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     %{project: project, fx: fx} = socket.assigns
     assignments = socket.assigns[:assignments] || []
     style = style(project, fx, assignments)
-    scope = socket.assigns[:phoenix_kit_current_scope]
 
-    can = %{
-      edit:
-        fx[:tasks] == true and project.archived_at == nil and
-          Authz.can?(scope, project, :edit_tasks) and Authz.can?(scope, project, :create_tasks),
-      delete: Authz.can?(scope, project, :delete_tasks),
-      tick: fx[:tasks] == true and Authz.can?(scope, project, :update_status),
-      nest: fx[:subtasks] != false
-    }
+    can = rights(socket)
 
     socket =
       assign(socket,
@@ -240,8 +232,15 @@ defmodule PhoenixKitProjects.Web.OutlineList do
              Phoenix.LiveView.Socket.t())
         ) ::
           {:noreply, Phoenix.LiveView.Socket.t()} | {:reply, map(), Phoenix.LiveView.Socket.t()}
-  def handle_event("outline_sync", %{"lines" => lines} = params, socket, reload)
-      when is_list(lines) do
+  def handle_event(event, params, socket, reload) do
+    # The rights are asked again of the live scope on every event, like the
+    # forms' WriteGate: computed per list load only, a person whose rights
+    # were taken away mid-session kept writing until the next reload.
+    handle_outline(event, params, assign(socket, :outline_can, rights(socket)), reload)
+  end
+
+  defp handle_outline("outline_sync", %{"lines" => lines} = params, socket, reload)
+       when is_list(lines) do
     %{project: project, outline_can: can} = socket.assigns
 
     if can.edit do
@@ -268,7 +267,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  def handle_event("outline_restore", %{"uuid" => uuid}, socket, reload) do
+  defp handle_outline("outline_restore", %{"uuid" => uuid}, socket, reload) do
     with true <- socket.assigns.outline_can.edit,
          %Assignment{review_status: "removed"} = a <- own(socket, uuid) do
       case Outline.restore(a) do
@@ -285,7 +284,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  def handle_event("outline_purge", %{"uuid" => uuid}, socket, reload) do
+  defp handle_outline("outline_purge", %{"uuid" => uuid}, socket, reload) do
     with true <- socket.assigns.outline_can.edit and socket.assigns.outline_can.delete,
          %Assignment{review_status: "removed"} = a <- own(socket, uuid) do
       case PhoenixKitProjects.Notices.removing(a, Activity.actor_uuid(socket), fn ->
@@ -306,7 +305,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   # ── the card face ──────────────────────────────────────────────────
 
-  def handle_event("outline_rename", %{"id" => uuid, "text" => text}, socket, reload) do
+  defp handle_outline("outline_rename", %{"id" => uuid, "text" => text}, socket, reload) do
     title = text |> to_string() |> String.replace(~r/\s+/u, " ") |> String.trim()
 
     with true <- socket.assigns.outline_can.edit,
@@ -327,7 +326,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # row is only a draft (`draft_row/1`), written once something is typed in
   # it. The boss's last Enter of a run used to leave an empty "New task"
   # behind that he then had to find and delete.
-  def handle_event("outline_add", %{"after" => after_uuid} = params, socket, reload) do
+  defp handle_outline("outline_add", %{"after" => after_uuid} = params, socket, reload) do
     text = params["text"] |> to_string() |> clean_title()
 
     with true <- socket.assigns.outline_can.edit,
@@ -352,7 +351,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   end
 
   # "Add a task" at the foot of the list: a draft at the end, top level.
-  def handle_event("outline_add_first", _params, socket, _reload) do
+  defp handle_outline("outline_add_first", _params, socket, _reload) do
     if socket.assigns.outline_can.edit do
       last =
         socket.assigns.assignments
@@ -369,7 +368,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # The draft's title, written: Enter (`next` — the following draft opens
   # below it, so a run of titles is typed without a click) or leaving the
   # row with something in it. A draft left empty is no task.
-  def handle_event("outline_draft_save", %{"key" => key} = params, socket, reload) do
+  defp handle_outline("outline_draft_save", %{"key" => key} = params, socket, reload) do
     text = params["text"] |> to_string() |> clean_title()
 
     with true <- socket.assigns.outline_can.edit,
@@ -394,7 +393,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   # The library's tasks matching what the draft holds so far, for the
   # dropdown under it (`LibrarySearch.suggest/2`).
-  def handle_event("outline_draft_suggest", %{"key" => key, "q" => q}, socket, _reload) do
+  defp handle_outline("outline_draft_suggest", %{"key" => key, "q" => q}, socket, _reload) do
     with true <- socket.assigns.outline_can.edit,
          %{key: ^key} <- socket.assigns[:outline_draft] do
       lang = L10n.current_content_lang()
@@ -416,13 +415,13 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # A library task taken from the dropdown: added the way the task form adds
   # one from the library (its description, estimate and default assignee
   # come with it), where the draft stands; Enter opens the next draft.
-  def handle_event(
-        "outline_draft_pick",
-        %{"key" => key, "task" => task_uuid} = params,
-        socket,
-        reload
-      )
-      when is_binary(task_uuid) do
+  defp handle_outline(
+         "outline_draft_pick",
+         %{"key" => key, "task" => task_uuid} = params,
+         socket,
+         reload
+       )
+       when is_binary(task_uuid) do
     with true <- socket.assigns.outline_can.edit,
          %{key: ^key} = draft <- socket.assigns[:outline_draft],
          {:ok, _} <- Ecto.UUID.cast(task_uuid),
@@ -447,7 +446,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   end
 
   # Esc, Enter on an empty draft, or clicking away from one: nothing is kept.
-  def handle_event("outline_draft_cancel", %{"key" => key} = params, socket, _reload) do
+  defp handle_outline("outline_draft_cancel", %{"key" => key} = params, socket, _reload) do
     case socket.assigns[:outline_draft] do
       %{key: ^key} -> {:noreply, close_draft(socket, params["refocus"] == true)}
       _ -> {:noreply, socket}
@@ -456,7 +455,12 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   # Tab / Shift+Tab on a draft: the same nesting a written row gets, before
   # anything is written.
-  def handle_event("outline_draft_nest", %{"key" => key, "dir" => dir} = params, socket, _reload) do
+  defp handle_outline(
+         "outline_draft_nest",
+         %{"key" => key, "dir" => dir} = params,
+         socket,
+         _reload
+       ) do
     with true <- socket.assigns.outline_can.edit,
          true <- socket.assigns.outline_can.nest or dir == "out",
          %{key: ^key} = draft <- socket.assigns[:outline_draft],
@@ -470,13 +474,13 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   # A list pasted into a draft: its lines go where the draft stands, the
   # draft's own text (if any) first.
-  def handle_event(
-        "outline_draft_paste",
-        %{"key" => key, "lines" => lines} = params,
-        socket,
-        reload
-      )
-      when is_list(lines) do
+  defp handle_outline(
+         "outline_draft_paste",
+         %{"key" => key, "lines" => lines} = params,
+         socket,
+         reload
+       )
+       when is_list(lines) do
     with true <- socket.assigns.outline_can.edit,
          %{key: ^key} = draft <- socket.assigns[:outline_draft] do
       typed = params["text"] |> to_string() |> clean_title()
@@ -489,8 +493,8 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  def handle_event("outline_paste", %{"after" => after_uuid, "lines" => lines}, socket, reload)
-      when is_list(lines) do
+  defp handle_outline("outline_paste", %{"after" => after_uuid, "lines" => lines}, socket, reload)
+       when is_list(lines) do
     with true <- socket.assigns.outline_can.edit,
          %Assignment{} = anchor <- own(socket, after_uuid) do
       # The pasted lines go in after the anchor's branch, at its level.
@@ -506,7 +510,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  def handle_event("outline_nest", %{"id" => uuid, "dir" => dir}, socket, reload) do
+  defp handle_outline("outline_nest", %{"id" => uuid, "dir" => dir}, socket, reload) do
     with true <- socket.assigns.outline_can.edit,
          true <- socket.assigns.outline_can.nest or dir == "out",
          %Assignment{} = a <- own(socket, uuid) do
@@ -554,7 +558,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # (`Projects.empty_draft?/1`: no description, subtasks, comments, files
   # or time) — the event is the client's, and the row may have been filled
   # in since. Anything else stays as it was, as it always has.
-  def handle_event("outline_drop", %{"id" => uuid}, socket, reload) do
+  defp handle_outline("outline_drop", %{"id" => uuid}, socket, reload) do
     created = socket.assigns[:outline_created] || MapSet.new()
 
     with true <- socket.assigns.outline_can.edit,
@@ -581,7 +585,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  def handle_event("outline_fold", %{"uuid" => uuid}, socket, _reload) do
+  defp handle_outline("outline_fold", %{"uuid" => uuid}, socket, _reload) do
     folded = socket.assigns[:outline_folded] || MapSet.new()
 
     folded =
@@ -600,7 +604,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # level, so it lands where the list's order puts it; the line keeps the
   # cursor for the next. The reply says what was added, for the line's own
   # "Added: …" note.
-  def handle_event("outline_quick_add", params, socket, reload) do
+  defp handle_outline("outline_quick_add", params, socket, reload) do
     titles =
       (List.wrap(params["lines"]) ++ List.wrap(params["text"]))
       |> Enum.filter(&is_binary/1)
@@ -630,13 +634,13 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   # The typed title lost the cursor: the row is a link again (the boss,
   # 2026-11-18). Only the row that held it.
-  def handle_event("outline_blur", %{"id" => uuid}, socket, _reload) do
+  defp handle_outline("outline_blur", %{"id" => uuid}, socket, _reload) do
     if socket.assigns[:outline_focus] == uuid,
       do: {:noreply, assign(socket, outline_focus: nil)},
       else: {:noreply, socket}
   end
 
-  def handle_event("outline_open", %{"id" => uuid}, socket, _reload) do
+  defp handle_outline("outline_open", %{"id" => uuid}, socket, _reload) do
     case own(socket, uuid) do
       %Assignment{} = a ->
         project = socket.assigns.project
@@ -657,7 +661,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  def handle_event(_event, _params, socket, _reload), do: {:noreply, socket}
+  defp handle_outline(_event, _params, socket, _reload), do: {:noreply, socket}
 
   defp put_flash(socket, kind, message), do: Phoenix.LiveView.put_flash(socket, kind, message)
 
@@ -1227,5 +1231,19 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       ]}
     />
     """
+  end
+
+  defp rights(socket) do
+    %{project: project, fx: fx} = socket.assigns
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    %{
+      edit:
+        fx[:tasks] == true and project.archived_at == nil and
+          Authz.can?(scope, project, :edit_tasks) and Authz.can?(scope, project, :create_tasks),
+      delete: Authz.can?(scope, project, :delete_tasks),
+      tick: fx[:tasks] == true and Authz.can?(scope, project, :update_status),
+      nest: fx[:subtasks] != false
+    }
   end
 end

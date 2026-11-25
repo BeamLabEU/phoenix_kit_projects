@@ -1160,7 +1160,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     with {:ok, date} <- Date.from_iso8601(params["date"] || ""),
          {:ok, start} <- start_time(date, params["time"], offset) do
       cond do
-        DateTime.compare(start, DateTime.add(DateTime.utc_now(), 86_400)) == :gt ->
+        # The viewer's own today, not "now + 24 h": tomorrow's date passed
+        # most of the day under the old window.
+        Date.compare(date, PhoenixKit.Utils.TimeZone.local_date(DateTime.utc_now(), offset)) ==
+            :gt ->
           {:error, gettext("The day cannot be in the future.")}
 
         params["time"] in [nil, ""] ->

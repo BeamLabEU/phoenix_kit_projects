@@ -738,6 +738,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, socket |> load_ledger() |> load_assignments() |> load_labels()}
   end
 
+  # Only THIS project's deletion leaves the page. An open sub-project's
+  # topic (the inset listens on it) announces its own: a row to redraw.
+  def handle_info(
+        {:projects, :project_deleted, %{uuid: uuid}},
+        %{assigns: %{project: %{uuid: own}}} = socket
+      )
+      when uuid != own do
+    {:noreply, load_assignments(socket)}
+  end
+
   def handle_info({:projects, :project_deleted, _payload}, socket) do
     {:noreply,
      socket
@@ -3334,6 +3344,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  defp dependency_endpoints(socket, a_uuid, d_uuid) do
+    page = socket.assigns.project.uuid
+
+    with %{project_uuid: p} <- scoped_assignment(socket, a_uuid),
+         %{project_uuid: ^p} <- scoped_assignment(socket, d_uuid),
+         true <-
+           p == page or
+             child_project_allows?(
+               socket.assigns[:phoenix_kit_current_scope],
+               :edit_tasks,
+               a_uuid
+             ) do
+      :ok
+    else
+      _ -> :error
+    end
+  end
+
   defp displayed_child_task?(socket, uuid) do
     socket.assigns
     |> Map.get(:subproject_child_tasks, %{})
@@ -4440,9 +4468,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       %Assignment{child_project_uuid: child_uuid} when is_binary(child_uuid) ->
         expanded = socket.assigns.expanded_subprojects
 
+        # While it is open the inset listens on the sub-project's own topic:
+        # a rename, a deadline or an assignee changed there (its own page,
+        # the API) reached only that topic, and the inset stayed stale.
         if MapSet.member?(expanded, uuid) do
+          if connected?(socket),
+            do: ProjectsPubSub.unsubscribe(ProjectsPubSub.topic_project(child_uuid))
+
           {:noreply, assign(socket, expanded_subprojects: MapSet.delete(expanded, uuid))}
         else
+          if connected?(socket),
+            do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_project(child_uuid))
+
           child_tasks = Projects.list_assignments(child_uuid)
 
           # Merge the child's dependencies so the inset child tasks' badges
@@ -4580,16 +4617,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          %{"assignment" => a_uuid, "depends_on" => d_uuid},
          socket
        ) do
-    # Both assignments must belong to the currently-viewed project —
-    # prevents an admin on project A from unlinking deps in project B.
-    # Cross-project mismatches are silent noops (UI never offers them).
+    # Both endpoints must be rows this page shows — its own, or a task of an
+    # expanded sub-project (the inset draws the × too, and a check against
+    # this project only made that × do nothing) — and of ONE project. A
+    # sub-project's edge also needs `:edit_tasks` in that sub-project: the
+    # dispatcher asked it of this one. Anything else is a silent no-op.
     # An actual `remove_dependency/2` failure is rare but logged via
     # `log_failed` so a Postgres outage doesn't erase the click.
-    # Both endpoints are scope-checked in a single query (distinct uuids →
-    # exactly two rows when both live in this project); a missing or
-    # cross-project endpoint yields <2 rows and is a silent no-op.
-    case Projects.scoped_assignments([a_uuid, d_uuid], socket.assigns.project.uuid) do
-      [_, _] ->
+    case dependency_endpoints(socket, a_uuid, d_uuid) do
+      :ok ->
         case Projects.remove_dependency(a_uuid, d_uuid) do
           {:ok, _} ->
             Activity.log("projects.dependency_removed",

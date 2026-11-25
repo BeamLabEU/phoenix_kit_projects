@@ -2622,6 +2622,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # An event this form does not know, or a known one without the
+  # parameters it takes: nothing happens. A crash would restart the form and
+  # lose what was typed and everything held until Save (the project page
+  # has the same guard).
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
   # What the «Project to nest» picker offers: the projects the viewer may
   # nest here, minus the ones the host's move lock holds in place (nesting
   # moves a project). One hook call for the whole list.
