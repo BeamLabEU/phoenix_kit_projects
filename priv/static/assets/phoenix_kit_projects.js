@@ -1368,7 +1368,7 @@
     },
     linked: function (id) { return !!(this.up[id] || this.down[id]); },
     card: function (id) {
-      return this.el.querySelector('[data-pkp-card="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      return this.el.querySelector('[data-pkp-card="' + (window.CSS && window.CSS.escape ? window.CSS.escape(id) : id) + '"]');
     },
     // Everything reachable from `id` one way, guarded against a cycle.
     reach: function (id, map) {
@@ -1409,7 +1409,7 @@
       var bAll = traced ? this.reach(src, this.up) : b1;
       var aAll = traced ? this.reach(src, this.down) : a1;
 
-      var scope = "#" + (window.CSS && CSS.escape ? CSS.escape(this.el.id) : this.el.id) + " ";
+      var scope = "#" + (window.CSS && window.CSS.escape ? window.CSS.escape(this.el.id) : this.el.id) + " ";
       var card = function (id) { return scope + '[data-pkp-card="' + id + '"]'; };
       var rel = function (id) { return scope + '[data-pkp-rel="' + id + '"]'; };
       var rules = [];
@@ -1603,7 +1603,7 @@
         if (!payload || !payload.uuid || !self.el.isConnected) return;
         var cls = payload.status === "ok" ? "pkp-board-ok" : payload.status === "error" ? "pkp-board-err" : null;
         if (!cls) return;
-        var card = self.el.querySelector('.sortable-item[data-id="' + CSS.escape(payload.uuid) + '"]');
+        var card = self.el.querySelector('.sortable-item[data-id="' + window.CSS.escape(payload.uuid) + '"]');
         if (!card) return;
         card.classList.remove("pkp-board-ok", "pkp-board-err");
         void card.offsetWidth;
@@ -2595,7 +2595,7 @@
       d.item.style.marginLeft = (t.depth * 2) + "rem";
       this.clearParentMark();
       if (t.parent) {
-        var p = this.el.querySelector(':scope > .sortable-item[data-id="' + CSS.escape(t.parent) + '"]');
+        var p = this.el.querySelector(':scope > .sortable-item[data-id="' + window.CSS.escape(t.parent) + '"]');
         if (p) p.classList.add("pkp-list-parent");
       }
     },
