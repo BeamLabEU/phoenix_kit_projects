@@ -3,7 +3,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
   The project page's task list as an outline (`Web.OutlineList`): the text
   face for a plain to-do list (the `PkpOutline` hook and its server side),
   the cards with typed titles and nesting, the settings that choose
-  between them, and the task form's "Sits under" and Subtasks box.
+  between them, and the task form's "Parent task" and Subtasks box.
   """
 
   use PhoenixKitProjects.LiveCase, async: false

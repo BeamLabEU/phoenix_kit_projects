@@ -2906,7 +2906,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         do: socket,
         else: assign(socket, held_dep_adds: [], held_dep_removes: [], held_dep_items: %{})
 
-    # Likewise subtasks: a held "Sits under" and held new subtasks are
+    # Likewise subtasks: a held "Parent task" and held new subtasks are
     # dropped; held ticks are plain status changes and stay.
     socket =
       if fx.subtasks,
@@ -3096,7 +3096,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # ── Tasks under tasks ──────────────────────────────────────────────
 
-  # The "Sits under" choices (every task of the project but this one and
+  # The "Parent task" choices (every task of the project but this one and
   # what is under it, indented by depth), the current choice, and — when
   # editing — the task's own subtasks.
   defp assign_outline(socket, params) do
@@ -3196,7 +3196,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     _ -> :ok
   end
 
-  # The "Sits under" select changed on a task being edited: held until
+  # The "Parent task" select changed on a task being edited: held until
   # Save (the boss, 2026-11-18 — the task moved in the list behind the
   # popup before Save was pressed), then moved with its branch
   # (`apply_held/1`). Back to where it sits now, nothing is held.
@@ -5689,8 +5689,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               id="assignment-parent-task"
               name="parent_task"
               value={@parent_task || ""}
-              label={gettext("Sits under")}
-              options={[{gettext("Nothing — a top-level task"), ""} | @parent_options]}
+              label={gettext("Parent task")}
+              options={[{gettext("None — top-level task"), ""} | @parent_options]}
             />
             <p
               :if={@live_action == :edit and @held_parent != :keep}
@@ -5774,17 +5774,31 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </ul>
               <%!-- Re-keyed after each add: a fresh, empty input that takes
                    the cursor back for the next line. --%>
-              <input
-                type="text"
-                name="title"
-                form={"assignment-subtask-form-#{@dom}"}
-                id={"assignment-subtask-new-#{assigns[:subtask_seq] || 0}"}
-                phx-mounted={(assigns[:subtask_seq] || 0) > 0 && JS.focus()}
-                placeholder={gettext("Add a subtask and press Enter")}
-                maxlength="500"
-                autocomplete="off"
-                class="input input-sm input-bordered w-full"
-              />
+              <%!-- Enter adds it, and so does the button beside it (Max,
+                   2026-11-25: Enter alone was the only way, and nothing on
+                   the screen said so). --%>
+              <div class="join w-full">
+                <input
+                  type="text"
+                  name="title"
+                  form={"assignment-subtask-form-#{@dom}"}
+                  id={"assignment-subtask-new-#{assigns[:subtask_seq] || 0}"}
+                  phx-mounted={(assigns[:subtask_seq] || 0) > 0 && JS.focus()}
+                  placeholder={gettext("New subtask")}
+                  aria-label={gettext("New subtask")}
+                  maxlength="500"
+                  autocomplete="off"
+                  class="input input-sm input-bordered join-item w-full"
+                />
+                <button
+                  type="submit"
+                  form={"assignment-subtask-form-#{@dom}"}
+                  id={"assignment-subtask-add-#{@dom}"}
+                  class="btn btn-sm join-item gap-1"
+                >
+                  <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add")}
+                </button>
+              </div>
             </fieldset>
 
             <%!-- Repeating (the boss, via Max, 2026-10-31: low priority, and

@@ -2236,6 +2236,229 @@
     else document.addEventListener("DOMContentLoaded", startLeafLayer);
   }
 
+  // ── PkpListDrag: the card list's drag, levels included ─────────────
+  //
+  // Max and the panel (codex, zai, grok), 2026-11-25: a card could only be
+  // dragged among its own siblings, so a task could not be dragged under
+  // another one nor a subtask out to the top. Now, as in an outliner:
+  //   * a straight drag up or down keeps the level;
+  //   * moving sideways by about one indent (2rem) changes it, snapped to
+  //     whole levels: right goes deeper (at most one below the row above),
+  //     left comes out (never shallower than the row below, which would
+  //     leave that row's place in the plan behind);
+  //   * the dragged card's subtasks go with it (lifted out of the list
+  //     while it moves), the card shows the level it will land at, and the
+  //     task it will sit under is outlined;
+  //   * a sub-project's row is never a parent; into a folded task, a row
+  //     lands as its last subtask and the page unfolds it.
+  // A filtered list (rows hidden) keeps the old sibling-only reorder: the
+  // row above on screen is not necessarily the row above in the plan.
+  // The server does the move (`list_drop` → `Outline.move/3`) and redraws
+  // the list; a refused move answers `pkp-list:revert` and the cards go
+  // back where they were.
+  var LIST_STYLE_ID = "pkp-list-drag-style";
+  var LIST_CSS = [
+    ".pkp-list-lifted{display:none!important}",
+    ".pkp-list-ghost{opacity:.55}",
+    ".pkp-list-ghost .card{outline:2px dashed var(--color-primary,#4f46e5);outline-offset:-2px}",
+    ".pkp-list-parent .card{box-shadow:inset 3px 0 0 var(--color-primary,#4f46e5)}",
+    ".pkp-list-dragging .pk-drag-handle{cursor:grabbing}"
+  ].join("\n");
+
+  // Where a dropped row lands. `rows`: the list as it stands after the drop,
+  // the moved branch's other rows left out — `[{id, depth, sub, folded}]`;
+  // `idx`: the moved row's index; `startDepth`: its level before; `dx`: how
+  // far the pointer went sideways (px); `indent`: one level (px). Answers
+  // `{depth, parent, after}`: the parent's id or null (top level), and the
+  // sibling it goes after, null (first) or "last" (a folded parent).
+  function listDropTarget(rows, idx, startDepth, dx, indent, threshold) {
+    var above = idx > 0 ? rows[idx - 1] : null;
+    var next = idx + 1 < rows.length ? rows[idx + 1] : null;
+    threshold = threshold == null ? indent / 2 : threshold;
+    var raw = Math.abs(dx) < threshold ? startDepth : startDepth + Math.round(dx / indent);
+    var max = above ? above.depth + (above.sub ? 0 : 1) : 0;
+    var min = next ? Math.min(next.depth, max) : 0;
+    var depth = Math.max(min, Math.min(max, raw));
+
+    function parentAt(d) {
+      if (d <= 0) return null;
+      for (var i = idx - 1; i >= 0; i--) {
+        if (rows[i].depth === d - 1) return rows[i];
+        if (rows[i].depth < d - 1) return null;
+      }
+      return null;
+    }
+
+    var parent = parentAt(depth);
+    // Never under a sub-project's row (it holds no task rows).
+    while (depth > 0 && (!parent || parent.sub)) {
+      depth -= 1;
+      parent = parentAt(depth);
+    }
+
+    var after = null;
+    for (var j = idx - 1; j >= 0; j--) {
+      if (rows[j].depth === depth) { after = rows[j].id; break; }
+      if (rows[j].depth < depth) break;
+    }
+    if (parent && parent.folded) after = "last";
+    return { depth: depth, parent: parent ? parent.id : null, after: after };
+  }
+
+  function listRows(container, skip) {
+    return Array.prototype.filter.call(
+      container.querySelectorAll(":scope > .sortable-item[data-id]"),
+      function (el) { return !el.classList.contains("pkp-list-lifted") && el !== skip; }
+    );
+  }
+
+  function rowInfo(el) {
+    return {
+      id: el.dataset.id,
+      depth: parseInt(el.dataset.depth || "0", 10) || 0,
+      sub: el.dataset.sub === "true",
+      folded: el.dataset.folded === "true",
+      el: el
+    };
+  }
+
+  var ListDrag = {
+    mounted: function () {
+      var self = this;
+      this.gone = false;
+      if (!document.getElementById(LIST_STYLE_ID)) {
+        var style = document.createElement("style");
+        style.id = LIST_STYLE_ID;
+        style.textContent = LIST_CSS;
+        document.head.appendChild(style);
+      }
+      this.handleEvent("pkp-list:revert", function (payload) {
+        var last = self.lastOrder;
+        if (!payload || !last || last.id !== payload.uuid) return;
+        self.lastOrder = null;
+        last.nodes.forEach(function (n) { if (n.isConnected) self.el.appendChild(n); });
+      });
+      loadSortable().then(function () {
+        if (!self.gone) self.init();
+      }, function () {});
+    },
+
+    indentPx: function () {
+      var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      return 2 * rem;
+    },
+
+    init: function () {
+      var self = this;
+      var el = this.el;
+      var pointerX = 0;
+      var track = function (e) {
+        var t = e.touches && e.touches[0];
+        pointerX = t ? t.clientX : e.clientX;
+        if (self.dragging) self.preview();
+      };
+
+      this.sortable = window.Sortable.create(el, {
+        draggable: ".sortable-item",
+        handle: ".pk-drag-handle",
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackTolerance: 4,
+        delay: 180,
+        delayOnTouchOnly: true,
+        touchStartThreshold: 6,
+        animation: 150,
+        ghostClass: "pkp-list-ghost",
+        onStart: function (evt) {
+          var item = evt.item;
+          var nest = el.dataset.nest === "true";
+          var start = rowInfo(item);
+          // The order before, to put back on a refusal.
+          self.lastOrder = { id: start.id, nodes: Array.prototype.slice.call(el.children) };
+          // The branch moves together: its rows leave the list meanwhile.
+          var lifted = [];
+          if (nest) {
+            var n = item.nextElementSibling;
+            while (n && n.matches(".sortable-item") && rowInfo(n).depth > start.depth) {
+              n.classList.add("pkp-list-lifted");
+              lifted.push(n);
+              n = n.nextElementSibling;
+            }
+          }
+          self.dragging = {
+            item: item, nest: nest, start: start, lifted: lifted,
+            startX: pointerX, margin: item.style.marginLeft
+          };
+          el.classList.add("pkp-list-dragging");
+          document.addEventListener("pointermove", track, true);
+          document.addEventListener("touchmove", track, true);
+        },
+        onChange: function () { self.preview(); },
+        onEnd: function (evt) {
+          var d = self.dragging;
+          self.dragging = null;
+          document.removeEventListener("pointermove", track, true);
+          document.removeEventListener("touchmove", track, true);
+          el.classList.remove("pkp-list-dragging");
+          self.clearParentMark();
+          if (!d) return;
+          d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
+          var id = d.start.id;
+
+          if (!d.nest) {
+            d.item.style.marginLeft = d.margin;
+            if (evt.oldIndex === evt.newIndex) return;
+            var ids = listRows(el).map(function (n) { return n.dataset.id; });
+            self.pushEvent(el.dataset.sortableEvent || "reorder_assignments", { ordered_ids: ids, moved_id: id });
+            return;
+          }
+
+          var target = self.target(d);
+          d.item.style.marginLeft = d.margin;
+          var unchanged = evt.oldIndex === evt.newIndex && target.depth === d.start.depth;
+          if (unchanged) return;
+          self.pushEvent(el.dataset.dropEvent || "list_drop", {
+            id: id, parent: target.parent, after: target.after
+          });
+        }
+      });
+
+      this.target = function (d) {
+        var rows = listRows(el).map(rowInfo);
+        var idx = rows.findIndex(function (r) { return r.id === d.start.id; });
+        return listDropTarget(rows, idx, d.start.depth, pointerX - d.startX, self.indentPx());
+      };
+    },
+
+    // While dragging: the card at the level it will land at, its future
+    // parent outlined.
+    preview: function () {
+      var d = this.dragging;
+      if (!d || !d.nest) return;
+      var t = this.target(d);
+      d.item.style.marginLeft = (t.depth * 2) + "rem";
+      this.clearParentMark();
+      if (t.parent) {
+        var p = this.el.querySelector(':scope > .sortable-item[data-id="' + CSS.escape(t.parent) + '"]');
+        if (p) p.classList.add("pkp-list-parent");
+      }
+    },
+
+    clearParentMark: function () {
+      Array.prototype.forEach.call(this.el.querySelectorAll(".pkp-list-parent"), function (n) {
+        n.classList.remove("pkp-list-parent");
+      });
+    },
+
+    destroyed: function () {
+      this.gone = true;
+      if (this.sortable) { this.sortable.destroy(); this.sortable = null; }
+    }
+  };
+
+  window.PhoenixKitProjectsInternals = window.PhoenixKitProjectsInternals || {};
+  window.PhoenixKitProjectsInternals.listDropTarget = listDropTarget;
+
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,
     PkpPop: Pop,
@@ -2244,6 +2467,7 @@
     PkpTitle: Title,
     PkpLinks: Links,
     PkpBoard: Board,
+    PkpListDrag: ListDrag,
     PkpTabScroll: TabScroll,
     PkpDrawerUrl: DrawerUrl,
     PkpUrlMirror: UrlMirror,

@@ -215,6 +215,27 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   # ── events ─────────────────────────────────────────────────────────
 
+  @doc """
+  The rows that can be made a subtask of the sibling above them (the ⋮
+  menu's "Make it a subtask of the task above", `outline_nest` "in"): a
+  row with a sibling above it that is not a sub-project. One pass.
+  """
+  @spec nest_in_set([Assignment.t()]) :: MapSet.t()
+  def nest_in_set(rows) when is_list(rows) do
+    rows
+    |> Enum.group_by(& &1.parent_uuid)
+    |> Enum.flat_map(fn {_parent, siblings} ->
+      siblings
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.flat_map(fn [above, a] ->
+        if Assignment.subproject?(above), do: [], else: [a.uuid]
+      end)
+    end)
+    |> MapSet.new()
+  end
+
+  def nest_in_set(_), do: MapSet.new()
+
   @doc "The events this module answers (all start with `outline_`)."
   @spec event?(String.t()) :: boolean()
   def event?("outline_" <> _), do: true

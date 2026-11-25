@@ -2668,6 +2668,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   icon="hero-cpu-chip"
                   label={ai_notes_label(a_note_count, a_tokens)}
                 />
+                <%!-- Nesting by the menu (Max and the panel, 2026-11-25: a card
+                     offered no way to make a task a subtask but a drag that
+                     could not). The precise one-level moves; the drag sets
+                     any level. Only where the move is possible. --%>
+                <.table_row_menu_button
+                  :if={@draggable and @ol && @ol.can.edit && @ol.can.nest && @ol[:nest_in]}
+                  phx-click="outline_nest"
+                  phx-value-id={@a.uuid}
+                  phx-value-dir="in"
+                  icon="hero-arrow-right"
+                  label={gettext("Make it a subtask of the task above")}
+                />
+                <.table_row_menu_button
+                  :if={@draggable and @ol && @ol.can.edit && is_binary(@a.parent_uuid)}
+                  phx-click="outline_nest"
+                  phx-value-id={@a.uuid}
+                  phx-value-dir="out"
+                  icon="hero-arrow-left"
+                  label={gettext("Move it out a level")}
+                />
                 <.table_row_menu_divider />
                 <%!-- More complexity than a task holds (the boss,
                      2026-10-30): the same row becomes a sub-project, its
@@ -3414,6 +3434,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "ask_reopen" => :tasks,
     "remove_assignment" => :tasks,
     "reorder_assignments" => :tasks,
+    "list_drop" => :tasks,
     "review_submission" => :tasks,
     "board_move" => :view_board,
     "open_review" => :tasks,
@@ -3466,6 +3487,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "toggle_tracking" => :update_status,
     "remove_assignment" => :delete_tasks,
     "reorder_assignments" => :edit_tasks,
+    "list_drop" => :edit_tasks,
     # Adding a task through the composer is the same act as the full
     # add-task page — same floor.
     # Placing a task in the plan is the same class of decision as
@@ -4899,6 +4921,53 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        :error,
        gettext("Switch the sort back to Manual order before reordering tasks.")
      )}
+  end
+
+  # A drag that may change a row's level (`PkpListDrag`, Max and the panel,
+  # 2026-11-25): the hook works out where the branch lands — the parent and
+  # the sibling after which it goes, or "last" into a folded parent — and
+  # the move is one `Outline.move/3` (branch together, depth first, the
+  # cycle and sub-project refusals). Only in the manual order, and only for
+  # rows of this project; anything else snaps back.
+  defp gated_handle_event("list_drop", _params, %{assigns: %{list_manual?: false}} = socket) do
+    {:noreply,
+     socket
+     |> put_flash(
+       :error,
+       gettext("Switch the sort back to Manual order before reordering tasks.")
+     )
+     |> load_assignments()}
+  end
+
+  defp gated_handle_event("list_drop", %{"id" => id} = params, socket) when is_binary(id) do
+    own = fn uuid -> Enum.find(socket.assigns.assignments, &(&1.uuid == uuid)) end
+
+    with %Assignment{} = a <- own.(id),
+         {:ok, parent} <- drop_parent(params["parent"], own),
+         {:ok, after_uuid} <- drop_after(params["after"], own),
+         {:ok, moved} <- Outline.move(a, parent, after_uuid) do
+      Activity.log("projects.assignment_moved",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: a.uuid,
+        metadata: %{"parent" => moved.parent_uuid}
+      )
+
+      folded = assigns_folded(socket)
+
+      {:noreply,
+       socket
+       |> assign(:outline_folded, if(parent, do: MapSet.delete(folded, parent), else: folded))
+       |> push_event("sortable:flash", %{uuid: id, status: "ok"})
+       |> load_assignments()}
+    else
+      _ ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("The task cannot go there."))
+         |> push_event("pkp-list:revert", %{uuid: id})
+         |> load_assignments()}
+    end
   end
 
   defp gated_handle_event("reorder_assignments", %{"ordered_ids" => ordered_ids} = params, socket)
@@ -7074,34 +7143,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </.empty_state>
       <% end %>
 
-      <%= if @assignments == [] do %>
-        <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
-          <:cta>
-            <.smart_link
-              navigate={Paths.new_assignment(@project.uuid)}
-              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
-              embed_mode={@embed_mode}
-              class="link link-primary text-sm"
-            >
-              {gettext("Add the first task")}
-            </.smart_link>
-          </:cta>
-        </.empty_state>
-      <% else %>
-        <%!-- `PkpLinks`: hover a connected task for a light hint of what
-             it waits on and unlocks; its trace button marks the whole chain
-             and stays while scrolling (the button again, Escape or a click
-             outside the list ends it). All in the browser, from the pairs
-             below. No rail down the side: a line through every row claimed
-             "these run one after another", which a project's dependencies
-             rarely are. The arrows come only with the hover / trace, in the
-             left gutter (kept only when there are connections), and the
-             tasks outside it fade. --%>
         <%!-- The quick-add line at the top (the boss, 2026-11-18): quiet
              until clicked; Enter adds and keeps the cursor for the next
              title; tasks land where the list's order puts them. --%>
         <div
-          :if={@fx.tasks and not @is_template and @outline_can.edit and @visible_assignments != []}
+          :if={
+            @fx.tasks and not @is_template and @outline_can.edit and
+              (@visible_assignments != [] or @assignments == [])
+          }
           id={"project-quick-top-#{@project.uuid}"}
           phx-hook="PkpQuickTop"
           phx-update="ignore"
@@ -7131,6 +7180,29 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <p data-quick-note class="text-xs text-base-content/60 min-h-4" aria-live="polite"></p>
           </div>
         </div>
+      <%= if @assignments == [] do %>
+        <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
+          <:cta>
+            <.smart_link
+              navigate={Paths.new_assignment(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="link link-primary text-sm inline-flex items-center gap-1"
+            >
+              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add the first task")}
+            </.smart_link>
+          </:cta>
+        </.empty_state>
+      <% else %>
+        <%!-- `PkpLinks`: hover a connected task for a light hint of what
+             it waits on and unlocks; its trace button marks the whole chain
+             and stays while scrolling (the button again, Escape or a click
+             outside the list ends it). All in the browser, from the pairs
+             below. No rail down the side: a line through every row claimed
+             "these run one after another", which a project's dependencies
+             rarely are. The arrows come only with the hover / trace, in the
+             left gutter (kept only when there are connections), and the
+             tasks outside it fade. --%>
         <div
           :if={@visible_assignments != []}
           id={"project-task-links-#{@project.uuid}"}
@@ -7167,14 +7239,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <div
             id={"project-show-timeline-#{@project.uuid}"}
             class="flex flex-col gap-0"
-            phx-hook={if @list_manual?, do: "SortableGrid"}
+            phx-hook={if @list_manual?, do: "PkpListDrag"}
             data-sortable={to_string(@list_manual?)}
             data-sortable-event="reorder_assignments"
+            data-drop-event="list_drop"
+            data-nest={
+              to_string(
+                @outline_can.edit and @outline_can.nest and assigns[:list_whole?] != false and
+                  length(@visible_assignments) == length(@assignments)
+              )
+            }
             data-sortable-items=".sortable-item"
             data-sortable-handle=".pk-drag-handle"
           >
             <% ol_folded = assigns[:outline_folded] || MapSet.new() %>
             <% ol_depths = if @list_manual?, do: Outline.depths(@visible_assignments), else: %{} %>
+            <% ol_nest_in = OutlineList.nest_in_set(@assignments) %>
             <%= for a <- OutlineList.unfolded(@visible_assignments, ol_folded) do %>
               <%!-- The row a link named (`focus_task/2`) takes focus as the
                    page mounts, which is what scrolls it into view: the
@@ -7193,6 +7273,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 class="relative flex py-1 scroll-mt-24 focus:outline-none sortable-item"
                 style={"margin-left: #{Map.get(ol_depths, a.uuid, 0) * 2}rem"}
                 data-id={a.uuid}
+                data-depth={Map.get(ol_depths, a.uuid, 0)}
+                data-sub={to_string(Assignment.subproject?(a))}
+                data-folded={to_string(MapSet.member?(ol_folded, a.uuid))}
                 tabindex={assigns[:focus_task] == a.uuid && "-1"}
                 phx-mounted={assigns[:focus_task] == a.uuid && JS.focus()}
               >
@@ -7514,6 +7597,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           can: @outline_can,
                           count: Map.get(@outline_counts, a.uuid),
                           folded: MapSet.member?(ol_folded, a.uuid),
+                          nest_in: MapSet.member?(ol_nest_in, a.uuid),
                           focus: assigns[:outline_focus] == a.uuid,
                           fresh: assigns[:outline_fresh] == a.uuid
                         }
@@ -7556,8 +7640,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            design. Feature-gated on render like the "Add task" button. --%>
       <%!-- Cards: a task is added right here and typed into its row. The
            sheet ("Add task" at the top) stays for one with details. --%>
+      <%!-- An empty project has the quick-add line at the top and the
+           empty state's own button: a third "Add a task" below them only
+           repeated them. --%>
       <button
-        :if={@fx.tasks and not @is_template and @outline_can.edit}
+        :if={@fx.tasks and not @is_template and @outline_can.edit and @assignments != []}
         type="button"
         phx-click="outline_add_first"
         phx-disable-with={gettext("Adding…")}
@@ -8404,4 +8491,33 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       0 -> :ok
     end
   end
+
+  # The parent a drop names: none (top level) or a task row of this project
+  # — never a sub-project row, which holds no task rows.
+  defp drop_parent(nil, _own), do: {:ok, nil}
+  defp drop_parent("", _own), do: {:ok, nil}
+
+  defp drop_parent(uuid, own) when is_binary(uuid) do
+    case own.(uuid) do
+      %Assignment{} = p -> if Assignment.subproject?(p), do: :error, else: {:ok, p.uuid}
+      _ -> :error
+    end
+  end
+
+  defp drop_parent(_, _own), do: :error
+
+  defp drop_after(nil, _own), do: {:ok, nil}
+  defp drop_after("", _own), do: {:ok, nil}
+  defp drop_after("last", _own), do: {:ok, :last}
+
+  defp drop_after(uuid, own) when is_binary(uuid) do
+    case own.(uuid) do
+      %Assignment{uuid: u} -> {:ok, u}
+      _ -> :error
+    end
+  end
+
+  defp drop_after(_, _own), do: :error
+
+  defp assigns_folded(socket), do: socket.assigns[:outline_folded] || MapSet.new()
 end
