@@ -10,9 +10,9 @@ defmodule PhoenixKitProjects.KimiReviewRrQ3EffectiveRolesTest do
 
   use PhoenixKitProjects.DataCase, async: false
 
-  alias PhoenixKit.Users.{Auth, Roles}
+  alias PhoenixKit.Users.{Auth, RolePermission, Roles}
   alias PhoenixKitProjects.{Authz, Grants, Members, Projects}
-  alias PhoenixKitProjects.Test.Access
+  alias PhoenixKitProjects.Test.{Access, Repo}
   alias PhoenixKitStaff.{Departments, Staff, Teams}
 
   defp user do
@@ -56,7 +56,7 @@ defmodule PhoenixKitProjects.KimiReviewRrQ3EffectiveRolesTest do
     {:ok, role} = Roles.create_role(%{"name" => "ERProjects-#{n}"})
     {:ok, _} = Roles.assign_role(u, role.name)
 
-    PhoenixKitProjects.Test.Repo.insert!(%PhoenixKit.Users.RolePermission{
+    Repo.insert!(%RolePermission{
       role_uuid: role.uuid,
       module_key: "projects"
     })
