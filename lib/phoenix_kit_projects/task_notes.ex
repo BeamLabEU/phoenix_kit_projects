@@ -150,7 +150,9 @@ defmodule PhoenixKitProjects.TaskNotes do
         where:
           c.resource_type == @resource_type and c.resource_uuid in ^uuids and
             c.status == "published",
-        order_by: [asc: c.inserted_at],
+        # `inserted_at` is to the second: the uuid (v7, time-ordered) breaks
+        # ties, so two notes saved in one second always read in one order.
+        order_by: [asc: c.inserted_at, asc: c.uuid],
         preload: [:user]
       )
       |> RepoHelper.repo().all()
@@ -173,7 +175,11 @@ defmodule PhoenixKitProjects.TaskNotes do
           agent: map() | nil,
           human: map() | nil
         }
-  def latest(assignment_uuid) when is_binary(assignment_uuid), do: latest(list(assignment_uuid))
+  # Through the batched read, so a task's latest note is the same note here
+  # and in the briefing, whatever order two notes of one second came back
+  # in (zai, 2026-11-26).
+  def latest(assignment_uuid) when is_binary(assignment_uuid),
+    do: Map.fetch!(latest_for_assignments([assignment_uuid]), assignment_uuid)
 
   def latest(notes) when is_list(notes) do
     by_kind = fn kinds -> notes |> Enum.filter(&(kind(&1) in kinds)) |> List.last() end

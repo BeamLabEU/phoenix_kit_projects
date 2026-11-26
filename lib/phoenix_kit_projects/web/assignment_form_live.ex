@@ -5117,7 +5117,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                    in the sub-project's own folder and placed by file, as a
                    project's (`DescriptionImages`). --%>
               <.description_editor
-                id={DescriptionEditor.editor_id("subproject-description", @current_lang)}
+                id={DescriptionEditor.editor_id("subproject-description", @current_lang, editor_scope(assigns))}
                 name={DescriptionEditor.field_name("subproject", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@sp_form, @current_lang, @primary_language, @multilang_enabled)}
                 content={
@@ -6415,7 +6415,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case sp_source(socket) do
       %Project{uuid: uuid} = sub when is_binary(uuid) ->
         {sub,
-         DescriptionEditor.editor_id("subproject-description", socket.assigns[:current_lang])}
+         DescriptionEditor.editor_id(
+           "subproject-description",
+           socket.assigns[:current_lang],
+           editor_scope(socket.assigns)
+         )}
 
       _ ->
         nil

@@ -132,7 +132,9 @@ defmodule PhoenixKitProjects.Hours do
         :all
 
       user_uuid = Authz.subject_user_uuid_of(scope) ->
-        user_uuid |> Members.accessible_project_uuids() |> with_descendants()
+        # The scope answers the "everyone" condition (the role the viewer
+        # switched to), as mentions do (zai, 2026-11-26).
+        user_uuid |> Members.accessible_project_uuids(scope) |> with_descendants()
 
       true ->
         []
