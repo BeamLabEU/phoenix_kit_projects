@@ -48,8 +48,10 @@ defmodule PhoenixKitProjects.Web.Night1126RereviewProbeTest do
     assert byte_size(bad) == 16
     assert {:ok, _} = single = ApiKeys.access_for(key, project.uuid)
 
-    assert ApiKeys.access_map(key, [project.uuid, bad]) ==
-             %{project.uuid => single, bad => {:error, :no_access}}
+    uppercase = String.upcase(project.uuid)
+
+    assert ApiKeys.access_map(key, [project.uuid, uppercase, bad]) ==
+             %{project.uuid => single, uppercase => single, bad => {:error, :no_access}}
   end
 
   test "bulk role equals single for direct, group, everyone, overlapping and absent seats" do

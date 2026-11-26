@@ -6399,10 +6399,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp dom_key(%{assignment: %Assignment{uuid: uuid}}) when is_binary(uuid), do: uuid
   defp dom_key(assigns), do: assigns[:dom_seed] || "new"
 
-  # The task's version for `data-pkp-version`: its last write. A new task
-  # has none (nothing to change under it).
-  defp record_version(%Assignment{uuid: uuid, updated_at: %{} = at}) when is_binary(uuid),
-    do: to_string(at)
+  # A rename can change only the library task, and the database timestamps
+  # have second precision. Compare the persisted values the editor opened.
+  defp record_version(%Assignment{uuid: uuid, task: task} = assignment) when is_binary(uuid) do
+    fields = Map.take(assignment, Assignment.__schema__(:fields))
+    words = if is_struct(task, Task), do: Map.take(task, [:title, :description, :translations])
+    data = :erlang.term_to_binary({fields, words}, [:deterministic])
+    :crypto.hash(:sha256, data) |> Base.url_encode64(padding: false)
+  end
 
   defp record_version(_), do: nil
 

@@ -376,14 +376,21 @@ defmodule PhoenixKitProjects.ApiKeys do
     # A string that is no uuid reaches nothing and answers for itself: it
     # used to fail the batch's reads, and the rescue then answered "no
     # access" for every project asked with it (codex, 2026-11-26).
-    {uuids, bad} =
-      project_uuids
-      |> Enum.filter(&is_binary/1)
-      |> Enum.uniq()
-      |> Enum.split_with(&match?({:ok, _}, Ecto.UUID.cast(&1)))
+    requested =
+      for uuid <- project_uuids, is_binary(uuid), into: %{} do
+        {uuid, Ecto.UUID.cast(uuid)}
+      end
 
-    Map.merge(Map.new(bad, &{&1, {:error, :no_access}}), access_map_valid(key, key_uuid, uuids))
+    uuids = for {:ok, canonical} <- Map.values(requested), do: canonical
+    access = access_map_valid(key, key_uuid, Enum.uniq(uuids))
+
+    Map.new(requested, fn
+      {uuid, {:ok, canonical}} -> {uuid, Map.fetch!(access, canonical)}
+      {uuid, :error} -> {uuid, {:error, :no_access}}
+    end)
   end
+
+  defp access_map_valid(_key, _key_uuid, []), do: %{}
 
   defp access_map_valid(key, key_uuid, uuids) do
     case Process.get(@access_cache) do
@@ -541,14 +548,11 @@ defmodule PhoenixKitProjects.ApiKeys do
   """
   @spec reachable(ApiKey.t()) :: [map()]
   def reachable(%ApiKey{} = key) do
-    key
-    |> grants()
-    |> Enum.flat_map(fn g ->
-      below =
-        if g.inherit, do: Projects.subtree_uuids(g.project_uuid) -- [g.project_uuid], else: []
+    grants = grants(key)
+    direct = Enum.map(grants, & &1.project_uuid)
+    roots = for grant <- grants, grant.inherit, do: grant.project_uuid
 
-      [g.project_uuid | below]
-    end)
+    (direct ++ Projects.subtree_uuids(roots))
     |> Enum.uniq()
     |> reachable_rows(key)
   rescue

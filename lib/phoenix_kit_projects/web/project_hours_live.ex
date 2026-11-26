@@ -347,8 +347,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   # must be one the viewer can see; anything else reads as "all of mine".
   defp project_uuids(%{assigns: %{mode: :project, project: nil}}), do: []
 
-  defp project_uuids(%{assigns: %{mode: :project, project: project, subprojects: sub?}}),
-    do: Hours.project_uuids(project.uuid, sub?)
+  defp project_uuids(%{assigns: %{mode: :project, project: project} = a}) do
+    visible = Hours.visible_project_uuids(a[:phoenix_kit_current_scope])
+    scoped_project_uuids(project.uuid, a.subprojects, visible)
+  end
 
   defp project_uuids(%{assigns: %{mode: :all} = a} = socket) do
     visible = Hours.visible_project_uuids(socket.assigns[:phoenix_kit_current_scope])
@@ -356,10 +358,18 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
     if chosen != "" and (visible == :all or chosen in visible) and
          Enum.any?(a.project_options, fn {_name, uuid} -> uuid == chosen end) do
-      Hours.project_uuids(chosen, a.subprojects)
+      scoped_project_uuids(chosen, a.subprojects, visible)
     else
       visible
     end
+  end
+
+  defp scoped_project_uuids(project_uuid, subprojects?, :all),
+    do: Hours.project_uuids(project_uuid, subprojects?)
+
+  defp scoped_project_uuids(project_uuid, subprojects?, visible) do
+    allowed = MapSet.new(visible)
+    Enum.filter(Hours.project_uuids(project_uuid, subprojects?), &MapSet.member?(allowed, &1))
   end
 
   # The task filter's uuid. The address may carry a ref (`ACME-42`), which

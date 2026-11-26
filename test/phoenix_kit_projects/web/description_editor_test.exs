@@ -178,10 +178,24 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
       {:ok, view, _html} =
         live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
 
-      version = to_string(Projects.get_assignment(ctx.a.uuid).updated_at)
-      assert has_element?(view, ~s(#assignment-form[data-pkp-version="#{version}"]))
+      assert has_element?(view, "#assignment-form[data-pkp-version]")
       assert has_element?(view, "[data-pkp-kept-note][hidden][phx-update=ignore]")
       assert has_element?(view, "[data-pkp-kept-note] button[data-pkp-apply-kept]")
+    end
+
+    test "a task-only rename changes the reconnect version", ctx do
+      path = "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit"
+
+      version = fn ->
+        {:ok, _view, html} = live(ctx.conn, path)
+        [token] = Regex.run(~r/data-pkp-version="([^"]+)"/, html, capture: :all_but_first)
+        token
+      end
+
+      before = version.()
+      assert version.() == before
+      {:ok, _} = Projects.update_task(Projects.get_task(ctx.a.task_uuid), %{"title" => "Renamed"})
+      refute version.() == before
     end
 
     test "a new task's form has no version", ctx do

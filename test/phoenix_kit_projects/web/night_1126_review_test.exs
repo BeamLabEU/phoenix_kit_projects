@@ -99,19 +99,23 @@ defmodule PhoenixKitProjects.Web.Night1126ReviewTest do
       {:ok, _} = Members.add_member(project, user.uuid, role: "member")
     end
 
+    child!(home, "Home child")
+
     {:ok, _} =
-      ApiKeys.put_grant(key, home.uuid, %{"scopes" => ["tasks:read"], "inherit" => false})
+      ApiKeys.put_grant(key, home.uuid, %{"scopes" => ["tasks:read"], "inherit" => true})
 
     {few, few_reads} = QueryCounter.count(fn -> ApiKeys.reachable(key) end)
-    assert length(few) == 1
+    assert length(few) == 2
 
     for project <- others do
+      child!(project, "Child")
+
       {:ok, _} =
-        ApiKeys.put_grant(key, project.uuid, %{"scopes" => ["tasks:read"], "inherit" => false})
+        ApiKeys.put_grant(key, project.uuid, %{"scopes" => ["tasks:read"], "inherit" => true})
     end
 
     {many, many_reads} = QueryCounter.count(fn -> ApiKeys.reachable(key) end)
-    assert length(many) == 8
+    assert length(many) == 16
     assert many_reads <= few_reads + 1, "#{few_reads} queries for 1 grant, #{many_reads} for 8"
   end
 

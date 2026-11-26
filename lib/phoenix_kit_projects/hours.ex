@@ -44,7 +44,7 @@ defmodule PhoenixKitProjects.Hours do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{Authz, L10n, Members, Projects}
+  alias PhoenixKitProjects.{Authz, L10n, Projects}
   alias PhoenixKitProjects.People.Person
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task, WorkEntry}
 
@@ -134,30 +134,11 @@ defmodule PhoenixKitProjects.Hours do
       user_uuid = Authz.subject_user_uuid_of(scope) ->
         # The scope answers the "everyone" condition (the role the viewer
         # switched to), as mentions do (zai, 2026-11-26).
-        user_uuid |> Members.accessible_project_uuids(scope) |> with_descendants()
+        Projects.visible_project_uuids(user_uuid, scope)
 
       true ->
         []
     end
-  end
-
-  # Every project nested under `roots`, the roots included: one read per
-  # level of nesting, never one per project.
-  defp with_descendants(roots), do: descend(roots, roots, 8)
-
-  defp descend([], acc, _hops), do: Enum.uniq(acc)
-  defp descend(_level, acc, 0), do: Enum.uniq(acc)
-
-  defp descend(level, acc, hops) do
-    children =
-      RepoHelper.repo().all(
-        from(a in Assignment,
-          where: a.project_uuid in ^level and not is_nil(a.child_project_uuid),
-          select: a.child_project_uuid
-        )
-      ) -- acc
-
-    descend(children, acc ++ children, hops - 1)
   end
 
   @doc """

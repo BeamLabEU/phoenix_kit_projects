@@ -724,6 +724,35 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       assert render_click(view, "delete_entry", %{"uuid" => foreign.uuid}) =~ "Entry not found."
     end
 
+    test "a template blocks inherited ledger reads on both hours pages", %{
+      conn: conn,
+      project: root
+    } do
+      member = user("Mia", "Hours")
+      {:ok, _} = Members.add_member(root, member.uuid)
+
+      {:ok, %{child_project: template}} =
+        Projects.create_subproject(root.uuid, %{"name" => "Template"})
+
+      {:ok, %{child_project: hidden}} =
+        Projects.create_subproject(template.uuid, %{"name" => "Hidden"})
+
+      {:ok, _} = Projects.update_project(template, %{"is_template" => true})
+      log(root, 30, note: "visible-ledger-entry")
+      log(hidden, 60, note: "private-ledger-entry")
+      conn = put_test_scope(conn, fake_scope(user_uuid: member.uuid, permissions: ["projects"]))
+
+      for mounted <- [
+            live(conn, "/en/admin/projects/hours"),
+            live(conn, "/en/admin/projects/hours?project=#{root.uuid}"),
+            mount_tab(conn, root, member.uuid)
+          ] do
+        assert {:ok, _view, html} = mounted
+        assert html =~ "visible-ledger-entry"
+        refute html =~ "private-ledger-entry"
+      end
+    end
+
     test "the log form reads tasks only of a project the viewer may log on",
          %{conn: conn, project: project} do
       task(project, "Foreign secret task")

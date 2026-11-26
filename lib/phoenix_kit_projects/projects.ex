@@ -3819,13 +3819,17 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  A project and every project nested under it, the root first — bounded to
+  One or more projects and their descendants, roots first — bounded to
   #{@max_parent_depth} levels like `parent_chain/1`, so a walk over
   persisted data can never spin.
   """
-  @spec subtree_uuids(uuid()) :: [uuid()]
+  @spec subtree_uuids(uuid() | [uuid()]) :: [uuid()]
   def subtree_uuids(project_uuid) when is_binary(project_uuid) do
-    do_subtree([project_uuid], [], @max_parent_depth)
+    subtree_uuids([project_uuid])
+  end
+
+  def subtree_uuids(project_uuids) when is_list(project_uuids) do
+    do_subtree(Enum.uniq(project_uuids), [], @max_parent_depth)
   end
 
   @doc """
