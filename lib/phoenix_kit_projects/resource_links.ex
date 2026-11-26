@@ -355,9 +355,11 @@ defmodule PhoenixKitProjects.ResourceLinks do
     case accessible do
       :none -> :none
       :all -> subtree
-      # A member of the field's own project reaches its whole subtree;
-      # anything else keeps only what is individually accessible.
-      uuids -> if uuid in uuids, do: subtree, else: Enum.filter(subtree, &(&1 in uuids))
+      # `accessible` already holds everything the viewer may open under
+      # their projects, and never a template nor what is under one, so the
+      # subtree is cut to it (codex, 2026-11-26: handing a member the whole
+      # subtree reached past a template inside it).
+      uuids -> Enum.filter(subtree, &(&1 in uuids))
     end
     |> case do
       [] -> :none
@@ -397,8 +399,10 @@ defmodule PhoenixKitProjects.ResourceLinks do
       # only, so a member of just a sub-project found nothing with `#` and
       # saw their own project's chips locked.
       with user_uuid when is_binary(user_uuid) <- Authz.subject_user_uuid_of(scope),
+           # The scope answers the "everyone" condition: it carries the role
+           # the viewer switched to (codex, 2026-11-26).
            [_ | _] = uuids <-
-             Projects.visible_project_uuids(user_uuid) do
+             Projects.visible_project_uuids(user_uuid, scope) do
         uuids
       else
         _ -> :none

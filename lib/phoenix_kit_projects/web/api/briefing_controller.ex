@@ -83,10 +83,18 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       # Who holds each row, for the count and the rows: one read for the lot.
       held = Assignee.held_keys_by(open)
 
+      latest = latest_notes(shown)
+
       briefs =
         Enum.map(
           shown,
-          &brief_task(&1, labels[&1.uuid] || [], assigned_to?(held, &1, me), outline)
+          &brief_task(
+            &1,
+            labels[&1.uuid] || [],
+            assigned_to?(held, &1, me),
+            outline,
+            Map.get(latest, &1.uuid, %{redirect: nil, agent: nil})
+          )
         )
 
       notes =
@@ -281,13 +289,15 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   defp limit(_), do: @max_tasks
 
-  defp brief_task(%Assignment{} = a, labels, assigned_to_me, outline) do
-    place = OutlineApi.place(outline, a)
+  # The rows' latest notes in one read, never one per row (codex, 2026-11-26).
+  defp latest_notes(rows) do
+    if TaskNotes.available?() and Json.may?("notes:read"),
+      do: TaskNotes.latest_for_assignments(Enum.map(rows, & &1.uuid)),
+      else: %{}
+  end
 
-    latest =
-      if TaskNotes.available?() and Json.may?("notes:read"),
-        do: TaskNotes.latest(a.uuid),
-        else: %{redirect: nil, agent: nil}
+  defp brief_task(%Assignment{} = a, labels, assigned_to_me, outline, latest) do
+    place = OutlineApi.place(outline, a)
 
     agent = latest.agent && latest.agent.metadata
 

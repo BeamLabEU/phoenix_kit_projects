@@ -518,6 +518,48 @@ defmodule PhoenixKitProjects.Authz do
 
   def effective_role(_project, _user_uuid), do: nil
 
+  @doc """
+  `effective_role/2` for one user on many projects (structs), in a fixed
+  number of reads whatever their number: the user's memberships once, their
+  group grants once, and the module check once when any project is open to
+  everyone. `%{project_uuid => role | nil}`. For lists that would otherwise
+  ask per project (a personal API key's grants, codex 2026-11-26).
+  """
+  @spec effective_roles([map()], term()) :: %{
+          binary() => :owner | :manager | :member | :viewer | nil
+        }
+  def effective_roles(projects, user_uuid) when is_list(projects) and is_binary(user_uuid) do
+    uuids = Enum.map(projects, & &1.uuid)
+    direct = PhoenixKitProjects.Members.roles_of(uuids, user_uuid)
+    group = PhoenixKitProjects.Grants.project_roles_for_user(user_uuid)
+
+    open =
+      if Enum.any?(projects, &(visibility_of(&1) == "everyone")) and module_reacher?(user_uuid),
+        do: :viewer
+
+    Map.new(projects, fn project ->
+      open_here = if visibility_of(project) == "everyone", do: open
+
+      role =
+        [direct[project.uuid], group[project.uuid], open_here]
+        |> Enum.map(&to_role_atom/1)
+        |> Enum.reject(&is_nil/1)
+        |> case do
+          [] -> nil
+          roles -> Enum.min_by(roles, &Map.fetch!(@role_rank, &1))
+        end
+
+      {project.uuid, role}
+    end)
+  rescue
+    _ -> Map.new(projects, &{&1.uuid, nil})
+  catch
+    :exit, _ -> Map.new(projects, &{&1.uuid, nil})
+  end
+
+  def effective_roles(projects, _user_uuid) when is_list(projects),
+    do: Map.new(projects, &{&1.uuid, nil})
+
   defp resolve_role(project, user_uuid, reach) do
     direct = PhoenixKitProjects.Members.role_of(project, user_uuid)
     group = PhoenixKitProjects.Grants.group_role_of(project, user_uuid)

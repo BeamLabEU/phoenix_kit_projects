@@ -1029,6 +1029,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       else: {:noreply, socket}
   end
 
+  # Without a zone (a crafted event): nothing, never a crash that restarts
+  # the form and loses what was typed (codex, 2026-11-26).
+  def handle_event("pkp_zone", _params, socket), do: {:noreply, socket}
+
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
     attrs = merge_attrs(attrs, socket)

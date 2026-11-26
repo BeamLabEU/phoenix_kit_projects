@@ -3881,10 +3881,12 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Projects visible through membership or inheritance, stopping at every template."
-  @spec visible_project_uuids(uuid()) :: [uuid()]
-  def visible_project_uuids(user_uuid) when is_binary(user_uuid) do
+  @spec visible_project_uuids(uuid(), term()) :: [uuid()]
+  def visible_project_uuids(user_uuid, reach \\ nil)
+
+  def visible_project_uuids(user_uuid, reach) when is_binary(user_uuid) do
     user_uuid
-    |> PhoenixKitProjects.Members.accessible_project_uuids()
+    |> PhoenixKitProjects.Members.accessible_project_uuids(reach)
     |> viewable_subtrees_uuids()
   end
 

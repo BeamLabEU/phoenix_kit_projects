@@ -373,8 +373,19 @@ defmodule PhoenixKitProjects.ApiKeys do
           binary() => {:ok, map()} | {:error, :no_access | :membership_ended}
         }
   def access_map(%ApiKey{uuid: key_uuid} = key, project_uuids) when is_list(project_uuids) do
-    uuids = project_uuids |> Enum.filter(&is_binary/1) |> Enum.uniq()
+    # A string that is no uuid reaches nothing and answers for itself: it
+    # used to fail the batch's reads, and the rescue then answered "no
+    # access" for every project asked with it (codex, 2026-11-26).
+    {uuids, bad} =
+      project_uuids
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+      |> Enum.split_with(&match?({:ok, _}, Ecto.UUID.cast(&1)))
 
+    Map.merge(Map.new(bad, &{&1, {:error, :no_access}}), access_map_valid(key, key_uuid, uuids))
+  end
+
+  defp access_map_valid(key, key_uuid, uuids) do
     case Process.get(@access_cache) do
       # Kept only inside an API request (`reset_access_cache/0` opens it):
       # a LiveView process lives on while grants change under it.
@@ -471,6 +482,11 @@ defmodule PhoenixKitProjects.ApiKeys do
       |> RepoHelper.repo().all()
       |> Map.new(&{&1.uuid, &1})
 
+    # The person's role on every granting project in a fixed number of
+    # reads, never one resolve per grant (codex, 2026-11-26: 54 statements
+    # for eight grants on `GET /me`).
+    roles = Authz.effective_roles(Map.values(projects), user_uuid)
+
     Map.new(grants, fn grant ->
       answer =
         case projects[grant.project_uuid] do
@@ -478,7 +494,7 @@ defmodule PhoenixKitProjects.ApiKeys do
             {:error, :no_access}
 
           project ->
-            case Authz.effective_role(project, user_uuid) do
+            case roles[project.uuid] do
               nil ->
                 {:error, :membership_ended}
 

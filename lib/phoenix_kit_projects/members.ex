@@ -133,7 +133,7 @@ defmodule PhoenixKitProjects.Members do
   # same condition `Authz.effective_role/2` puts on that seat. The listing and
   # the page gate must agree, or a list shows a project its page refuses (or
   # the other way round).
-  defp open_project_uuids(user_uuid) do
+  defp open_project_uuids(reach) do
     uuids =
       RepoHelper.repo().all(
         from(p in PhoenixKitProjects.Schemas.Project,
@@ -144,7 +144,7 @@ defmodule PhoenixKitProjects.Members do
         )
       )
 
-    if uuids != [] and PhoenixKitProjects.Authz.module_reacher?(user_uuid), do: uuids, else: []
+    if uuids != [] and PhoenixKitProjects.Authz.module_reacher?(reach), do: uuids, else: []
   end
 
   @doc """
@@ -163,8 +163,13 @@ defmodule PhoenixKitProjects.Members do
   `test/phoenix_kit_projects/integration/members_test.exs` — the two must
   always agree on WHICH projects, never just on shape.
   """
-  @spec accessible_project_uuids(binary()) :: [binary()]
-  def accessible_project_uuids(user_uuid) when is_binary(user_uuid) do
+  # `reach` answers the "everyone" condition (`Authz.module_reacher?/1`):
+  # the user uuid by default, the viewer's SCOPE where there is one — the
+  # scope carries the role they switched to, a uuid rebuilds the default.
+  @spec accessible_project_uuids(binary(), term()) :: [binary()]
+  def accessible_project_uuids(user_uuid, reach \\ nil)
+
+  def accessible_project_uuids(user_uuid, reach) when is_binary(user_uuid) do
     direct_uuids =
       RepoHelper.repo().all(
         from(m in ProjectMember,
@@ -190,7 +195,7 @@ defmodule PhoenixKitProjects.Members do
       end
 
     open_uuids =
-      open_project_uuids(user_uuid)
+      open_project_uuids(reach || user_uuid)
 
     (direct_uuids ++ granted_uuids ++ open_uuids) |> Enum.uniq()
   rescue
@@ -204,7 +209,7 @@ defmodule PhoenixKitProjects.Members do
     :exit, _ -> []
   end
 
-  def accessible_project_uuids(_), do: []
+  def accessible_project_uuids(_, _), do: []
 
   defp stronger(a, b) do
     rank = %{"owner" => 0, "manager" => 1, "member" => 2, "viewer" => 3}
@@ -241,6 +246,28 @@ defmodule PhoenixKitProjects.Members do
   end
 
   def role_of(_, _), do: nil
+
+  @doc """
+  `role_of/2` for one user on many projects, in one read:
+  `%{project_uuid => role}` for the projects they are a member of (the
+  others are absent).
+  """
+  @spec roles_of([binary()], binary()) :: %{binary() => atom()}
+  def roles_of(project_uuids, user_uuid) when is_list(project_uuids) and is_binary(user_uuid) do
+    RepoHelper.repo().all(
+      from(m in ProjectMember,
+        where: m.project_uuid in ^project_uuids and m.user_uuid == ^user_uuid,
+        select: {m.project_uuid, m.role}
+      )
+    )
+    |> Map.new(fn {uuid, role} -> {uuid, String.to_existing_atom(role)} end)
+  rescue
+    _ -> %{}
+  catch
+    :exit, _ -> %{}
+  end
+
+  def roles_of(_, _), do: %{}
 
   @doc """
   Adds a member. Options: `:role` (default `"member"`), `:actor_uuid`,
