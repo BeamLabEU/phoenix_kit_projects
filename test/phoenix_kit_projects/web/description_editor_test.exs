@@ -170,6 +170,29 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
     end
   end
 
+  describe "after a dropped connection" do
+    # The panel, 2026-11-26: the kept draft goes back only while the task is
+    # the version it was typed against (`data-pkp-version`); otherwise the
+    # note offers it back.
+    test "the edit form carries the task's version and the hidden note", ctx do
+      {:ok, view, _html} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
+
+      version = to_string(Projects.get_assignment(ctx.a.uuid).updated_at)
+      assert has_element?(view, ~s(#assignment-form[data-pkp-version="#{version}"]))
+      assert has_element?(view, "[data-pkp-kept-note][hidden][phx-update=ignore]")
+      assert has_element?(view, "[data-pkp-kept-note] button[data-pkp-apply-kept]")
+    end
+
+    test "a new task's form has no version", ctx do
+      {:ok, view, _html} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new")
+
+      assert has_element?(view, "#assignment-form")
+      refute has_element?(view, "#assignment-form[data-pkp-version]")
+    end
+  end
+
   describe "writing one" do
     test "the task popup's description is the editor, and what it sends is saved", ctx do
       {:ok, view, html} =

@@ -82,21 +82,39 @@ test("a refusal keeps a row that arrived between the card and its old next sibli
   // Drag of B started on A, B, C (next = C). The refusal's redraw drew
   // A, B, X, C before the revert ran: that order stays.
   const { list, byId, ids } = fakeList([["A", 0], ["B", 0], ["X", 0], ["C", 0]]);
-  I.revertListMove(list, { item: byId.B, prev: byId.A, next: byId.C, index: 1, saved: [I.saveRowLevel(byId.B)] });
+  // `others`: the rows besides the card when the drag began.
+  const others = [byId.A, byId.C];
+  I.revertListMove(list, { item: byId.B, prev: byId.A, next: byId.C, index: 1, others, saved: [I.saveRowLevel(byId.B)] });
   assert.deepEqual(ids(), ["A", "B", "X", "C"]);
 });
 
 test("a refusal keeps a row that arrived between a moved branch and the row after it", () => {
   const { list, byId, ids } = fakeList([["A", 0], ["B", 0], ["B1", 1], ["X", 0], ["C", 0]]);
   const saved = [I.saveRowLevel(byId.B), I.saveRowLevel(byId.B1)];
-  I.revertListMove(list, { item: byId.B, prev: byId.A, next: byId.C, index: 1, saved });
+  I.revertListMove(list, { item: byId.B, prev: byId.A, next: byId.C, index: 1, others: [byId.A, byId.C], saved });
   assert.deepEqual(ids(), ["A", "B", "B1", "X", "C"]);
+});
+
+test("a refusal keeps a row the redraw put inside the card's old branch", () => {
+  // grok's re-review: A, B, B1, C at the start; redrawn A, B, X, B1, C.
+  const { list, byId, ids } = fakeList([["A", 0], ["B", 0], ["X", 1], ["B1", 1], ["C", 0]]);
+  const saved = [I.saveRowLevel(byId.B), I.saveRowLevel(byId.B1)];
+  I.revertListMove(list, { item: byId.B, prev: byId.A, next: byId.C, index: 1, others: [byId.A, byId.C], saved });
+  assert.deepEqual(ids(), ["A", "B", "X", "B1", "C"]);
+});
+
+test("a refusal after a redraw that removed a neighbour leaves the server's order", () => {
+  // A gone, X added: B, X, C stays B, X, C.
+  const { list, byId, ids } = fakeList([["B", 0], ["X", 0], ["C", 0]]);
+  const A = { id: "A", isConnected: false };
+  I.revertListMove(list, { item: byId.B, prev: A, next: byId.C, index: 1, others: [A, byId.C], saved: [I.saveRowLevel(byId.B)] });
+  assert.deepEqual(ids(), ["B", "X", "C"]);
 });
 
 test("a refusal with no redraw still puts the card back between its neighbours", () => {
   // B dropped below C, nothing redrawn: A, C, B goes back to A, B, C.
   const { list, byId, ids } = fakeList([["A", 0], ["C", 0], ["B", 0]]);
-  I.revertListMove(list, { item: byId.B, prev: byId.A, next: byId.C, index: 1, saved: [I.saveRowLevel(byId.B)] });
+  I.revertListMove(list, { item: byId.B, prev: byId.A, next: byId.C, index: 1, others: [byId.A, byId.C], saved: [I.saveRowLevel(byId.B)] });
   assert.deepEqual(ids(), ["A", "B", "C"]);
 });
 
@@ -126,6 +144,8 @@ function matches(n, sel) {
   if (sel === "[data-editor-visual]") return "data-editor-visual" in n.attrs;
   if (sel === "form[phx-change]" || sel === ".phx-connected form[phx-change]") return n.attrs.tag === "form";
   if ((m = sel.match(/^\[name="([^"]+)"\]$/))) return n.attrs.name === m[1];
+  if (sel === "[data-pkp-kept-note]") return "data-pkp-kept-note" in n.attrs;
+  if (sel === "[data-pkp-apply-kept]") return "data-pkp-apply-kept" in n.attrs;
   return false;
 }
 
@@ -166,42 +186,49 @@ function loadKeep(dialogs) {
 }
 
 
-// A text field as the bundle sees it: its value now, and what the server
-// rendered into it (defaultValue).
-function field(name, value, rendered) {
+// A reconnect's replay into a form whose record is at `nowVersion`, of a
+// value kept when it was at `keptVersion` (the panel's per-record rule).
+function field(name, value) {
   const node = el({ name, type: "text", value });
   node.type = "text";
-  node.tagName = "INPUT";
   node.value = value;
-  node.defaultValue = rendered;
   node.fired = 0;
   node.dispatchEvent = () => { node.fired += 1; };
   return node;
 }
 
-function replayInto(rendered, kept) {
-  const input = field("assignment[title]", rendered, rendered);
-  const dialog = el({}, [el({ tag: "form" }, [input])]);
+function replayInto(rendered, kept, keptVersion, nowVersion) {
+  const input = field("assignment[title]", rendered);
+  const button = el({ "data-pkp-apply-kept": "" });
+  const note = el({ "data-pkp-kept-note": "" }, [button]);
+  note.hidden = true;
+  const form = el({ tag: "form", "data-pkp-version": nowVersion }, [input]);
+  const dialog = el({}, [note, form]);
   const { api } = loadKeep([dialog]);
-  api.noteField(input); // the new form's field entering the page
-  api.keepStackReplay([[Object.assign({ name: "assignment[title]", checked: null }, kept)]], [[]]);
-  return input;
+  api.keepStackReplay([[{ name: "assignment[title]", checked: null, value: kept }]], [[]], [keptVersion]);
+  return { input, note, button };
 }
 
-test("a kept plain value goes back while the server still has what the field came with", () => {
-  const input = replayInto("Hello", { value: "Hello there", server: "Hello", echo: "Hello there" });
+test("a kept value goes back while the record is the version it was typed against", () => {
+  const { input, note } = replayInto("Hello", "Hello there", "v1", "v1");
   assert.equal(input.value, "Hello there");
   assert.equal(input.fired, 1);
+  assert.equal(note.hidden, true);
 });
 
-test("a kept plain value goes back over the person's own autosave", () => {
-  // Came with "A", autosaved "A plus", then typed on; the new form has "A plus".
-  const input = replayInto("A plus", { value: "A plus more", server: "A", echo: "A plus" });
-  assert.equal(input.value, "A plus more");
-});
-
-test("a kept plain value never overwrites a value the server gained meanwhile", () => {
-  const input = replayInto("Hello world", { value: "Hello there", server: "Hello", echo: "Hello" });
+test("a record changed meanwhile: nothing goes back by itself, the form offers it", () => {
+  const { input, note, button } = replayInto("Hello world", "Hello there", "v1", "v2");
   assert.equal(input.value, "Hello world");
   assert.equal(input.fired, 0);
+  assert.equal(note.hidden, false);
+  button.onclick();
+  assert.equal(input.value, "Hello there");
+  assert.equal(input.fired, 1);
+  assert.equal(note.hidden, true);
+});
+
+test("a record changed meanwhile to what was kept: no note", () => {
+  const { input, note } = replayInto("Hello there", "Hello there", "v1", "v2");
+  assert.equal(input.fired, 0);
+  assert.equal(note.hidden, true);
 });

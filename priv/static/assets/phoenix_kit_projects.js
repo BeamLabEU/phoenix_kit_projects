@@ -2352,37 +2352,10 @@
     return serverValues && serverValues.has(sync) ? serverValues.get(sync) : sync.getAttribute("value") || "";
   }
 
-  // The same for the plain fields: what the server rendered into each one
-  // when it entered the page (its value attribute then; a later echo of
-  // what was typed changes the attribute, not this). A reconnect puts a
-  // kept value back only while the new form came with that same value, so
-  // a value the server gained meanwhile is never typed over (grok,
-  // 2026-11-26: the plain fields were written back unconditionally).
-  var fieldValues = typeof WeakMap === "function" ? new WeakMap() : null;
-
-  function fieldDefault(el) {
-    if (el.type === "checkbox" || el.type === "radio") return String(!!el.defaultChecked);
-    if (el.tagName === "SELECT") {
-      return Array.prototype.filter.call(el.options || [], function (o) { return o.defaultSelected; })
-        .map(function (o) { return o.value; }).join("\n");
-    }
-    return el.defaultValue == null ? "" : String(el.defaultValue);
-  }
-
-  function noteField(el) {
-    if (fieldValues && el && !fieldValues.has(el)) fieldValues.set(el, fieldDefault(el));
-  }
-
-  function fieldServerOf(el) {
-    return fieldValues && fieldValues.has(el) ? fieldValues.get(el) : null;
-  }
-
   function noteSyncInputs(root) {
     if (!root || root.nodeType !== 1) return;
     if (root.matches && root.matches("input[data-leaf-sync-input]")) noteServer(root);
     if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll("input[data-leaf-sync-input]"), noteServer);
-    if (root.matches && root.matches("input, textarea, select")) noteField(root);
-    if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll("input, textarea, select"), noteField);
   }
 
   var watchingSync = false;
@@ -2435,11 +2408,11 @@
   // for `phx:leaf-command:<id>` on window), only while the server's value is
   // still the one the page had. Answers the last sync input it filled, or
   // null when it restored nothing.
-  function restoreRich(dialog, kept) {
+  function restoreRich(dialog, kept, force) {
     var last = null;
     kept.forEach(function (e) {
       var sync = dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + e.id + '"]');
-      if (!sync || serverOf(sync) !== e.server) return;
+      if (!sync || (!force && serverOf(sync) !== e.server)) return;
       window.dispatchEvent(new CustomEvent("phx:leaf-command:" + e.id, {
         detail: { action: "set_content", content: e.markdown, html: e.html || "" }
       }));
@@ -2482,6 +2455,10 @@
       this.kept = {
         frames: this.frames,
         rich: dialogs.map(keepRich),
+        // The record's version as the form had it (`data-pkp-version`).
+        versions: dialogs.map(function (dialog) {
+          return versionOf(dialog.querySelector("form[phx-change]"));
+        }),
         values: dialogs.map(function (dialog) {
           var form = dialog.querySelector("form[phx-change]");
           if (!form) return [];
@@ -2494,11 +2471,7 @@
               return {
                 name: el.name,
                 value: el.value,
-                checked: el.type === "checkbox" || el.type === "radio" ? el.checked : null,
-                server: fieldServerOf(el),
-                // What the server last rendered into it (an autosave, an
-                // echo of the typing): also a value that is "ours".
-                echo: fieldDefault(el)
+                checked: el.type === "checkbox" || el.type === "radio" ? el.checked : null
               };
             });
         })
@@ -2543,7 +2516,7 @@
         var formReady = d && (!values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]"));
         var richOk = d && richReady(d, rich[i] || []);
         if (formReady && (richOk || last)) {
-          replayFrame(d, values[i] || [], richOk ? rich[i] || [] : []);
+          replayFrame(d, values[i] || [], richOk ? rich[i] || [] : [], (kept.versions || [])[i]);
           done[i] = true;
         } else {
           pending = true;
@@ -2555,19 +2528,61 @@
     }
   };
 
-  function replayFrame(dialog, saved, kept) {
+  // A frame's kept values go back while its record is the version they
+  // were typed against. If the record changed meanwhile (another person's
+  // save, or this person's own autosave landing late), nothing is applied
+  // on its own: the form says so and offers the edits back (the panel,
+  // 2026-11-26: codex, zai, grok — a reconnect must never write a stale
+  // draft over a newer save by itself; a per-field guard could not tell).
+  function replayFrame(dialog, saved, kept, version) {
     var form = dialog.querySelector("form[phx-change]");
-    var restoredRich = restoreRich(dialog, kept);
+    var now = versionOf(form);
+    if (version && now && version !== now) {
+      offerKept(dialog, form, saved, kept);
+      return;
+    }
+    applyKept(dialog, saved, kept, false);
+  }
+
+  function versionOf(form) {
+    return form && typeof form.getAttribute === "function" ? form.getAttribute("data-pkp-version") : null;
+  }
+
+  function keptDiffers(form, saved, kept) {
+    if (kept.length > 0) return true;
+    return saved.some(function (field) {
+      var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
+      return Array.prototype.some.call(els, function (el) {
+        if (el.type === "hidden") return false;
+        if (field.checked !== null) return el.value === field.value && el.checked !== field.checked;
+        return el.value !== field.value;
+      });
+    });
+  }
+
+  function offerKept(dialog, form, saved, kept) {
+    if (!form || !keptDiffers(form, saved, kept)) return;
+    var note = dialog.querySelector("[data-pkp-kept-note]");
+    if (!note) return;
+    note.hidden = false;
+    var button = note.querySelector("[data-pkp-apply-kept]");
+    if (button) {
+      button.onclick = function () {
+        note.hidden = true;
+        applyKept(dialog, saved, kept, true);
+      };
+    }
+  }
+
+  function applyKept(dialog, saved, kept, force) {
+    var form = dialog.querySelector("form[phx-change]");
+    var restoredRich = restoreRich(dialog, kept, force);
     if (!form || (saved.length === 0 && !restoredRich)) return;
     var last = restoredRich;
     saved.forEach(function (field) {
       var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
       Array.prototype.forEach.call(els, function (el) {
         if (el.type === "hidden") return;
-        // The server's value moved on while we were away (neither what the
-        // field came with nor what it last showed us): its, not ours.
-        var now = fieldServerOf(el);
-        if (field.server != null && now != null && now !== field.server && now !== field.echo) return;
         if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
           if (el.value === field.value) el.checked = field.checked;
         } else if (el.type !== "checkbox" && el.type !== "radio") {
@@ -2723,15 +2738,23 @@
     if (!item || !item.isConnected) return;
     var moving = (last.saved || []).map(function (st) { return st.el; });
     var anchored = function (n) { return n && n.isConnected && n !== item && moving.indexOf(n) < 0; };
-    var at = function (n) { return Array.prototype.indexOf.call(container.children, n); };
-    // Already between its old neighbours: the server's redraw (a refusal
-    // reloads the list) has put it back, maybe with a row another session
-    // added beside it, which a move to "just before the old next" would
-    // jump over (grok, 2026-11-26). Only its level and branch are put back.
-    var between = anchored(last.prev) && anchored(last.next) &&
-      at(last.prev) < at(item) && at(item) < at(last.next);
-    if (between) { /* in place */ }
-    else if (anchored(last.next)) container.insertBefore(item, last.next);
+    // Redrawn: the other rows are no longer the ones, in the order, they
+    // were when the drag began, so the refusal's reload has drawn the list
+    // as the server has it (another session's change included) and that
+    // is where the card already is. Only the levels go back; moving it
+    // next to an old neighbour jumped over the new rows (grok, 2026-11-26).
+    if (last.others) {
+      var now = Array.prototype.filter.call(container.children, function (n) {
+        return n !== item && moving.indexOf(n) < 0 && !(n.matches && !n.matches(".sortable-item"));
+      });
+      var same = now.length === last.others.length &&
+        now.every(function (n, i) { return n === last.others[i]; });
+      if (!same) {
+        (last.saved || []).forEach(function (st) { if (st.el.isConnected) restoreRowLevel(st); });
+        return;
+      }
+    }
+    if (anchored(last.next)) container.insertBefore(item, last.next);
     else if (anchored(last.prev)) last.prev.after(item);
     else container.insertBefore(item, container.children[last.index] || null);
     var ref = item;
@@ -2836,7 +2859,11 @@
           self.lastMove = {
             id: start.id, item: item,
             prev: item.previousElementSibling, next: after,
-            index: Array.prototype.indexOf.call(el.children, item)
+            index: Array.prototype.indexOf.call(el.children, item),
+            // The other rows as they stand, to tell a redraw on a refusal.
+            others: Array.prototype.filter.call(el.children, function (n) {
+              return n !== item && lifted.indexOf(n) < 0 && n.matches(".sortable-item");
+            })
           };
           self.dragging = {
             item: item, nest: nest, start: start, lifted: lifted,
@@ -2947,6 +2974,13 @@
         d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
         this.el.style.minHeight = "";
         this.el.classList.remove("pkp-list-dragging");
+        // What only Sortable's own drop removes: the floating copy on the
+        // body and the classes on the card (grok's re-review).
+        d.item.classList.remove("pkp-list-ghost", "sortable-chosen", "sortable-ghost");
+        Array.prototype.forEach.call(document.querySelectorAll("body > .sortable-fallback"), function (n) {
+          n.parentNode.removeChild(n);
+        });
+        this.clearParentMark();
         if (this.track) {
           document.removeEventListener("pointermove", this.track, true);
           document.removeEventListener("touchmove", this.track, true);
@@ -2964,13 +2998,12 @@
   window.PhoenixKitProjectsInternals.keepRich = keepRich;
   window.PhoenixKitProjectsInternals.restoreRich = restoreRich;
   window.PhoenixKitProjectsInternals.noteServer = noteServer;
-  window.PhoenixKitProjectsInternals.noteField = noteField;
-  window.PhoenixKitProjectsInternals.keepStackReplay = function (values, rich) {
+  window.PhoenixKitProjectsInternals.keepStackReplay = function (values, rich, versions) {
     var hook = Object.create(KeepStack);
     hook.dialogs = function () {
       return Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
     };
-    hook.replay({ values: values, rich: rich, frames: hook.frames }, 50);
+    hook.replay({ values: values, rich: rich, versions: versions, frames: hook.frames }, 50);
   };
 
   window.PhoenixKitProjectsHooks = {

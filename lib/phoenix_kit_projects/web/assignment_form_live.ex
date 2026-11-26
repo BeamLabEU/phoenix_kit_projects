@@ -5312,7 +5312,35 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       <%!-- `novalidate`: the server checks every field, and the browser's own
            check (a repeat's "Every" off its min/max, a negative estimate)
            blocked Save in silence when the bad value sat on a hidden tab. --%>
-      <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" novalidate class="flex flex-col gap-3">
+      <%!-- `data-pkp-version`: the task as this form has it. After a dropped
+           connection `PkpKeepStack` puts what was typed back only while the
+           task is still that version; otherwise the note below offers it
+           (the panel, 2026-11-26). --%>
+      <.form
+        for={@form}
+        id="assignment-form"
+        phx-change="validate"
+        phx-submit="save"
+        phx-debounce="300"
+        novalidate
+        class="flex flex-col gap-3"
+        data-pkp-version={record_version(@assignment)}
+      >
+        <div
+          id={"assignment-kept-note-#{@dom}"}
+          phx-update="ignore"
+          data-pkp-kept-note
+          hidden
+          role="status"
+          class="alert alert-warning text-sm py-2"
+        >
+          <span>
+            {gettext("This task changed while you were offline. What you typed was not put back.")}
+          </span>
+          <button type="button" class="btn btn-sm" data-pkp-apply-kept>
+            {gettext("Put my edits back")}
+          </button>
+        </div>
         <%!-- The tabs. Every tab's fields stay in this one form and are only
              hidden, so switching loses nothing typed and a save posts them
              all; a tab holding an error the form shows carries a dot. --%>
@@ -6369,6 +6397,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # new — so two stacked forms never bind to each other's elements.
   defp dom_key(%{assignment: %Assignment{uuid: uuid}}) when is_binary(uuid), do: uuid
   defp dom_key(assigns), do: assigns[:dom_seed] || "new"
+
+  # The task's version for `data-pkp-version`: its last write. A new task
+  # has none (nothing to change under it).
+  defp record_version(%Assignment{uuid: uuid, updated_at: %{} = at}) when is_binary(uuid),
+    do: to_string(at)
+
+  defp record_version(_), do: nil
 
   # The description editor's part of its id (`DescriptionEditor.editor_id/3`):
   # the task's uuid, which a reconnect keeps (the per-mount `dom_key/1` does
