@@ -528,13 +528,28 @@ defmodule PhoenixKitProjects.Authz do
   @spec effective_roles([map()], term()) :: %{
           binary() => :owner | :manager | :member | :viewer | nil
         }
-  def effective_roles(projects, user_uuid) when is_list(projects) and is_binary(user_uuid) do
+  def effective_roles(projects, %Scope{} = scope) when is_list(projects) do
+    case subject_user_uuid(scope) do
+      nil -> Map.new(projects, &{&1.uuid, nil})
+      user_uuid -> roles_on(projects, user_uuid, scope)
+    end
+  end
+
+  def effective_roles(projects, user_uuid) when is_list(projects) and is_binary(user_uuid),
+    do: roles_on(projects, user_uuid, user_uuid)
+
+  def effective_roles(projects, _user_uuid) when is_list(projects),
+    do: Map.new(projects, &{&1.uuid, nil})
+
+  # `reach` answers the "everyone" condition, as in `resolve_role/3`: the
+  # scope when there is one (codex, 2026-11-26: a scope got nil everywhere).
+  defp roles_on(projects, user_uuid, reach) do
     uuids = Enum.map(projects, & &1.uuid)
     direct = PhoenixKitProjects.Members.roles_of(uuids, user_uuid)
     group = PhoenixKitProjects.Grants.project_roles_for_user(user_uuid)
 
     open =
-      if Enum.any?(projects, &(visibility_of(&1) == "everyone")) and module_reacher?(user_uuid),
+      if Enum.any?(projects, &(visibility_of(&1) == "everyone")) and module_reacher?(reach),
         do: :viewer
 
     Map.new(projects, fn project ->
@@ -556,9 +571,6 @@ defmodule PhoenixKitProjects.Authz do
   catch
     :exit, _ -> Map.new(projects, &{&1.uuid, nil})
   end
-
-  def effective_roles(projects, _user_uuid) when is_list(projects),
-    do: Map.new(projects, &{&1.uuid, nil})
 
   defp resolve_role(project, user_uuid, reach) do
     direct = PhoenixKitProjects.Members.role_of(project, user_uuid)
