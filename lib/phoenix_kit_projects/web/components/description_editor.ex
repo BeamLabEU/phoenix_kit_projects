@@ -47,9 +47,18 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.Mentions
 
-  @doc "The editor's id for one language: `<base>--<lang>` (a code may hold a dash)."
-  @spec editor_id(String.t(), String.t() | nil) :: String.t()
-  def editor_id(base, lang), do: "#{base}--#{lang || "default"}"
+  @doc """
+  The editor's id for one language: `<base>--<lang>` (a code may hold a
+  dash), and `<base>--<lang>--<scope>` for a form that can be stacked twice
+  on one page (two task forms in a popup): Leaf's commands go out on
+  `window` by this id, so a shared one reached both editors (grok,
+  2026-11-26). The scope must survive a reconnect (a record's uuid, not a
+  per-mount key), or the restore after it cannot find the editor.
+  """
+  @spec editor_id(String.t(), String.t() | nil, String.t() | nil) :: String.t()
+  def editor_id(base, lang, scope \\ nil)
+  def editor_id(base, lang, nil), do: "#{base}--#{lang || "default"}"
+  def editor_id(base, lang, scope), do: "#{base}--#{lang || "default"}--#{scope}"
 
   @doc """
   The field the description posts under: the primary column on the primary
@@ -69,8 +78,8 @@ defmodule PhoenixKitProjects.Web.Components.DescriptionEditor do
   """
   @spec changed(term()) :: {String.t(), String.t(), String.t()} | nil
   def changed({:leaf_changed, %{editor_id: id, markdown: markdown}}) when is_binary(id) do
-    case String.split(id, "--", parts: 2) do
-      [base, lang] -> {base, lang, markdown || ""}
+    case String.split(id, "--", parts: 3) do
+      [base, lang | _scope] -> {base, lang, markdown || ""}
       _ -> nil
     end
   end

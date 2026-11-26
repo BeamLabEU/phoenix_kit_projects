@@ -801,7 +801,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     if inline? do
       DescriptionEditor.insert_image(
-        DescriptionEditor.editor_id("assignment-description", socket.assigns.current_lang),
+        DescriptionEditor.editor_id(
+          "assignment-description",
+          socket.assigns.current_lang,
+          editor_scope(socket.assigns)
+        ),
         inline_src(socket, file),
         to_string(file.original_file_name)
       )
@@ -978,7 +982,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
 
       send_update(Leaf,
-        id: DescriptionEditor.editor_id("assignment-description", lang),
+        id:
+          DescriptionEditor.editor_id(
+            "assignment-description",
+            lang,
+            editor_scope(socket.assigns)
+          ),
         action: :set_content,
         content:
           DescriptionEditor.safe_content(
@@ -1973,32 +1982,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  def handle_event("subtask_add", %{"title" => title}, socket) when is_binary(title) do
-    title = String.trim(title)
-
-    with %Assignment{} = parent <- socket.assigns[:assignment],
-         true <- title != "",
-         true <- may?(socket, :create_tasks),
-         {:ok, %{assignment: a}} <-
-           Projects.create_task_with_assignment(
-             socket.assigns.project.uuid,
-             %{"title" => title, "ad_hoc" => true},
-             %{}
-           ) do
-      Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
-      log_subtask_act(socket, "projects.assignment_created", a.uuid, %{"parent" => parent.uuid})
-      _ = Outline.move(a, parent.uuid, :last)
-
-      {:noreply,
-       socket
-       |> assign_outline(%{})
-       |> assign(:subtask_seq, (socket.assigns[:subtask_seq] || 0) + 1)}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
-
-  # A crafted title that is not text: nothing to add.
+  # Anywhere but an open edit (a crafted event: the box renders only there):
+  # nothing. The form writes nothing before Save; an older clause here
+  # created the task at once, under no parent in a new form.
   def handle_event("subtask_add", _params, socket), do: {:noreply, socket}
 
   def handle_event("delete_task", _params, socket) do
@@ -2079,34 +2065,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  # A sub-project row under the task is left to its own project: ticking it
-  # would write a status onto the rollup row while the project stays open.
-  def handle_event("subtask_toggle", %{"uuid" => uuid}, socket) do
-    with %Assignment{} = parent <- socket.assigns[:assignment],
-         %Assignment{parent_uuid: p, child_project_uuid: nil} = sub when p == parent.uuid <-
-           Projects.get_assignment(uuid),
-         true <- may?(socket, :update_status) do
-      {action, result} =
-        if sub.status == "done",
-          do: {"projects.assignment_reopened", Projects.reopen_assignment(sub)},
-          else:
-            {"projects.assignment_completed",
-             Projects.complete_assignment(sub, Activity.actor_uuid(socket))}
-
-      outcome = if match?({:ok, _}, result), do: :ok, else: :failed
-      log_subtask_act(socket, action, sub.uuid, %{}, outcome)
-      # No page around the form to settle the project: a last leaf ticked
-      # here completes it, as it would from the list.
-      Projects.recompute_project_completion(socket.assigns.project.uuid)
-
-      # Held in the form's own shape (`hold_saved/2`: its own description,
-      # refs collapsed) — the raw row made the next Save read the words as
-      # changed and take them from whoever wrote them last.
-      {:noreply, socket |> hold_saved(parent) |> assign_outline(%{})}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
+  # Anywhere but an open edit (a crafted event: the boxes render only
+  # there): nothing. An older clause here ticked the task at once, and in a
+  # new form, whose task has no uuid yet, it matched ANY top-level task of
+  # any project and asked the right only on this form's project (kimi,
+  # 2026-11-26: a member completed and reopened tasks in a private project).
+  def handle_event("subtask_toggle", _params, socket), do: {:noreply, socket}
 
   # The task's files (`Attachments`, V27): the upload's own form validates
   # nothing, the bytes are stored as each one finishes (`handle_progress/3`).
@@ -5514,7 +5478,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                    pasted where it cannot be stored is refused with a
                    word, never put in the text as a `data:` address. --%>
               <.description_editor
-                id={DescriptionEditor.editor_id("assignment-description", @current_lang)}
+                id={DescriptionEditor.editor_id("assignment-description", @current_lang, editor_scope(assigns))}
                 name={DescriptionEditor.field_name("assignment", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
                 content={
@@ -6405,6 +6369,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # new — so two stacked forms never bind to each other's elements.
   defp dom_key(%{assignment: %Assignment{uuid: uuid}}) when is_binary(uuid), do: uuid
   defp dom_key(assigns), do: assigns[:dom_seed] || "new"
+
+  # The description editor's part of its id (`DescriptionEditor.editor_id/3`):
+  # the task's uuid, which a reconnect keeps (the per-mount `dom_key/1` does
+  # not, and the restore after it finds the editor by its old id).
+  defp editor_scope(assigns) do
+    case assigns[:assignment] do
+      %Assignment{uuid: uuid} when is_binary(uuid) -> uuid
+      _ -> "new"
+    end
+  end
 
   # The sub-project form's tabs, the open one, and the ones holding an error.
   # A sub-project's description takes pictures as a project's does: pasted,

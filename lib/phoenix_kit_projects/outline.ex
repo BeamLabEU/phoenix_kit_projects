@@ -1256,6 +1256,13 @@ defmodule PhoenixKitProjects.Outline do
         from(x in Assignment, where: x.uuid in ^uuids and x.review_status == "removed")
         |> repo().update_all(set: [review_status: "accepted", updated_at: now()])
 
+        # Held, the row was placed after everything (`write_order/2` puts the
+        # rows a sync does not name last); back, it goes at the end of its
+        # parent's branch, so the stored order is depth first again (kimi,
+        # 2026-11-26: a restored subtask sat away from its parent in every
+        # list read by position).
+        restore_order(a.project_uuid)
+
         settle_tree(a.project_uuid)
         repo().get!(Assignment, a.uuid)
       end)
@@ -1267,4 +1274,18 @@ defmodule PhoenixKitProjects.Outline do
   end
 
   def restore(%Assignment{} = a), do: {:ok, a}
+
+  defp restore_order(project_uuid) do
+    order =
+      from(x in Assignment,
+        where: x.project_uuid == ^project_uuid,
+        order_by: [asc: x.position, asc: x.inserted_at],
+        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid}
+      )
+      |> repo().all()
+      |> walk()
+      |> Enum.map(fn {row, _depth} -> {row.uuid, row.parent_uuid} end)
+
+    write_order(project_uuid, order)
+  end
 end

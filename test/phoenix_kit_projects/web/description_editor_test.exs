@@ -140,6 +140,36 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
     end
   end
 
+  describe "two task forms on one page" do
+    # A task's form and its subtask's form can be stacked in one popup: their
+    # editors must not share an id, or Leaf's commands (sent on window by
+    # id) reach both (grok, 2026-11-26).
+    test "each task's editor carries the task, and its changes still read", ctx do
+      {:ok, %{assignment: b}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Fit the hinges", "ad_hoc" => true},
+          %{}
+        )
+
+      {:ok, _view, html_a} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
+
+      {:ok, _view, html_b} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{b.uuid}/edit")
+
+      id_a = editor_id(html_a, "assignment-description")
+      id_b = editor_id(html_b, "assignment-description")
+
+      assert id_a != id_b
+      assert String.ends_with?(id_a, "--" <> ctx.a.uuid)
+      assert String.ends_with?(id_b, "--" <> b.uuid)
+
+      assert {"assignment-description", _lang, "x"} =
+               DescriptionEditor.changed({:leaf_changed, %{editor_id: id_a, markdown: "x"}})
+    end
+  end
+
   describe "writing one" do
     test "the task popup's description is the editor, and what it sends is saved", ctx do
       {:ok, view, html} =
