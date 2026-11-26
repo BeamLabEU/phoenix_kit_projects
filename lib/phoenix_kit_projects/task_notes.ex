@@ -136,6 +136,36 @@ defmodule PhoenixKitProjects.TaskNotes do
   end
 
   @doc """
+  `latest/1` for many tasks in one read: `%{assignment_uuid => latest}`,
+  every uuid present (empty notes answer like `latest([])`). The briefing
+  asks this for its rows instead of one comments read per row (codex,
+  2026-11-26).
+  """
+  @spec latest_for_assignments([binary()]) :: %{binary() => map()}
+  def latest_for_assignments([]), do: %{}
+
+  def latest_for_assignments(uuids) when is_list(uuids) do
+    grouped =
+      from(c in PhoenixKitComments.Comment,
+        where:
+          c.resource_type == @resource_type and c.resource_uuid in ^uuids and
+            c.status == "published",
+        # `inserted_at` is to the second: the uuid (v7, time-ordered) breaks
+        # ties, so two notes saved in one second always read in one order.
+        order_by: [asc: c.inserted_at, asc: c.uuid],
+        preload: [:user]
+      )
+      |> RepoHelper.repo().all()
+      |> Enum.group_by(& &1.resource_uuid)
+
+    Map.new(uuids, &{&1, latest(Map.get(grouped, &1, []))})
+  rescue
+    _ -> Map.new(uuids, &{&1, latest([])})
+  catch
+    :exit, _ -> Map.new(uuids, &{&1, latest([])})
+  end
+
+  @doc """
   What the next worker reads first: the latest redirect (the direction
   now), the latest agent note (its outcome and summary) and the latest
   note a person wrote — each the whole note, or nil.
@@ -145,7 +175,11 @@ defmodule PhoenixKitProjects.TaskNotes do
           agent: map() | nil,
           human: map() | nil
         }
-  def latest(assignment_uuid) when is_binary(assignment_uuid), do: latest(list(assignment_uuid))
+  # Through the batched read, so a task's latest note is the same note here
+  # and in the briefing, whatever order two notes of one second came back
+  # in (zai, 2026-11-26).
+  def latest(assignment_uuid) when is_binary(assignment_uuid),
+    do: Map.fetch!(latest_for_assignments([assignment_uuid]), assignment_uuid)
 
   def latest(notes) when is_list(notes) do
     by_kind = fn kinds -> notes |> Enum.filter(&(kind(&1) in kinds)) |> List.last() end

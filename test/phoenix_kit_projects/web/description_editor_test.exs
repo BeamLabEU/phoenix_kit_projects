@@ -140,6 +140,73 @@ defmodule PhoenixKitProjects.Web.DescriptionEditorTest do
     end
   end
 
+  describe "two task forms on one page" do
+    # A task's form and its subtask's form can be stacked in one popup: their
+    # editors must not share an id, or Leaf's commands (sent on window by
+    # id) reach both (grok, 2026-11-26).
+    test "each task's editor carries the task, and its changes still read", ctx do
+      {:ok, %{assignment: b}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Fit the hinges", "ad_hoc" => true},
+          %{}
+        )
+
+      {:ok, _view, html_a} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
+
+      {:ok, _view, html_b} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{b.uuid}/edit")
+
+      id_a = editor_id(html_a, "assignment-description")
+      id_b = editor_id(html_b, "assignment-description")
+
+      assert id_a != id_b
+      assert String.ends_with?(id_a, "--" <> ctx.a.uuid)
+      assert String.ends_with?(id_b, "--" <> b.uuid)
+
+      assert {"assignment-description", _lang, "x"} =
+               DescriptionEditor.changed({:leaf_changed, %{editor_id: id_a, markdown: "x"}})
+    end
+  end
+
+  describe "after a dropped connection" do
+    # The panel, 2026-11-26: the kept draft goes back only while the task is
+    # the version it was typed against (`data-pkp-version`); otherwise the
+    # note offers it back.
+    test "the edit form carries the task's version and the hidden note", ctx do
+      {:ok, view, _html} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit")
+
+      assert has_element?(view, "#assignment-form[data-pkp-version]")
+      assert has_element?(view, "[data-pkp-kept-note][hidden][phx-update=ignore]")
+      assert has_element?(view, "[data-pkp-kept-note] button[data-pkp-apply-kept]")
+    end
+
+    test "a task-only rename changes the reconnect version", ctx do
+      path = "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.a.uuid}/edit"
+
+      version = fn ->
+        {:ok, _view, html} = live(ctx.conn, path)
+        [token] = Regex.run(~r/data-pkp-version="([^"]+)"/, html, capture: :all_but_first)
+        token
+      end
+
+      before = version.()
+      assert version.() == before
+      {:ok, _} = Projects.update_task(Projects.get_task(ctx.a.task_uuid), %{"title" => "Renamed"})
+      refute version.() == before
+    end
+
+    test "a new task's form has no version", ctx do
+      {:ok, view, _html} =
+        live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new")
+
+      assert has_element?(view, "#assignment-form")
+      refute has_element?(view, "#assignment-form[data-pkp-version]")
+    end
+  end
+
   describe "writing one" do
     test "the task popup's description is the editor, and what it sends is saved", ctx do
       {:ok, view, html} =

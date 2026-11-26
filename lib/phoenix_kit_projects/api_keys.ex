@@ -40,7 +40,7 @@ defmodule PhoenixKitProjects.ApiKeys do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Permissions
   alias PhoenixKitProjects.{Activity, Authz, Projects}
-  alias PhoenixKitProjects.Schemas.{ApiIdempotency, ApiKey, ApiKeyGrant}
+  alias PhoenixKitProjects.Schemas.{ApiIdempotency, ApiKey, ApiKeyGrant, Project}
 
   # Strongest first; anything unrecognised ranks as the weakest.
   @role_rank %{"owner" => 0, "manager" => 1, "member" => 2, "viewer" => 3}
@@ -349,62 +349,174 @@ defmodule PhoenixKitProjects.ApiKeys do
           | {:error, :no_access | :membership_ended}
   def access_for(%ApiKey{} = key, %{uuid: uuid}), do: access_for(key, uuid)
 
-  def access_for(%ApiKey{uuid: key_uuid} = key, project_uuid) when is_binary(project_uuid) do
-    case Projects.get_project(project_uuid) do
-      # Templates are not worked in; no grant reaches one.
-      %{is_template: false} -> nearest_grant(key, key_uuid, project_uuid)
-      _ -> {:error, :no_access}
-    end
-  end
+  def access_for(%ApiKey{} = key, project_uuid) when is_binary(project_uuid),
+    do: key |> access_map([project_uuid]) |> Map.fetch!(project_uuid)
 
   def access_for(_key, _project), do: {:error, :no_access}
 
-  defp nearest_grant(key, key_uuid, project_uuid) do
-    by_project = Map.new(grants(key_uuid), &{&1.project_uuid, &1})
+  @access_cache :pk_api_access
 
-    chain = [
-      project_uuid
-      | project_uuid |> Projects.parent_chain() |> Enum.reverse() |> Enum.map(& &1.uuid)
-    ]
+  @doc """
+  `access_for/2` for many projects at once: `%{project_uuid => result}`, in
+  a fixed number of reads whatever the number of projects — the key's
+  grants once, the projects once, their ancestry one read per level, and a
+  personal key's role once per granting project. A request that lists
+  sub-projects (`GET /tasks`, `/hours`, `/me`) asks this, never a walk per
+  row.
 
-    case Enum.find_value(chain, fn uuid -> by_project[uuid] end) do
-      nil ->
-        {:error, :no_access}
+  The answers are kept for the rest of the request (the process
+  dictionary, cleared by `reset_access_cache/0`, which the API's auth plug
+  calls for every request), so a later single `access_for/2` on one of
+  these projects reads nothing.
+  """
+  @spec access_map(ApiKey.t(), [binary()]) :: %{
+          binary() => {:ok, map()} | {:error, :no_access | :membership_ended}
+        }
+  def access_map(%ApiKey{uuid: key_uuid} = key, project_uuids) when is_list(project_uuids) do
+    # A string that is no uuid reaches nothing and answers for itself: it
+    # used to fail the batch's reads, and the rescue then answered "no
+    # access" for every project asked with it (codex, 2026-11-26).
+    requested =
+      for uuid <- project_uuids, is_binary(uuid), into: %{} do
+        {uuid, Ecto.UUID.cast(uuid)}
+      end
 
-      %ApiKeyGrant{scopes: []} ->
-        {:error, :no_access}
+    uuids = for {:ok, canonical} <- Map.values(requested), do: canonical
+    access = access_map_valid(key, key_uuid, Enum.uniq(uuids))
 
-      %ApiKeyGrant{project_uuid: ^project_uuid} = grant ->
-        grant_role(key, grant)
-
-      %ApiKeyGrant{inherit: false} ->
-        {:error, :no_access}
-
-      grant ->
-        grant_role(key, grant)
-    end
-  rescue
-    _ -> {:error, :no_access}
+    Map.new(requested, fn
+      {uuid, {:ok, canonical}} -> {uuid, Map.fetch!(access, canonical)}
+      {uuid, :error} -> {uuid, {:error, :no_access}}
+    end)
   end
 
-  defp grant_role(%ApiKey{user_uuid: nil}, grant),
-    do: {:ok, %{scopes: grant.scopes, role: grant.role, grant: grant}}
+  defp access_map_valid(_key, _key_uuid, []), do: %{}
 
-  defp grant_role(%ApiKey{user_uuid: user_uuid}, grant) do
-    case Projects.get_project(grant.project_uuid) do
-      nil ->
-        {:error, :no_access}
+  defp access_map_valid(key, key_uuid, uuids) do
+    case Process.get(@access_cache) do
+      # Kept only inside an API request (`reset_access_cache/0` opens it):
+      # a LiveView process lives on while grants change under it.
+      %{} = cache ->
+        known = Map.get(cache, key_uuid, %{})
 
-      project ->
-        case Authz.effective_role(project, user_uuid) do
-          nil ->
-            {:error, :membership_ended}
+        case Enum.reject(uuids, &Map.has_key?(known, &1)) do
+          [] ->
+            Map.take(known, uuids)
 
-          role ->
-            {:ok,
-             %{scopes: grant.scopes, role: weaker(Atom.to_string(role), grant.role), grant: grant}}
+          missing ->
+            known = Map.merge(known, compute_access(key, missing))
+            Process.put(@access_cache, Map.put(cache, key_uuid, known))
+            Map.take(known, uuids)
         end
+
+      _ ->
+        compute_access(key, uuids)
     end
+  end
+
+  @doc """
+  Starts an empty per-request cache for `access_map/2` (the API's auth plug,
+  once per request: a kept connection serves several requests in one
+  process, and rights are never carried from one to the next).
+  """
+  @spec reset_access_cache() :: :ok
+  def reset_access_cache do
+    Process.put(@access_cache, %{})
+    :ok
+  end
+
+  defp compute_access(key, uuids) do
+    # Templates are not worked in; no grant reaches one.
+    worked =
+      from(p in Project, where: p.uuid in ^uuids and p.is_template == false, select: p.uuid)
+      |> RepoHelper.repo().all()
+      |> MapSet.new()
+
+    parents = Projects.parent_map(uuids)
+    by_project = Map.new(grants(key.uuid), &{&1.project_uuid, &1})
+
+    nearest =
+      Map.new(uuids, fn uuid ->
+        {uuid, if(MapSet.member?(worked, uuid), do: nearest_grant(uuid, parents, by_project))}
+      end)
+
+    roles = grant_roles(key, nearest |> Map.values() |> Enum.filter(&match?(%ApiKeyGrant{}, &1)))
+
+    Map.new(nearest, fn
+      {uuid, nil} -> {uuid, {:error, :no_access}}
+      {uuid, :none} -> {uuid, {:error, :no_access}}
+      {uuid, grant} -> {uuid, Map.fetch!(roles, grant.project_uuid)}
+    end)
+  rescue
+    _ -> Map.new(uuids, &{&1, {:error, :no_access}})
+  end
+
+  # The NEAREST grant up the tree decides (see `access_for/2`): nil when
+  # none reaches, `:none` when the one that decides opens nothing.
+  defp nearest_grant(project_uuid, parents, by_project) do
+    chain = ancestry(project_uuid, parents, [], 9)
+
+    case Enum.find_value(chain, fn uuid -> by_project[uuid] end) do
+      nil -> :none
+      %ApiKeyGrant{scopes: []} -> :none
+      %ApiKeyGrant{project_uuid: ^project_uuid} = grant -> grant
+      %ApiKeyGrant{inherit: false} -> :none
+      grant -> grant
+    end
+  end
+
+  # The project, then its parent, and so on (bounded like `parent_chain/1`).
+  defp ancestry(nil, _parents, acc, _hops), do: Enum.reverse(acc)
+  defp ancestry(_uuid, _parents, acc, 0), do: Enum.reverse(acc)
+
+  defp ancestry(uuid, parents, acc, hops) do
+    if uuid in acc,
+      do: Enum.reverse(acc),
+      else: ancestry(Map.get(parents, uuid), parents, [uuid | acc], hops - 1)
+  end
+
+  # Each granting project's answer once: a shared key's is the grant; a
+  # personal key's needs its person's role on that project.
+  defp grant_roles(%ApiKey{user_uuid: nil}, grants),
+    do: Map.new(grants, &{&1.project_uuid, {:ok, %{scopes: &1.scopes, role: &1.role, grant: &1}}})
+
+  defp grant_roles(%ApiKey{user_uuid: user_uuid}, grants) do
+    grants = Enum.uniq_by(grants, & &1.project_uuid)
+    uuids = Enum.map(grants, & &1.project_uuid)
+
+    projects =
+      from(p in Project, where: p.uuid in ^uuids)
+      |> RepoHelper.repo().all()
+      |> Map.new(&{&1.uuid, &1})
+
+    # The person's role on every granting project in a fixed number of
+    # reads, never one resolve per grant (codex, 2026-11-26: 54 statements
+    # for eight grants on `GET /me`).
+    roles = Authz.effective_roles(Map.values(projects), user_uuid)
+
+    Map.new(grants, fn grant ->
+      answer =
+        case projects[grant.project_uuid] do
+          nil ->
+            {:error, :no_access}
+
+          project ->
+            case roles[project.uuid] do
+              nil ->
+                {:error, :membership_ended}
+
+              role ->
+                {:ok,
+                 %{
+                   scopes: grant.scopes,
+                   role: weaker(Atom.to_string(role), grant.role),
+                   grant: grant
+                 }}
+            end
+        end
+
+      {grant.project_uuid, answer}
+    end)
   end
 
   @doc "Whether `key` may use `scope` in a project right now."
@@ -436,18 +548,30 @@ defmodule PhoenixKitProjects.ApiKeys do
   """
   @spec reachable(ApiKey.t()) :: [map()]
   def reachable(%ApiKey{} = key) do
-    key
-    |> grants()
-    |> Enum.flat_map(fn g ->
-      below =
-        if g.inherit, do: Projects.subtree_uuids(g.project_uuid) -- [g.project_uuid], else: []
+    grants = grants(key)
+    direct = Enum.map(grants, & &1.project_uuid)
+    roots = for grant <- grants, grant.inherit, do: grant.project_uuid
 
-      [g.project_uuid | below]
-    end)
+    (direct ++ Projects.subtree_uuids(roots))
     |> Enum.uniq()
-    |> Enum.flat_map(fn uuid ->
-      with %{} = project <- Projects.get_project(uuid),
-           {:ok, access} <- access_for(key, uuid) do
+    |> reachable_rows(key)
+  rescue
+    _ -> []
+  end
+
+  # The projects in one read and the key's access to all of them in one
+  # batch (`access_map/2`), in the order the grants listed them.
+  defp reachable_rows(uuids, key) do
+    access = access_map(key, uuids)
+
+    projects =
+      from(p in Project, where: p.uuid in ^uuids)
+      |> RepoHelper.repo().all()
+      |> Map.new(&{&1.uuid, &1})
+
+    Enum.flat_map(uuids, fn uuid ->
+      with %Project{} = project <- projects[uuid],
+           {:ok, access} <- access[uuid] do
         source =
           if access.grant.project_uuid == uuid,
             do: :direct,
@@ -458,8 +582,6 @@ defmodule PhoenixKitProjects.ApiKeys do
         _ -> []
       end
     end)
-  rescue
-    _ -> []
   end
 
   @doc """

@@ -3819,44 +3819,121 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  A project and every project nested under it, the root first — bounded to
+  One or more projects and their descendants, roots first — bounded to
   #{@max_parent_depth} levels like `parent_chain/1`, so a walk over
   persisted data can never spin.
   """
-  @spec subtree_uuids(uuid()) :: [uuid()]
+  @spec subtree_uuids(uuid() | [uuid()]) :: [uuid()]
   def subtree_uuids(project_uuid) when is_binary(project_uuid) do
-    do_subtree([project_uuid], [], @max_parent_depth, Assignment)
+    subtree_uuids([project_uuid])
   end
 
-  @doc "Projects visible through membership or inheritance, stopping at every template."
-  @spec visible_project_uuids(uuid()) :: [uuid()]
-  def visible_project_uuids(user_uuid) do
-    roots = PhoenixKitProjects.Members.accessible_project_uuids(user_uuid)
+  def subtree_uuids(project_uuids) when is_list(project_uuids) do
+    do_subtree(Enum.uniq(project_uuids), [], @max_parent_depth)
+  end
 
-    links =
-      from(a in Assignment,
-        join: child in Project,
-        on: child.uuid == a.child_project_uuid,
-        where: not child.is_template
+  @doc """
+  The parent of each of `project_uuids` and of every project above them:
+  `%{project_uuid => parent_uuid | nil}`, one read per level (bounded like
+  `parent_chain/1`), so a set of sub-projects costs the depth of the tree in
+  reads, never one walk per project.
+  """
+  @spec parent_map([uuid()]) :: %{uuid() => uuid() | nil}
+  def parent_map(project_uuids) when is_list(project_uuids),
+    do:
+      do_parent_map(
+        project_uuids |> Enum.filter(&is_binary/1) |> Enum.uniq(),
+        %{},
+        @max_parent_depth
       )
 
-    do_subtree(roots, [], @max_parent_depth, links)
+  defp do_parent_map([], acc, _hops), do: acc
+  defp do_parent_map(level, acc, 0), do: Enum.reduce(level, acc, &Map.put_new(&2, &1, nil))
+
+  defp do_parent_map(level, acc, hops) do
+    parents =
+      repo().all(
+        from(a in Assignment,
+          where: a.child_project_uuid in ^level,
+          select: {a.child_project_uuid, a.project_uuid}
+        )
+      )
+      |> Map.new()
+
+    acc = Enum.reduce(level, acc, &Map.put(&2, &1, parents[&1]))
+
+    next =
+      parents |> Map.values() |> Enum.uniq() |> Enum.reject(&Map.has_key?(acc, &1))
+
+    do_parent_map(next, acc, hops - 1)
   end
 
-  defp do_subtree([], acc, _hops, _links), do: Enum.reverse(acc)
-  defp do_subtree(level, acc, 0, _links), do: Enum.reverse(Enum.reverse(level) ++ acc)
+  defp do_subtree([], acc, _hops), do: Enum.reverse(acc)
+  defp do_subtree(level, acc, 0), do: Enum.reverse(Enum.reverse(level) ++ acc)
 
-  defp do_subtree(level, acc, hops, links) do
+  defp do_subtree(level, acc, hops) do
     children =
       repo().all(
-        from(a in links,
+        from(a in Assignment,
           where: a.project_uuid in ^level and not is_nil(a.child_project_uuid),
           select: a.child_project_uuid
         )
       )
       |> Enum.reject(&(&1 in acc or &1 in level))
 
-    do_subtree(children, Enum.reverse(level) ++ acc, hops - 1, links)
+    do_subtree(children, Enum.reverse(level) ++ acc, hops - 1)
+  end
+
+  @doc "Projects visible through membership or inheritance, stopping at every template."
+  @spec visible_project_uuids(uuid(), term()) :: [uuid()]
+  def visible_project_uuids(user_uuid, reach \\ nil)
+
+  def visible_project_uuids(user_uuid, reach) when is_binary(user_uuid) do
+    user_uuid
+    |> PhoenixKitProjects.Members.accessible_project_uuids(reach)
+    |> viewable_subtrees_uuids()
+  end
+
+  @doc """
+  What a viewer of `project_uuids` may read through them: those projects and
+  every sub-project nested under them, never a template and never anything
+  under one — the same rule as `Authz`'s inherited `:view`, which stops at a
+  template ancestor. Every list, count and mention check that asks "what
+  can this person open" goes through here, so none of them can offer a
+  project whose page refuses the viewer (zai, 2026-11-25). One read per
+  level.
+  """
+  @spec viewable_subtrees_uuids([uuid()]) :: [uuid()]
+  def viewable_subtrees_uuids([]), do: []
+
+  def viewable_subtrees_uuids(project_uuids) when is_list(project_uuids) do
+    roots =
+      repo().all(
+        from(p in Project,
+          where: p.uuid in ^Enum.uniq(project_uuids) and p.is_template == false,
+          select: p.uuid
+        )
+      )
+
+    do_viewable_subtree(roots, [], @max_parent_depth)
+  end
+
+  defp do_viewable_subtree([], acc, _hops), do: Enum.reverse(acc)
+  defp do_viewable_subtree(level, acc, 0), do: Enum.reverse(Enum.reverse(level) ++ acc)
+
+  defp do_viewable_subtree(level, acc, hops) do
+    children =
+      repo().all(
+        from(a in Assignment,
+          join: p in Project,
+          on: p.uuid == a.child_project_uuid,
+          where: a.project_uuid in ^level and p.is_template == false,
+          select: p.uuid
+        )
+      )
+      |> Enum.reject(&(&1 in acc or &1 in level))
+
+    do_viewable_subtree(children, Enum.reverse(level) ++ acc, hops - 1)
   end
 
   @doc "The sub-projects embedded directly in a project, in plan order."
@@ -5151,7 +5228,45 @@ defmodule PhoenixKitProjects.Projects do
   @doc "When an ongoing project caught up: the latest completion among its tasks, nil when not caught up."
   @spec caught_up_since(Project.t()) :: DateTime.t() | nil
   def caught_up_since(%Project{} = project) do
-    if caught_up?(project) do
+    caught_up_since(project, caught_up?(project))
+  end
+
+  @doc """
+  `caught_up?/1` and `caught_up_since/1` for many projects in a fixed number
+  of reads (the batched summaries and one grouped read of the last
+  completion): `%{project_uuid => %{project, caught_up, caught_up_since}}`.
+  A list of sub-project rows asks this, never one summary per row.
+  """
+  @spec caught_up_states([uuid()]) :: %{uuid() => map()}
+  def caught_up_states([]), do: %{}
+
+  def caught_up_states(project_uuids) when is_list(project_uuids) do
+    projects = repo().all(from(p in Project, where: p.uuid in ^Enum.uniq(project_uuids)))
+    summaries = project_summaries(projects)
+
+    last_done =
+      from(a in Assignment,
+        where: a.project_uuid in ^Enum.map(projects, & &1.uuid) and a.review_status == "accepted",
+        group_by: a.project_uuid,
+        select: {a.project_uuid, max(a.completed_at)}
+      )
+      |> repo().all()
+      |> Map.new()
+
+    projects
+    |> Enum.zip(summaries)
+    |> Map.new(fn {p, summary} ->
+      caught_up = caught_up?(p, summary)
+
+      {p.uuid,
+       %{project: p, caught_up: caught_up, caught_up_since: if(caught_up, do: last_done[p.uuid])}}
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  defp caught_up_since(%Project{} = project, caught_up) do
+    if caught_up do
       repo().one(
         from(a in Assignment,
           where: a.project_uuid == ^project.uuid and a.review_status == "accepted",

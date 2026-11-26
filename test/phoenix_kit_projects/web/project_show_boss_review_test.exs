@@ -508,6 +508,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       assert has_element?(view, "#task-#{first.uuid} .pkp-row-card")
     end
 
+    # Max, 2026-11-25: a subtask's card has the same gutter built in, so its
+    # handle and title start a full level right of its parent's.
+    test "a subtask's card has the arrows' gutter too", %{conn: conn} do
+      project = started_project()
+      parent = assignment!(project)
+      child = assignment!(project)
+      {:ok, _} = PhoenixKitProjects.Outline.move(child, parent.uuid, :last)
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert has_element?(view, "#task-#{child.uuid} .pkp-row-card")
+    end
+
     test "a board card has the same statuses in a menu of its own", %{conn: conn} do
       project = started_project()
       a = assignment!(project)

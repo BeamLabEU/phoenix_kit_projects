@@ -18,7 +18,8 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Utils.TimeZone
-  alias PhoenixKitProjects.L10n
+  alias PhoenixKitProjects.{L10n, Projects}
+  alias PhoenixKitProjects.Web.Components.FormParts
 
   setup %{conn: conn} do
     scope = fake_scope()
@@ -78,7 +79,9 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       html = render_hook(view, "pkp_zone", %{"zone" => "Asia/Tokyo"})
-      assert html =~ TimeZone.label("Asia/Tokyo")
+      assert html =~ FormParts.zone_display("Asia/Tokyo")
+      assert html =~ "Tokyo time (UTC+9)"
+      refute html =~ "the site uses"
       assert html =~ ~s(phx-hook="PkpZone")
 
       html = render_click(view, "deadline_preset", %{"preset" => "hour"})
@@ -98,7 +101,7 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
     test "the project form names the zone beside the scheduled start", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/new")
       html = render_hook(view, "pkp_zone", %{"zone" => "America/Lima"})
-      assert html =~ TimeZone.label("America/Lima")
+      assert html =~ FormParts.zone_display("America/Lima")
     end
   end
 
@@ -159,11 +162,98 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
       assert stack(view) == [restored]
     end
 
+    # Opening a task puts it in the address, so on the rejoin the host has
+    # that task's view open again before the browser hands the frames back:
+    # the kept frames replace it when they start on the same task, never a
+    # view of another task (found 2026-11-26 checking the restore in the
+    # browser: an edit form's draft never came back).
+    test "kept frames replace the address's view of the same task only", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, %{assignment: a}} =
+        Projects.create_task_with_assignment(
+          project.uuid,
+          %{"title" => "A", "ad_hoc" => true},
+          %{}
+        )
+
+      {:ok, %{assignment: b}} =
+        Projects.create_task_with_assignment(
+          project.uuid,
+          %{"title" => "B", "ad_hoc" => true},
+          %{}
+        )
+
+      open = fn view, lv, session ->
+        send(view.pid, {:projects, :opened, %{lv: lv, session: session}})
+        render(view)
+      end
+
+      view = host(conn)
+
+      open.(view, PhoenixKitProjects.Web.AssignmentFormLive, %{
+        "live_action" => "edit",
+        "id" => a.uuid,
+        "project_id" => project.uuid
+      })
+
+      [edit] = stack(view)
+      render_click(view, "close_top_modal", %{"frame-ref" => to_string(edit.frame_ref)})
+
+      # The view of ANOTHER task: kept.
+      open.(view, PhoenixKitProjects.Web.AssignmentViewLive, %{
+        "id" => b.uuid,
+        "project_id" => project.uuid
+      })
+
+      [view_b] = stack(view)
+      render_hook(view, "pkp_restore_stack", %{"frames" => [edit.restore_token]})
+      assert stack(view) == [view_b]
+
+      render_click(view, "close_top_modal", %{"frame-ref" => to_string(view_b.frame_ref)})
+
+      # The view of the SAME task: the kept edit form takes its place.
+      open.(view, PhoenixKitProjects.Web.AssignmentViewLive, %{
+        "id" => a.uuid,
+        "project_id" => project.uuid
+      })
+
+      render_hook(view, "pkp_restore_stack", %{"frames" => [edit.restore_token]})
+      assert [restored] = stack(view)
+      assert restored.lv == PhoenixKitProjects.Web.AssignmentFormLive
+      assert restored.session["id"] == a.uuid
+    end
+
     test "every frame has its pinned ✕ and the offline notice", %{conn: conn} do
       html = open_form(host(conn), fixture_project())
 
       assert html =~ "pkp-frame-close"
       assert html =~ "pkp-offline"
+    end
+
+    # Max, 2026-11-25: the ✕ sat low beside a form's title, and an opening
+    # popup was a thin strip with a spinner. The ✕ is centred on the frame's
+    # header row by a hook; until the frame's LiveView joins, a skeleton
+    # shaped like it holds the place.
+    test "the ✕ follows the frame's header row; a skeleton shaped like the frame is in place",
+         %{conn: conn} do
+      html = open_form(host(conn), fixture_project())
+
+      assert html =~ ~r/id="popup-host-frame-[^"]+-close"[^>]*phx-hook="PkpFrameClose"/s or
+               html =~ ~r/phx-hook="PkpFrameClose"[^>]*id="popup-host-frame-[^"]+-close"/s
+
+      assert html =~ ~s(data-pkp-skeleton="form")
+      refute html =~ "popup-host-frame-spinner"
+      assert html =~ "data-pkp-frame-head"
+    end
+  end
+
+  describe "the zone note's wording" do
+    test "a named zone by its city and current offset; a bare offset as an offset" do
+      assert FormParts.zone_display("Asia/Tokyo") == "Tokyo time (UTC+9)"
+      assert FormParts.zone_display("America/Lima") == "Lima time (UTC−5)"
+      assert FormParts.zone_display("Etc/UTC") == "UTC"
+      assert FormParts.zone_display("5.5") == "UTC+5:30"
     end
   end
 end

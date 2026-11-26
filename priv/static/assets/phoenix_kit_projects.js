@@ -37,6 +37,7 @@
  * PkpCalendarWorkday: a calendar's Week and Day grids open at the start of
  * the work day instead of midnight.
  *
+ * PkpFrameClose: centres the popup's ✕ on the open frame's header row.
  * PkpZone: tells a form the browser's time zone (an IANA name), so a viewer
  * whose profile names none types and reads times in their own zone.
  *
@@ -2256,6 +2257,57 @@
     else document.addEventListener("DOMContentLoaded", startLeafLayer);
   }
 
+  // PkpFrameClose (Max, 2026-11-25: the popup's ✕ "looks too low compared
+  // to the content on the same row"). The ✕ is the popup host's, absolutely
+  // placed over a frame whose header is the frame's own (a form's title, a
+  // task's ref and name), so a fixed `top` only suits one of them. It is
+  // centred on the frame's header row (`[data-pkp-frame-head]`) instead,
+  // again whenever the frame's content or size changes; with no header row
+  // (or before the frame's LiveView has joined) the CSS position stands.
+  var FrameClose = {
+    mounted: function () {
+      var self = this;
+      this.box = this.el.closest(".modal-box") || this.el.parentElement;
+      this.queued = false;
+      this.schedule = function () {
+        if (self.queued) return;
+        self.queued = true;
+        requestAnimationFrame(function () {
+          self.queued = false;
+          self.align();
+        });
+      };
+      if (typeof MutationObserver === "function" && this.box) {
+        this.mo = new MutationObserver(this.schedule);
+        this.mo.observe(this.box, { childList: true, subtree: true });
+      }
+      if (typeof ResizeObserver === "function" && this.box) {
+        this.ro = new ResizeObserver(this.schedule);
+        this.ro.observe(this.box);
+      }
+      this.align();
+    },
+    updated: function () {
+      this.align();
+    },
+    destroyed: function () {
+      if (this.mo) this.mo.disconnect();
+      if (this.ro) this.ro.disconnect();
+    },
+    align: function () {
+      var box = this.box;
+      var head = box && box.querySelector("[data-pkp-frame-head]");
+      if (!head || head.getClientRects().length === 0) {
+        this.el.style.top = "";
+        return;
+      }
+      var b = box.getBoundingClientRect();
+      var h = head.getBoundingClientRect();
+      var top = h.top - b.top + box.scrollTop + (h.height - this.el.offsetHeight) / 2;
+      this.el.style.top = Math.max(4, Math.round(top)) + "px";
+    }
+  };
+
   // PkpZone (Max, 2026-11-25): times in each person's own zone. Sent once
   // per mount; the server keeps a profile's zone over it.
   var Zone = {
@@ -2281,8 +2333,100 @@
   // and types the values back in once the forms are there. Hidden inputs
   // are not replayed: they are the forms' own bookkeeping, and the rich
   // editors' text is theirs to keep.
+  // What the server rendered for each Leaf sync input, noted the moment the
+  // input enters the page. The input is type="hidden", whose value
+  // ATTRIBUTE follows every .value Leaf writes while the person types, so
+  // the attribute cannot say what the server had (grok, 2026-11-25: the
+  // restore never fired in visual mode). A WeakMap keyed by the element:
+  // LiveView keeps the element across patches and would strip a data
+  // attribute it did not render.
+  var serverValues = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function noteServer(sync) {
+    if (serverValues && sync && !serverValues.has(sync)) {
+      serverValues.set(sync, sync.getAttribute("value") || "");
+    }
+  }
+
+  function serverOf(sync) {
+    return serverValues && serverValues.has(sync) ? serverValues.get(sync) : sync.getAttribute("value") || "";
+  }
+
+  function noteSyncInputs(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (root.matches && root.matches("input[data-leaf-sync-input]")) noteServer(root);
+    if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll("input[data-leaf-sync-input]"), noteServer);
+  }
+
+  var watchingSync = false;
+  function watchSyncInputs() {
+    if (watchingSync || typeof MutationObserver !== "function" || !document.body) return;
+    watchingSync = true;
+    noteSyncInputs(document.body);
+    new MutationObserver(function (records) {
+      records.forEach(function (r) {
+        Array.prototype.forEach.call(r.addedNodes || [], noteSyncInputs);
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
+  // The rich (Leaf) editors of one frame: each editor's text as the person
+  // left it (its live sync input; Leaf's markdown textarea as a fallback)
+  // and what the server had rendered for it, so a newer server value is
+  // never overwritten.
+  function keepRich(dialog) {
+    return Array.prototype.slice
+      .call(dialog.querySelectorAll("[data-editor-id]"))
+      .map(function (ed) {
+        var id = ed.dataset.editorId;
+        var md = document.getElementById(id + "-markdown-textarea");
+        var sync = dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + id + '"]');
+        var visual = ed.querySelector("[data-editor-visual]");
+        var markdown = sync ? sync.value : md ? md.value : null;
+        return {
+          id: id,
+          markdown: markdown,
+          html: visual ? visual.innerHTML : null,
+          server: sync ? serverOf(sync) : null
+        };
+      })
+      .filter(function (e) {
+        // Only what the person changed: an untouched editor needs nothing.
+        return e.markdown != null && e.server != null && e.markdown !== e.server;
+      });
+  }
+
+  // Every kept editor of the frame is back (its sync input rendered).
+  function richReady(dialog, kept) {
+    return kept.every(function (e) {
+      return !!dialog.querySelector('[data-editor-id="' + e.id + '"]') &&
+        !!dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + e.id + '"]');
+    });
+  }
+
+  // Puts the kept text back through Leaf's own command (its hook listens
+  // for `phx:leaf-command:<id>` on window), only while the server's value is
+  // still the one the page had. Answers the last sync input it filled, or
+  // null when it restored nothing.
+  function restoreRich(dialog, kept, force) {
+    var last = null;
+    kept.forEach(function (e) {
+      var sync = dialog.querySelector('input[type="hidden"][data-leaf-sync-input="' + e.id + '"]');
+      if (!sync || (!force && serverOf(sync) !== e.server)) return;
+      window.dispatchEvent(new CustomEvent("phx:leaf-command:" + e.id, {
+        detail: { action: "set_content", content: e.markdown, html: e.html || "" }
+      }));
+      // Leaf fills the input itself; set it too, so the form's input event
+      // carries the text even if the editor is in another mode.
+      sync.value = e.markdown;
+      last = sync;
+    });
+    return last;
+  }
+
   var KeepStack = {
     mounted: function () {
+      watchSyncInputs();
       this.read();
     },
     updated: function () {
@@ -2310,6 +2454,11 @@
       var dialogs = this.dialogs();
       this.kept = {
         frames: this.frames,
+        rich: dialogs.map(keepRich),
+        // The record's version as the form had it (`data-pkp-version`).
+        versions: dialogs.map(function (dialog) {
+          return versionOf(dialog.querySelector("form[phx-change]"));
+        }),
         values: dialogs.map(function (dialog) {
           var form = dialog.querySelector("form[phx-change]");
           if (!form) return [];
@@ -2335,50 +2484,119 @@
       var self = this;
       // The rejoin's own render first: the host may have reopened a task
       // from the address, and then nothing is handed back.
+      // The address's task (one view frame) may be back already: the host
+      // hands the kept frames back over it when they start on that task,
+      // and refuses otherwise (`restorable?/2`).
       setTimeout(function () {
         self.read();
-        if (self.frames.length > 0) return;
+        if (self.frames.length > 1) return;
+        if (JSON.stringify(self.frames) === JSON.stringify(kept.frames)) return;
         self.pushEvent("pkp_restore_stack", { frames: kept.frames });
         self.replay(kept, 0);
       }, 50);
     },
-    // Waits (up to ~10 s) for the restored frames' forms, then types the
-    // kept values back in, one input event per form so the server hears it.
-    replay: function (kept, tries) {
-      var values = kept.values;
+    // Waits (up to ~10 s) for the restored frames, then types each frame's
+    // kept values back in as soon as THAT frame is ready (its form, and its
+    // rich editors if it had kept text), one input event per form so the
+    // server hears it. Nothing goes in until the host shows exactly the
+    // frames that were kept (a different stack is not ours to fill). A frame
+    // whose editor never comes back no longer holds the others up (kimi): at
+    // the deadline its plain values still go in.
+    replay: function (kept, tries, done) {
       var self = this;
+      var values = kept.values;
+      var rich = kept.rich || [];
+      done = done || [];
       var dialogs = this.dialogs();
-      var ready =
-        JSON.stringify(this.frames) === JSON.stringify(kept.frames) &&
-        dialogs.length === values.length &&
-        dialogs.every(function (d, i) {
-          return !values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]");
-        });
-      if (!ready) {
-        if (tries < 50) setTimeout(function () { self.replay(kept, tries + 1); }, 200);
+      var last = tries >= 50;
+      if (JSON.stringify(this.frames) !== JSON.stringify(kept.frames) || dialogs.length !== values.length) {
+        if (!last) setTimeout(function () { self.replay(kept, tries + 1, done); }, 200);
         return;
       }
-      dialogs.forEach(function (dialog, i) {
-        var saved = values[i] || [];
-        var form = dialog.querySelector("form[phx-change]");
-        if (!form || saved.length === 0) return;
-        var last = null;
-        saved.forEach(function (field) {
-          var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
-          Array.prototype.forEach.call(els, function (el) {
-            if (el.type === "hidden") return;
-            if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
-              if (el.value === field.value) el.checked = field.checked;
-            } else if (el.type !== "checkbox" && el.type !== "radio") {
-              el.value = field.value;
-            }
-            last = el;
-          });
-        });
-        if (last) last.dispatchEvent(new Event("input", { bubbles: true }));
-      });
+      var pending = false;
+      for (var i = 0; i < values.length; i++) {
+        if (done[i]) continue;
+        var d = dialogs[i];
+        var formReady = d && (!values[i] || values[i].length === 0 || d.querySelector(".phx-connected form[phx-change]"));
+        var richOk = d && richReady(d, rich[i] || []);
+        if (formReady && (richOk || last)) {
+          replayFrame(d, values[i] || [], richOk ? rich[i] || [] : [], (kept.versions || [])[i]);
+          done[i] = true;
+        } else {
+          pending = true;
+        }
+      }
+      if (pending && !last) {
+        setTimeout(function () { self.replay(kept, tries + 1, done); }, 200);
+      }
     }
   };
+
+  // A frame's kept values go back while its record is the version they
+  // were typed against. If the record changed meanwhile (another person's
+  // save, or this person's own autosave landing late), nothing is applied
+  // on its own: the form says so and offers the edits back (the panel,
+  // 2026-11-26: codex, zai, grok — a reconnect must never write a stale
+  // draft over a newer save by itself; a per-field guard could not tell).
+  function replayFrame(dialog, saved, kept, version) {
+    var form = dialog.querySelector("form[phx-change]");
+    var now = versionOf(form);
+    if (version && now && version !== now) {
+      offerKept(dialog, form, saved, kept);
+      return;
+    }
+    applyKept(dialog, saved, kept, false);
+  }
+
+  function versionOf(form) {
+    return form && typeof form.getAttribute === "function" ? form.getAttribute("data-pkp-version") : null;
+  }
+
+  function keptDiffers(form, saved, kept) {
+    if (kept.length > 0) return true;
+    return saved.some(function (field) {
+      var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
+      return Array.prototype.some.call(els, function (el) {
+        if (el.type === "hidden") return false;
+        if (field.checked !== null) return el.value === field.value && el.checked !== field.checked;
+        return el.value !== field.value;
+      });
+    });
+  }
+
+  function offerKept(dialog, form, saved, kept) {
+    if (!form || !keptDiffers(form, saved, kept)) return;
+    var note = dialog.querySelector("[data-pkp-kept-note]");
+    if (!note) return;
+    note.hidden = false;
+    var button = note.querySelector("[data-pkp-apply-kept]");
+    if (button) {
+      button.onclick = function () {
+        note.hidden = true;
+        applyKept(dialog, saved, kept, true);
+      };
+    }
+  }
+
+  function applyKept(dialog, saved, kept, force) {
+    var form = dialog.querySelector("form[phx-change]");
+    var restoredRich = restoreRich(dialog, kept, force);
+    if (!form || (saved.length === 0 && !restoredRich)) return;
+    var last = restoredRich;
+    saved.forEach(function (field) {
+      var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
+      Array.prototype.forEach.call(els, function (el) {
+        if (el.type === "hidden") return;
+        if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
+          if (el.value === field.value) el.checked = field.checked;
+        } else if (el.type !== "checkbox" && el.type !== "radio") {
+          el.value = field.value;
+        }
+        last = el;
+      });
+    });
+    if (last) last.dispatchEvent(new Event("input", { bubbles: true }));
+  }
 
   // ── PkpListDrag: the card list's drag, levels included ─────────────
   //
@@ -2398,8 +2616,11 @@
   // A filtered list (rows hidden) keeps the old sibling-only reorder: the
   // row above on screen is not necessarily the row above in the plan.
   // The server does the move (`list_drop` → `Outline.move/3`) and redraws
-  // the list; a refused move answers `pkp-list:revert` and the cards go
-  // back where they were.
+  // the list. The drop is optimistic: the cards stay where they were
+  // dropped, at their new levels, which is what the server draws, so its
+  // patch moves nothing (a reset to the old place first made the card jump
+  // back and forth — Max, 2026-11-25). A refused move answers
+  // `pkp-list:revert` and the cards go back where they were.
   var LIST_STYLE_ID = "pkp-list-drag-style";
   var LIST_CSS = [
     ".pkp-list-lifted{display:none!important}",
@@ -2466,6 +2687,88 @@
     };
   }
 
+  // The card of a list row (the element the server gives `pkp-row-card` at
+  // the top level).
+  function rowCard(item) {
+    return item && item.querySelector(":scope > .card, :scope > [data-pkp-card]");
+  }
+
+  // A row's level as the server draws it: its indent, `data-depth`, and the
+  // top-level card's reach into the arrows' gutter (`pkp-row-card`).
+  function saveRowLevel(row) {
+    var card = rowCard(row);
+    return {
+      el: row, margin: row.style.marginLeft, depth: row.dataset.depth,
+      card: card, rowCard: !!(card && card.classList.contains("pkp-row-card"))
+    };
+  }
+
+  function restoreRowLevel(st) {
+    st.el.style.marginLeft = st.margin;
+    if (st.depth == null) delete st.el.dataset.depth;
+    else st.el.dataset.depth = st.depth;
+    if (st.card) st.card.classList.toggle("pkp-row-card", st.rowCard);
+  }
+
+  function setRowLevel(row, depth) {
+    row.style.marginLeft = (depth * 2) + "rem";
+    row.dataset.depth = String(depth);
+    // Every level carries the gutter (`pkp-row-card`), so the class no
+    // longer changes with the level.
+  }
+
+  // The optimistic landing of a drop that moves: the card at its new
+  // level, the subtasks it carried right under it, each shifted by as many
+  // levels as the card. Answers each row's level as it was, for a refusal.
+  function landListMove(d, target) {
+    var shift = target.depth - d.start.depth;
+    var saved = [d.savedItem].concat(d.lifted.map(saveRowLevel));
+    setRowLevel(d.item, target.depth);
+    var ref = d.item;
+    d.lifted.forEach(function (n) {
+      ref.after(n);
+      ref = n;
+      n.classList.remove("pkp-list-lifted");
+      setRowLevel(n, (parseInt(n.dataset.depth || "0", 10) || 0) + shift);
+    });
+    return saved;
+  }
+
+  // A refused drop: the card back where it was picked up (next to the row it
+  // sat beside, so a row another session added keeps its place), the branch
+  // it carried back under it, every row at its old level.
+  function revertListMove(container, last) {
+    var item = last.item;
+    if (!item || !item.isConnected) return;
+    var moving = (last.saved || []).map(function (st) { return st.el; });
+    var anchored = function (n) { return n && n.isConnected && n !== item && moving.indexOf(n) < 0; };
+    // Redrawn: the other rows are no longer the ones, in the order, they
+    // were when the drag began, so the refusal's reload has drawn the list
+    // as the server has it (another session's change included) and that
+    // is where the card already is. Only the levels go back; moving it
+    // next to an old neighbour jumped over the new rows (grok, 2026-11-26).
+    if (last.others) {
+      var now = Array.prototype.filter.call(container.children, function (n) {
+        return n !== item && moving.indexOf(n) < 0 && !(n.matches && !n.matches(".sortable-item"));
+      });
+      var same = now.length === last.others.length &&
+        now.every(function (n, i) { return n === last.others[i]; });
+      if (!same) {
+        (last.saved || []).forEach(function (st) { if (st.el.isConnected) restoreRowLevel(st); });
+        return;
+      }
+    }
+    if (anchored(last.next)) container.insertBefore(item, last.next);
+    else if (anchored(last.prev)) last.prev.after(item);
+    else container.insertBefore(item, container.children[last.index] || null);
+    var ref = item;
+    (last.saved || []).forEach(function (st) {
+      if (!st.el.isConnected) return;
+      if (st.el !== item) { ref.after(st.el); ref = st.el; }
+      restoreRowLevel(st);
+    });
+  }
+
   var ListDrag = {
     mounted: function () {
       var self = this;
@@ -2483,11 +2786,7 @@
         var last = self.lastMove;
         if (!payload || !last || last.id !== payload.uuid) return;
         self.lastMove = null;
-        var item = last.item;
-        if (!item || !item.isConnected) return;
-        if (last.next && last.next.isConnected && last.next !== item) self.el.insertBefore(item, last.next);
-        else if (last.prev && last.prev.isConnected) last.prev.after(item);
-        else self.el.insertBefore(item, self.el.children[last.index] || null);
+        revertListMove(self.el, last);
       });
       loadSortable().then(function () {
         if (!self.gone) self.init();
@@ -2512,6 +2811,7 @@
         pointerX = xOf(e);
         if (self.dragging) self.preview();
       };
+      this.track = track;
       // The press itself is the origin of the sideways distance: SortableJS
       // starts a drag from inside its own move handler, so a listener added
       // in onStart never saw where the pointer began (every first drag read
@@ -2539,7 +2839,12 @@
           var nest = el.dataset.nest === "true";
           var start = rowInfo(item);
           // The branch moves together: its rows leave the list meanwhile.
+          // The list keeps its height while they are out (Max, 2026-11-25:
+          // a drop "scrolls to the top of the task list" — lifting a long
+          // branch shortened the page, the browser pulled the scroll up to
+          // fit, and it stayed there when the rows came back).
           var lifted = [];
+          el.style.minHeight = el.offsetHeight + "px";
           if (nest) {
             var n = item.nextElementSibling;
             while (n && n.matches(".sortable-item") && rowInfo(n).depth > start.depth) {
@@ -2552,15 +2857,27 @@
           // and its neighbours, to put it back on a refusal.
           var startRows = listRows(el).map(rowInfo);
           var startIdx = startRows.findIndex(function (r) { return r.id === start.id; });
+          // The row after its whole branch: the branch moves with the card
+          // now, so its first subtask is no anchor to come back to.
+          var after = lifted.length ? lifted[lifted.length - 1].nextElementSibling : item.nextElementSibling;
           self.lastMove = {
             id: start.id, item: item,
-            // Its own subtasks stay in place while it moves: back before them.
-            prev: item.previousElementSibling, next: item.nextElementSibling,
-            index: Array.prototype.indexOf.call(el.children, item)
+            prev: item.previousElementSibling, next: after,
+            index: Array.prototype.indexOf.call(el.children, item),
+            // The other rows as they stand, to tell a redraw on a refusal.
+            others: Array.prototype.filter.call(el.children, function (n) {
+              return n !== item && lifted.indexOf(n) < 0 && n.matches(".sortable-item");
+            })
           };
           self.dragging = {
             item: item, nest: nest, start: start, lifted: lifted,
             startX: downX, margin: item.style.marginLeft,
+            // A top-level card reaches into the arrows' gutter
+            // (`pkp-row-card`, -2rem) and a subtask's does not: the
+            // preview gives the card the class its landing level will
+            // have, or the indent was cancelled ("not deep enough", Max).
+            card: rowCard(item), rowCard: !!(rowCard(item) && rowCard(item).classList.contains("pkp-row-card")),
+            savedItem: saveRowLevel(item),
             from: startIdx >= 0 ? listDropTarget(startRows, startIdx, start.depth, 0, self.indentPx()) : null
           };
           el.classList.add("pkp-list-dragging");
@@ -2575,14 +2892,32 @@
           document.removeEventListener("touchmove", track, true);
           el.classList.remove("pkp-list-dragging");
           self.clearParentMark();
-          if (!d) return;
+          // Released once the branch is back (below, in this same task), so
+          // the page never gets shorter than it was.
+          var releaseHeight = function () { el.style.minHeight = ""; };
+          if (!d) { releaseHeight(); return; }
           var id = d.start.id;
           // Measured while the branch's subtasks are still out of the list,
           // as the preview was (unhiding them first put the row below back
           // and undid the level the card had shown).
           var target = d.nest ? self.target(d) : null;
-          d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
-          d.item.style.marginLeft = d.margin;
+          var moves = d.nest && target && !(d.from && d.from.parent === target.parent && d.from.after === target.after);
+
+          if (moves) {
+            // Optimistic (Max, 2026-11-25: the card "in its old place for a
+            // bit, then the new place" — a stutter): the card stays where it
+            // was dropped, at its new level, with its subtasks right under
+            // it, each moved by as many levels as the card. That is what the
+            // server draws next, so its patch changes nothing on screen. A
+            // refusal (`pkp-list:revert`) puts every row back as saved.
+            var saved = landListMove(d, target);
+            if (self.lastMove && self.lastMove.id === d.start.id) self.lastMove.saved = saved;
+          } else {
+            d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
+            d.item.style.marginLeft = d.margin;
+            if (d.card) d.card.classList.toggle("pkp-row-card", d.rowCard);
+          }
+          releaseHeight();
 
           if (!d.nest) {
             if (evt.oldIndex === evt.newIndex) return;
@@ -2592,8 +2927,7 @@
           }
 
           // The row vanished under the drag (a patch replaced it): no guess.
-          if (!target) return;
-          if (d.from && d.from.parent === target.parent && d.from.after === target.after) return;
+          if (!moves) return;
           self.pushEvent(el.dataset.dropEvent || "list_drop", {
             id: id, parent: target.parent, after: target.after
           });
@@ -2635,12 +2969,46 @@
         this.el.removeEventListener("pointerdown", this.onDown, true);
         this.el.removeEventListener("touchstart", this.onDown, true);
       }
+      // Gone mid-drag (a patch or a page change): Sortable's destroy runs no
+      // `onEnd`, so the lifted branch, the held height and the drag's
+      // listeners would stay behind (grok, 2026-11-26).
+      var d = this.dragging;
+      this.dragging = null;
+      if (d) {
+        d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
+        this.el.style.minHeight = "";
+        this.el.classList.remove("pkp-list-dragging");
+        // What only Sortable's own drop removes: the floating copy on the
+        // body and the classes on the card (grok's re-review).
+        d.item.classList.remove("pkp-list-ghost", "sortable-chosen", "sortable-ghost");
+        Array.prototype.forEach.call(document.querySelectorAll("body > .sortable-fallback"), function (n) {
+          n.parentNode.removeChild(n);
+        });
+        this.clearParentMark();
+        if (this.track) {
+          document.removeEventListener("pointermove", this.track, true);
+          document.removeEventListener("touchmove", this.track, true);
+        }
+      }
       if (this.sortable) { this.sortable.destroy(); this.sortable = null; }
     }
   };
 
   window.PhoenixKitProjectsInternals = window.PhoenixKitProjectsInternals || {};
   window.PhoenixKitProjectsInternals.listDropTarget = listDropTarget;
+  window.PhoenixKitProjectsInternals.landListMove = landListMove;
+  window.PhoenixKitProjectsInternals.revertListMove = revertListMove;
+  window.PhoenixKitProjectsInternals.saveRowLevel = saveRowLevel;
+  window.PhoenixKitProjectsInternals.keepRich = keepRich;
+  window.PhoenixKitProjectsInternals.restoreRich = restoreRich;
+  window.PhoenixKitProjectsInternals.noteServer = noteServer;
+  window.PhoenixKitProjectsInternals.keepStackReplay = function (values, rich, versions) {
+    var hook = Object.create(KeepStack);
+    hook.dialogs = function () {
+      return Array.prototype.slice.call(document.querySelectorAll("dialog[data-frame-ref]"));
+    };
+    hook.replay({ values: values, rich: rich, versions: versions, frames: hook.frames }, 50);
+  };
 
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,
@@ -2656,6 +3024,7 @@
     PkpUrlMirror: UrlMirror,
     PkpCalendarWorkday: CalendarWorkday,
     PkpZone: Zone,
+    PkpFrameClose: FrameClose,
     PkpKeepStack: KeepStack
   };
 })();

@@ -7336,7 +7336,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                      contents stay where they are. --%>
                 <div class={[
                   "flex-1 min-w-0 card bg-base-100 shadow-sm border transition-colors hover:border-primary/50 hover:bg-base-200/40",
-                  Map.get(ol_depths, a.uuid, 0) == 0 && "pkp-row-card",
+                  # Every level has the arrows' gutter built in (Max,
+                  # 2026-11-25): a subtask's card without it started its
+                  # handle and title left of its parent's, so nesting read
+                  # as "the same place" and a drop one level in barely moved.
+                  "pkp-row-card",
                   if(not @is_template and a.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"),
                   assigns[:focus_task] == a.uuid && "ring-2 ring-primary"
                 ]}>

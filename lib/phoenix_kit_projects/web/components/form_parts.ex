@@ -87,7 +87,11 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
     ~H"""
     <%!-- Without its own ✕ the header sits in a popup whose ✕ is pinned at
          the top right: leave it that room. --%>
-    <header id={@id} class={["flex items-center gap-2 min-w-0 shrink-0", !@close_event && "pr-8"]}>
+    <header
+      id={@id}
+      data-pkp-frame-head
+      class={["flex items-center gap-2 min-w-0 shrink-0", !@close_event && "pr-8"]}
+    >
       {render_slot(@context)}
       <h2
         id={@title_id || "#{@id}-title"}
@@ -120,42 +124,83 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   @doc """
   Which zone the form's times are in (Max, 2026-11-25): the viewer's own —
   their profile's, else their browser's (the `PkpZone` hook on this line
-  reports it once; the form hands it to `L10n.use_browser_zone/2`) — and
-  the site's too when it differs. `zone` is the form's `@viewer_zone`
-  assign, passed so the line redraws when the browser's zone arrives.
+  reports it once; the form hands it to `L10n.use_browser_zone/2`). `zone`
+  is the form's `@viewer_zone` assign, passed so the line redraws when the
+  browser's zone arrives.
+
+  Said plainly (Max, 2026-11-25: "Times are in (UTC+02:00) Europe/Tallinn ·
+  the site uses UTC+00:00" did not say what he was seeing or what would be
+  saved; wording settled with codex and zai): the zone by its city and
+  current offset, and that everyone else sees the same moment in their own
+  time. The site's default zone is left out — it only applies to someone
+  with no zone at all, and naming it read as "this will be saved in UTC".
   """
   attr(:id, :string, required: true)
   attr(:zone, :string, default: nil)
   attr(:class, :any, default: nil)
 
   def zone_note(assigns) do
-    viewer = assigns.zone || L10n.viewer_zone()
-    site = L10n.site_zone()
-
     assigns =
-      assign(assigns,
-        viewer_label: zone_name(viewer || site),
-        site_label:
-          if(is_binary(viewer) and viewer != site and not same_zone?(viewer, site),
-            do: zone_name(site)
-          )
+      assign(
+        assigns,
+        :zone_label,
+        zone_display(assigns.zone || L10n.viewer_zone() || L10n.site_zone())
       )
 
     ~H"""
     <p id={@id} phx-hook="PkpZone" class={["flex flex-wrap items-center gap-1 text-xs text-base-content/60", @class]}>
       <.icon name="hero-globe-alt" class="w-3.5 h-3.5 shrink-0" />
-      <span>{gettext("Times are in %{zone}", zone: @viewer_label)}</span>
-      <span :if={@site_label}>· {gettext("the site uses %{zone}", zone: @site_label)}</span>
+      <span>
+        {gettext("You see and enter times in %{zone}; others see them in their own time.",
+          zone: @zone_label
+        )}
+      </span>
     </p>
     """
   end
 
-  defp zone_name(value), do: TimeZone.label(value)
+  @doc false
+  # "Tallinn time (UTC+2)" for a named zone, "UTC+2" for a bare offset, the
+  # offset in effect now (it follows summer time).
+  @spec zone_display(String.t() | nil) :: String.t()
+  def zone_display(zone) do
+    offset = utc_offset_label(safe_offset(zone))
 
-  defp same_zone?(a, b) do
-    TimeZone.effectively_same?(a, b)
+    case zone_city(zone) do
+      nil -> offset
+      city -> gettext("%{city} time (%{offset})", city: city, offset: offset)
+    end
+  end
+
+  defp safe_offset(zone) do
+    TimeZone.offset_seconds(zone)
   rescue
-    _ -> false
+    _ -> 0
+  end
+
+  defp zone_city(zone) when is_binary(zone) do
+    case String.split(zone, "/") do
+      [area | [_ | _] = rest] when area not in ["Etc"] ->
+        rest |> List.last() |> String.replace("_", " ")
+
+      _ ->
+        nil
+    end
+  end
+
+  defp zone_city(_), do: nil
+
+  defp utc_offset_label(0), do: "UTC"
+
+  defp utc_offset_label(seconds) when is_integer(seconds) do
+    sign = if seconds < 0, do: "−", else: "+"
+    abs = abs(seconds)
+    hours = div(abs, 3600)
+    minutes = div(rem(abs, 3600), 60)
+
+    if minutes == 0,
+      do: "UTC#{sign}#{hours}",
+      else: "UTC#{sign}#{hours}:#{String.pad_leading(Integer.to_string(minutes), 2, "0")}"
   end
 
   # ── Tabs ───────────────────────────────────────────────────────────

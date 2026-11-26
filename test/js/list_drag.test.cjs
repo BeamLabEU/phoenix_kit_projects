@@ -19,7 +19,7 @@ function stub() {
 
 function load() {
   const document = stub();
-  const window = { document, addEventListener() {}, removeEventListener() {} };
+  const window = { document, addEventListener() {}, removeEventListener() {}, CSS: { escape: (s) => s } };
   window.window = window;
   const ctx = vm.createContext({
     window, document, console, CSS: { escape: (s) => s },
@@ -28,8 +28,11 @@ function load() {
   });
   const src = fs.readFileSync(path.join(__dirname, "../../priv/static/assets/phoenix_kit_projects.js"), "utf8");
   vm.runInContext(src, ctx);
+  loaded = window;
   return window.PhoenixKitProjectsInternals.listDropTarget;
 }
+
+let loaded = null;
 
 // The bundle runs in its own context: plain copies, so its objects compare.
 const raw = load();
@@ -92,4 +95,123 @@ test("a dragged row's own subtasks are left out: dropping it in place changes no
   // With X's subtask X1 still in the list the row below would force a level.
   const unlifted = [r("A", 0), r("X", 0), r("X1", 1), r("B", 0)];
   assert.equal(target(unlifted, 1, 0, 0, I).depth, 1);
+});
+
+
+// The preview's card: every card has the arrows' gutter built in
+// (`pkp-row-card`, Max 2026-11-25: a subtask's card without it started left
+// of its parent's title), so the preview only indents the row; the class
+// stays whatever the level.
+function fakeClassList(initial) {
+  const set = new Set(initial);
+  return {
+    contains: (c) => set.has(c),
+    add: (c) => set.add(c),
+    remove: (c) => set.delete(c),
+    toggle: (c, on) => (on ? set.add(c) : set.delete(c)),
+    has: (c) => set.has(c)
+  };
+}
+
+function previewAt(depth, cardClasses) {
+  const hook = loaded.PhoenixKitProjectsHooks.PkpListDrag;
+  const card = { classList: fakeClassList(cardClasses) };
+  const item = { style: { marginLeft: "" } };
+  const self = {
+    el: { querySelector: () => null, querySelectorAll: () => [] },
+    dragging: { item, nest: true, card, rowCard: cardClasses.includes("pkp-row-card") },
+    target: () => ({ depth, parent: depth > 0 ? "P" : null, after: null }),
+    clearParentMark: hook.clearParentMark
+  };
+  hook.preview.call(self);
+  return { margin: item.style.marginLeft, rowCard: card.classList.has("pkp-row-card") };
+}
+
+test("a top-level card previewed one level in keeps its gutter, indented a level", () => {
+  assert.deepEqual(previewAt(1, ["card", "pkp-row-card"]), { margin: "2rem", rowCard: true });
+});
+
+test("a subtask previewed at the top level keeps its gutter, at the top", () => {
+  assert.deepEqual(previewAt(0, ["card", "pkp-row-card"]), { margin: "0rem", rowCard: true });
+});
+
+
+// The drop itself is optimistic (Max, 2026-11-25: dropping a task showed it
+// "in its old place for a bit and then it going to the new place"): a drop
+// that moves leaves every row as the server will draw it — the card at its
+// new level, the subtasks it carried right under it, shifted by as many
+// levels — and a refusal puts each row back as it was.
+function fakeList(spec) {
+  const list = { children: [] };
+  const at = (n) => list.children.indexOf(n);
+  list.insertBefore = (n, ref) => {
+    const i = at(n);
+    if (i >= 0) list.children.splice(i, 1);
+    const j = ref ? at(ref) : -1;
+    list.children.splice(j >= 0 ? j : list.children.length, 0, n);
+  };
+  const rows = spec.map(([id, depth]) => {
+    const card = { classList: fakeClassList(["card", "pkp-row-card"]) };
+    const row = {
+      id,
+      dataset: { id, depth: String(depth) },
+      style: { marginLeft: depth * 2 + "rem" },
+      classList: fakeClassList([]),
+      isConnected: true,
+      querySelector: () => card,
+      card,
+      after(n) {
+        const i = at(n);
+        if (i >= 0) list.children.splice(i, 1);
+        list.children.splice(at(row) + 1, 0, n);
+      }
+    };
+    list.children.push(row);
+    return row;
+  });
+  const byId = Object.fromEntries(rows.map((x) => [x.id, x]));
+  const state = () =>
+    list.children.map((x) => `${x.id}:${x.dataset.depth}:${x.style.marginLeft}:${x.card.classList.has("pkp-row-card") ? "gutter" : "-"}`);
+  return { list, byId, state };
+}
+
+const internals = () => loaded.PhoenixKitProjectsInternals;
+
+test("a drop that nests leaves the card and its branch as the server draws them", () => {
+  // A, B (with subtask B1), C — B dragged under A, B1 carried along.
+  const { list, byId, state } = fakeList([["A", 0], ["B", 0], ["B1", 1], ["C", 0]]);
+  const { saveRowLevel, landListMove } = internals();
+  const B = byId.B;
+  const d = { item: B, start: { id: "B", depth: 0 }, lifted: [byId.B1], savedItem: saveRowLevel(B) };
+  // While dragging the branch's row is out of the list; the card sits after A.
+  list.children.splice(list.children.indexOf(byId.B1), 1);
+  list.children.push(byId.B1); // wherever the lift left it
+  landListMove(d, { depth: 1, parent: "A", after: null });
+  assert.deepEqual(state(), ["A:0:0rem:gutter", "B:1:2rem:gutter", "B1:2:4rem:gutter", "C:0:0rem:gutter"]);
+});
+
+test("a refused drop puts every row back at its old place and level", () => {
+  const { list, byId, state } = fakeList([["A", 0], ["B", 0], ["B1", 1], ["C", 0]]);
+  const { saveRowLevel, landListMove, revertListMove } = internals();
+  const before = state();
+  const B = byId.B;
+  // As onStart records it: the row after the whole branch.
+  const last = { item: B, prev: byId.A, next: byId.C, index: 1 };
+  const d = { item: B, start: { id: "B", depth: 0 }, lifted: [byId.B1], savedItem: saveRowLevel(B) };
+  // Dragged below C, out one level would be impossible; take: B after C, nested under C.
+  list.insertBefore(B, null);
+  last.saved = landListMove(d, { depth: 1, parent: "C", after: null });
+  assert.deepEqual(state(), ["A:0:0rem:gutter", "C:0:0rem:gutter", "B:1:2rem:gutter", "B1:2:4rem:gutter"]);
+  revertListMove(list, last);
+  assert.deepEqual(state(), before);
+});
+
+test("a subtask dropped out to the top level lands at the top, gutter and all", () => {
+  const { list, byId, state } = fakeList([["A", 0], ["A1", 1], ["B", 0]]);
+  const { saveRowLevel, landListMove } = internals();
+  const A1 = byId.A1;
+  const d = { item: A1, start: { id: "A1", depth: 1 }, lifted: [], savedItem: saveRowLevel(A1) };
+  list.insertBefore(A1, null); // dropped last
+  landListMove(d, { depth: 0, parent: null, after: "B" });
+  assert.deepEqual(state(), ["A:0:0rem:gutter", "B:0:0rem:gutter", "A1:0:0rem:gutter"]);
 });

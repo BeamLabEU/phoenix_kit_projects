@@ -79,7 +79,12 @@ test("nothing happens without an open dialog, or for a part already inside it", 
 });
 
 test("reconnect captures only forms owned by this popup host", () => {
-  const own = { closest: () => host, querySelector: () => ({ elements: [{ name: "title", value: "Mine" }] }) };
+  const own = {
+    closest: () => host,
+    querySelector: () => ({ elements: [{ name: "title", value: "Mine" }] }),
+    // The rich-editor capture reads each kept dialog's editors.
+    querySelectorAll: () => []
+  };
   const nested = { closest: () => nestedHost, querySelector: () => assert.fail("read a nested host's form") };
   const nestedHost = {};
   const host = { querySelectorAll: () => [own, nested] };
