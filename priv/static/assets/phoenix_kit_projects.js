@@ -2352,10 +2352,37 @@
     return serverValues && serverValues.has(sync) ? serverValues.get(sync) : sync.getAttribute("value") || "";
   }
 
+  // The same for the plain fields: what the server rendered into each one
+  // when it entered the page (its value attribute then; a later echo of
+  // what was typed changes the attribute, not this). A reconnect puts a
+  // kept value back only while the new form came with that same value, so
+  // a value the server gained meanwhile is never typed over (grok,
+  // 2026-11-26: the plain fields were written back unconditionally).
+  var fieldValues = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function fieldDefault(el) {
+    if (el.type === "checkbox" || el.type === "radio") return String(!!el.defaultChecked);
+    if (el.tagName === "SELECT") {
+      return Array.prototype.filter.call(el.options || [], function (o) { return o.defaultSelected; })
+        .map(function (o) { return o.value; }).join("\n");
+    }
+    return el.defaultValue == null ? "" : String(el.defaultValue);
+  }
+
+  function noteField(el) {
+    if (fieldValues && el && !fieldValues.has(el)) fieldValues.set(el, fieldDefault(el));
+  }
+
+  function fieldServerOf(el) {
+    return fieldValues && fieldValues.has(el) ? fieldValues.get(el) : null;
+  }
+
   function noteSyncInputs(root) {
     if (!root || root.nodeType !== 1) return;
     if (root.matches && root.matches("input[data-leaf-sync-input]")) noteServer(root);
     if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll("input[data-leaf-sync-input]"), noteServer);
+    if (root.matches && root.matches("input, textarea, select")) noteField(root);
+    if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll("input, textarea, select"), noteField);
   }
 
   var watchingSync = false;
@@ -2467,7 +2494,11 @@
               return {
                 name: el.name,
                 value: el.value,
-                checked: el.type === "checkbox" || el.type === "radio" ? el.checked : null
+                checked: el.type === "checkbox" || el.type === "radio" ? el.checked : null,
+                server: fieldServerOf(el),
+                // What the server last rendered into it (an autosave, an
+                // echo of the typing): also a value that is "ours".
+                echo: fieldDefault(el)
               };
             });
         })
@@ -2533,6 +2564,10 @@
       var els = form.querySelectorAll('[name="' + field.name.replace(/"/g, '\\"') + '"]');
       Array.prototype.forEach.call(els, function (el) {
         if (el.type === "hidden") return;
+        // The server's value moved on while we were away (neither what the
+        // field came with nor what it last showed us): its, not ours.
+        var now = fieldServerOf(el);
+        if (field.server != null && now != null && now !== field.server && now !== field.echo) return;
         if (field.checked !== null && (el.type === "checkbox" || el.type === "radio")) {
           if (el.value === field.value) el.checked = field.checked;
         } else if (el.type !== "checkbox" && el.type !== "radio") {
@@ -2688,7 +2723,15 @@
     if (!item || !item.isConnected) return;
     var moving = (last.saved || []).map(function (st) { return st.el; });
     var anchored = function (n) { return n && n.isConnected && n !== item && moving.indexOf(n) < 0; };
-    if (anchored(last.next)) container.insertBefore(item, last.next);
+    var at = function (n) { return Array.prototype.indexOf.call(container.children, n); };
+    // Already between its old neighbours: the server's redraw (a refusal
+    // reloads the list) has put it back, maybe with a row another session
+    // added beside it, which a move to "just before the old next" would
+    // jump over (grok, 2026-11-26). Only its level and branch are put back.
+    var between = anchored(last.prev) && anchored(last.next) &&
+      at(last.prev) < at(item) && at(item) < at(last.next);
+    if (between) { /* in place */ }
+    else if (anchored(last.next)) container.insertBefore(item, last.next);
     else if (anchored(last.prev)) last.prev.after(item);
     else container.insertBefore(item, container.children[last.index] || null);
     var ref = item;
@@ -2741,6 +2784,7 @@
         pointerX = xOf(e);
         if (self.dragging) self.preview();
       };
+      this.track = track;
       // The press itself is the origin of the sideways distance: SortableJS
       // starts a drag from inside its own move handler, so a listener added
       // in onStart never saw where the pointer began (every first drag read
@@ -2894,6 +2938,20 @@
         this.el.removeEventListener("pointerdown", this.onDown, true);
         this.el.removeEventListener("touchstart", this.onDown, true);
       }
+      // Gone mid-drag (a patch or a page change): Sortable's destroy runs no
+      // `onEnd`, so the lifted branch, the held height and the drag's
+      // listeners would stay behind (grok, 2026-11-26).
+      var d = this.dragging;
+      this.dragging = null;
+      if (d) {
+        d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
+        this.el.style.minHeight = "";
+        this.el.classList.remove("pkp-list-dragging");
+        if (this.track) {
+          document.removeEventListener("pointermove", this.track, true);
+          document.removeEventListener("touchmove", this.track, true);
+        }
+      }
       if (this.sortable) { this.sortable.destroy(); this.sortable = null; }
     }
   };
@@ -2906,6 +2964,7 @@
   window.PhoenixKitProjectsInternals.keepRich = keepRich;
   window.PhoenixKitProjectsInternals.restoreRich = restoreRich;
   window.PhoenixKitProjectsInternals.noteServer = noteServer;
+  window.PhoenixKitProjectsInternals.noteField = noteField;
   window.PhoenixKitProjectsInternals.keepStackReplay = function (values, rich) {
     var hook = Object.create(KeepStack);
     hook.dialogs = function () {

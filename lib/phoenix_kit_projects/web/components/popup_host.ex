@@ -127,8 +127,12 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
          like the frame that is coming. It fades in after 150 ms, so a
          fast load never flashes it. Pure CSS: no message has to arrive
          for it to go. */
+      /* One `:has()` with `:empty`: a `:has()` inside another is invalid
+         CSS, and the browser dropped the whole rule, so the skeleton never
+         showed (grok, 2026-11-26). The container LiveView renders before
+         the frame joins has no children and no text. */
       .pkp-frame .pkp-skel { display: none; }
-      .pkp-frame *:has(> [data-phx-session]:not(:has(*))) > .pkp-skel {
+      .pkp-frame *:has(> [data-phx-session]:empty) > .pkp-skel {
         display: block;
         animation: pkp-skel-in 160ms ease-out 150ms both;
       }
