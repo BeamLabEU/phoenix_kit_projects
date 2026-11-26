@@ -17,7 +17,7 @@ defmodule PhoenixKitProjects.Web.Components.VizPalette do
   @doc "The palette's `<style>`; render it once on the page."
   def viz_palette(assigns) do
     ~H"""
-    <style>
+    <style nonce={PhoenixKitProjects.Web.CSP.nonce(:style)}>
       .pk-hours-viz{--pkh-0:#8a8985;--pkh-1:#2a78d6;--pkh-2:#eb6834;--pkh-3:#1baf7a;--pkh-4:#eda100;--pkh-5:#e87ba4;--pkh-6:#008300;--pkh-7:#4a3aa7}
       [data-theme*="dark"] .pk-hours-viz,[data-theme="night"] .pk-hours-viz,[data-theme="dim"] .pk-hours-viz{--pkh-0:#8a8985;--pkh-1:#3987e5;--pkh-2:#d95926;--pkh-3:#199e70;--pkh-4:#c98500;--pkh-5:#d55181;--pkh-6:#008300;--pkh-7:#9085e9}
     </style>

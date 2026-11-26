@@ -3246,28 +3246,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <% "activity" -> %>
             {live_render(@socket, PhoenixKitProjects.Web.ProjectHistoryLive,
               id: "side-panel-history-#{@project.uuid}",
-              session: side_embed_session(assigns, %{"dom_scope" => "side"})
+              session: PhoenixKitProjects.Web.CSP.nested_session(side_embed_session(assigns, %{"dom_scope" => "side"}))
             )}
           <% "timeline" -> %>
             {live_render(@socket, PhoenixKitProjects.Web.ProjectGanttLive,
               id: "side-panel-gantt-#{@project.uuid}",
               session:
-                side_embed_session(assigns, %{
+                PhoenixKitProjects.Web.CSP.nested_session(side_embed_session(assigns, %{
                   "headless" => true,
                   "wrapper_class" => "",
                   "dom_scope" => "side"
-                })
+                }))
             )}
           <% "calendar" -> %>
             {live_render(@socket, PhoenixKitProjects.Web.ProjectCalendarLive,
               id: "side-panel-calendar-#{@project.uuid}",
               session:
-                side_embed_session(assigns, %{
+                PhoenixKitProjects.Web.CSP.nested_session(side_embed_session(assigns, %{
                   "headless" => true,
                   "wrapper_class" => "",
                   "dom_scope" => "side",
                   "step_intents" => "1"
-                })
+                }))
             )}
           <% _ -> %>
         <% end %>
@@ -7987,7 +7987,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <%= if @gantt_mounted? do %>
           {live_render(@socket, PhoenixKitProjects.Web.ProjectGanttLive,
             id: "project-gantt-live-#{@project.uuid}",
-            session: %{
+            session: PhoenixKitProjects.Web.CSP.nested_session(%{
               "id" => @project.uuid,
               "headless" => true,
               # No wrapper padding — the show page already pads this content area;
@@ -8008,7 +8008,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               "mode" => @embed_mode,
               "pubsub_topic" => @embed_pubsub_topic,
               "frame_ref" => @embed_frame_ref
-            })}
+            }))}
         <% end %>
       </div>
 
@@ -8019,7 +8019,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <%= if @calendar_mounted? do %>
           {live_render(@socket, PhoenixKitProjects.Web.ProjectCalendarLive,
             id: "project-calendar-live-#{@project.uuid}",
-            session: %{
+            session: PhoenixKitProjects.Web.CSP.nested_session(%{
               "id" => @project.uuid,
               "headless" => true,
               # No wrapper padding — the show page already pads this content area.
@@ -8036,7 +8036,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # Its task views open in this page's drawer, where this page
               # runs their next step.
               "step_intents" => "1"
-            })}
+            }))}
         <% end %>
       </div>
       </div>
@@ -8060,7 +8060,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         >
           {live_render(@socket, tab.lv,
             id: "ext-tab-#{tab.id}-#{@project.uuid}",
-            session: %{
+            session: PhoenixKitProjects.Web.CSP.nested_session(%{
               "project_uuid" => @project.uuid,
               "ext_key" => tab.ext_key,
               "instance_key" => "default",
@@ -8077,7 +8077,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # someone there (the CRM's "add a task from this meeting")
               # without naming this module's routes itself.
               "host_paths" => %{"new_task" => Paths.new_assignment(@project.uuid)}
-            })}
+            }))}
         </div>
       <% end %>
 
@@ -8184,7 +8184,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <%= if @history_mounted? do %>
           {live_render(@socket, PhoenixKitProjects.Web.ProjectHistoryLive,
             id: "project-history-live-#{@project.uuid}",
-            session: %{
+            session: PhoenixKitProjects.Web.CSP.nested_session(%{
               "id" => @project.uuid,
               "locale" => L10n.current_content_lang(),
               "current_user_uuid" =>
@@ -8194,7 +8194,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               "mode" => @embed_mode,
               "pubsub_topic" => @embed_pubsub_topic,
               "frame_ref" => @embed_frame_ref
-            })}
+            }))}
         <% end %>
       </div>
 
@@ -8426,7 +8426,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%= if @embed_mode == :popup and is_binary(@project.uuid) do %>
         {live_render(@socket, PhoenixKitProjects.Web.PopupHostLive,
           id: "project-popup-#{@project.uuid}",
-          session: %{
+          session: PhoenixKitProjects.Web.CSP.nested_session(%{
             "pubsub_topic" => @embed_pubsub_topic,
             "placement" => "center",
             "max_width" => "5xl",
@@ -8437,7 +8437,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             "locale" => L10n.current_content_lang(),
             "current_user_uuid" =>
               assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
-          })}
+          }))}
       <% end %>
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
       <.move_project_modal move={assigns[:move_project]} />

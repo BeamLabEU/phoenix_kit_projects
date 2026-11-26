@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Works under a nonce Content-Security-Policy** (#67; core's `guides/content-security-policy.md`). Every inline `<style>` carries the host's nonce (the calendars' overdue and loading styles, the popup skeleton, the chart palette, the hours report's print rules, the settings preview, the widget frame), read through `PhoenixKitProjects.Web.CSP`, which feature-detects core's `PhoenixKitWeb.CSP`: on a core without it nothing changes. The hours report's Print button no longer uses an inline `onclick` (a `data-pkp-print` attribute and a listener in `phoenix_kit_projects.js`), and every `<style>` the JS creates is stamped with the page's nonce before it joins the document. Nested LiveViews are handed the nonce (`CSP.nested_session/1`). A host must serve the current `phoenix_kit_projects.js` (recompile, so `phoenix_kit_modules.js` is rebuilt) for the Print button to work. Inline `style="…"` attributes are unchanged: keep `style-src-attr 'unsafe-inline'`.
+
 ## 0.35.0 - 2026-11-23
 
 The boss's fourth list (#63) and its follow-ups (#64), with their reviews

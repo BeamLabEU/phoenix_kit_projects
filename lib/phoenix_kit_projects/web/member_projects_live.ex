@@ -99,7 +99,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
           </div>
           {live_render(@socket, PopupHostLive,
             id: "member-project-host-#{project.uuid}",
-            session: %{
+            session: PhoenixKitProjects.Web.CSP.nested_session(%{
               "pubsub_topic" => "pk_projects:member:#{@current_user.uuid}:#{project.uuid}",
               "current_user_uuid" => @current_user.uuid,
               "locale" => L10n.current_content_lang(),
@@ -107,7 +107,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
                 "lv" => "PhoenixKitProjects.Web.ProjectShowLive",
                 "session" => %{"id" => project.uuid}
               }
-            }
+            })
           )}
         <% else %>
           <.page_header

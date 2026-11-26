@@ -47,6 +47,32 @@
 (function () {
   "use strict";
 
+  // A <style> this file creates is checked against the host's
+  // Content-Security-Policy like any other inline style: under a nonce policy
+  // it needs the page's nonce BEFORE it joins the document. Core's bundle
+  // knows that nonce (`PhoenixKitInternals.adoptStyle`); a core without it
+  // has no nonce support at all, and this file loading ahead of core's reads
+  // the nonce of a <style> the page already carries.
+  function adoptStyle(el) {
+    var kit = window.PhoenixKitInternals;
+    if (kit && typeof kit.adoptStyle === "function") {
+      kit.adoptStyle(el);
+    } else {
+      var probe = document.querySelector("style[nonce]");
+      if (probe && probe.nonce) el.nonce = probe.nonce;
+    }
+    return el;
+  }
+
+  // What `onclick="window.print()"` did: no nonce covers an inline handler.
+  if (!window.__pkpPrint) {
+    window.__pkpPrint = true;
+    document.addEventListener("click", function (e) {
+      var button = e.target && e.target.closest && e.target.closest("[data-pkp-print]");
+      if (button) window.print();
+    });
+  }
+
   var STYLE_ID = "pkp-outline-style";
   var MIME = "application/x-pkp-outline";
   var SYNC_MS = 600;
@@ -83,7 +109,7 @@
 
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
-    var style = document.createElement("style");
+    var style = adoptStyle(document.createElement("style"));
     style.id = STYLE_ID;
     style.textContent = CSS;
     document.head.appendChild(style);
@@ -1248,13 +1274,13 @@
   var Links = {
     mounted: function () {
       if (!document.getElementById(LINKS_STYLE_ID)) {
-        var style = document.createElement("style");
+        var style = adoptStyle(document.createElement("style"));
         style.id = LINKS_STYLE_ID;
         style.textContent = LINKS_CSS;
         document.head.appendChild(style);
       }
       var self = this;
-      this.marks = document.createElement("style");
+      this.marks = adoptStyle(document.createElement("style"));
       this.marks.setAttribute("data-pkp-links-for", this.el.id);
       document.head.appendChild(this.marks);
       this.pin = null;
@@ -1594,7 +1620,7 @@
       var self = this;
       this.gone = false;
       if (!document.getElementById(BOARD_STYLE_ID)) {
-        var style = document.createElement("style");
+        var style = adoptStyle(document.createElement("style"));
         style.id = BOARD_STYLE_ID;
         style.textContent = BOARD_CSS;
         document.head.appendChild(style);
@@ -1948,7 +1974,7 @@
     window.__pkpSubmenu = true;
     // The row menu is a popover, which the browser clips (`overflow:auto`):
     // a menu holding a side list lets it out.
-    var subStyle = document.createElement("style");
+    var subStyle = adoptStyle(document.createElement("style"));
     subStyle.textContent = "[data-row-menu-content]:has([data-pkp-submenu]){overflow:visible}";
     document.head.appendChild(subStyle);
     document.addEventListener("click", function (e) {
@@ -2774,7 +2800,7 @@
       var self = this;
       this.gone = false;
       if (!document.getElementById(LIST_STYLE_ID)) {
-        var style = document.createElement("style");
+        var style = adoptStyle(document.createElement("style"));
         style.id = LIST_STYLE_ID;
         style.textContent = LIST_CSS;
         document.head.appendChild(style);

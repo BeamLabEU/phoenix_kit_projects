@@ -96,6 +96,7 @@ defmodule PhoenixKitProjects.Web.Routes do
         # at the router instead would break `link` and `public` boards,
         # which is why the check lives in `Portal.resolve/2`.
         live_session :pk_projects_portal,
+          session: {PhoenixKitProjects.Web.CSP, :live_session, []},
           on_mount: [{PhoenixKitWeb.Users.Auth, :phoenix_kit_mount_current_scope}] do
           live("/portal/:slug", PhoenixKitProjects.Web.PortalLive, :show)
           # One issue, with its discussion. Addressed by uuid rather than a

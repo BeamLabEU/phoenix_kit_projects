@@ -119,7 +119,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       `opacity: 0; visibility: hidden` thereafter so the overlay is
       truly out of the way once the LV content is composited.
     --%>
-    <style>
+    <style nonce={PhoenixKitProjects.Web.CSP.nonce(:style)}>
       /* The frame's skeleton (Max, 2026-11-25: the opening popup was a
          thin empty strip with a spinner, then jumped to its size). A
          frame's content is its own LiveView: until that joins, its

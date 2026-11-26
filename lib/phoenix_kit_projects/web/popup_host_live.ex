@@ -118,6 +118,10 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   use Phoenix.LiveView, layout: false
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  # The page's CSP nonce, handed over by the parent (`CSP.nested_session/1`):
+  # this view is on bare `Phoenix.LiveView`, so core's `on_mount` is not there.
+  on_mount(PhoenixKitProjects.Web.CSP)
+
   import PhoenixKitProjects.Web.Components.PopupHost
 
   alias PhoenixKitProjects.Projects
@@ -926,14 +930,14 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       <%= if @root_view do %>
         {Phoenix.Component.live_render(@socket, @root_view.lv,
           id: @root_view.id,
-          session: @root_view.session
+          session: PhoenixKitProjects.Web.CSP.nested_session(@root_view.session)
         )}
       <% end %>
 
       <:frame :let={frame}>
         {Phoenix.Component.live_render(@socket, frame.lv,
           id: frame.id,
-          session: frame.session
+          session: PhoenixKitProjects.Web.CSP.nested_session(frame.session)
         )}
       </:frame>
     </.popup_host>

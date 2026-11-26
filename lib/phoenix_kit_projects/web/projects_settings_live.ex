@@ -1318,7 +1318,9 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
                The SyncAnimations hook aligns/syncs the stripes exactly as on
                the real calendars. raw/1 is safe — the CSS is built only from
                validated/clamped numbers + enums. --%>
-          {Phoenix.HTML.raw("<style>" <> CalendarDisplay.animation_css(@calendar_anim) <> "</style>")}
+          <style nonce={PhoenixKitProjects.Web.CSP.nonce(:style)}>
+            <%= Phoenix.HTML.raw(CalendarDisplay.animation_css(@calendar_anim)) %>
+          </style>
           <div class="flex flex-col gap-1">
             <span class="text-xs text-base-content/60">{gettext("Preview")}</span>
             <div

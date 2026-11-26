@@ -3596,7 +3596,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         <div class="card-body">
           {live_render(@socket, PhoenixKitProjects.Web.ProjectModulesLive,
             id: "edit-modules-#{@project.uuid}",
-            session: %{
+            session: PhoenixKitProjects.Web.CSP.nested_session(%{
               "id" => @project.uuid,
               # A nested LiveView is a process of its own and starts on the
               # app's default language: it was Estonian on an English page
@@ -3605,7 +3605,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               "embedded_in_form" => true,
               "current_user_uuid" => @current_user_uuid,
               "wrapper_class" => "flex flex-col gap-6"
-            }
+            })
           )}
         </div>
       </div>

@@ -4992,7 +4992,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     <div class={@wrapper_class}>
       {Phoenix.Component.live_render(@socket, PhoenixKitProjects.Web.ProjectFormLive,
         id: "subproject-project-form-#{@nest.child_uuid}",
-        session: @nest.session
+        session: PhoenixKitProjects.Web.CSP.nested_session(@nest.session)
       )}
     </div>
     """

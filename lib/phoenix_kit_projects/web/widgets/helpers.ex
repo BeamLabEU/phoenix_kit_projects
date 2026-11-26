@@ -182,7 +182,7 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
 
   def frame(assigns) do
     ~H"""
-    <style>
+    <style nonce={PhoenixKitProjects.Web.CSP.nonce(:style)}>
       @container (max-height: 26px) {
         .pk-slot-meta {
           display: none !important;

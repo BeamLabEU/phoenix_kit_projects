@@ -37,6 +37,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   alias PhoenixKitProjects.{L10n, ScheduleLayout}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.Web.CSP
   alias PhoenixLiveCalendar.Event
 
   # Distinct {bg, text} pairs — fixed Tailwind hues spread around the color wheel
@@ -891,7 +892,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   @spec loading_style() :: String.t()
   def loading_style do
     """
-    <style>
+    <style#{CSP.attr(:style)}>
     .cal-event.phx-click-loading, .cal-multiday-bar.phx-click-loading,
     .cal-day-cell.phx-click-loading, .cal-more-link.phx-click-loading {
       opacity: 0.5;
@@ -1116,7 +1117,8 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   """
   @spec animation_style(map()) :: String.t()
   def animation_style(cfg) do
-    "<style>\n" <> animation_css(cfg) <> "\n" <> label_css() <> "\n</style>"
+    "<style#{CSP.attr(:style)}>\n" <>
+      animation_css(cfg) <> "\n" <> label_css() <> "\n</style>"
   end
 
   # Labels keep their per-bar black/white fill (palette text_color), but get a

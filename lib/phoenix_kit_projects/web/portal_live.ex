@@ -16,6 +16,9 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   use Phoenix.LiveView
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  # The page's CSP nonce after the socket connects (the live session carries it).
+  on_mount(PhoenixKitProjects.Web.CSP)
+
   import PhoenixKitWeb.Components.Core.Button, only: [button: 1]
   import PhoenixKitWeb.Components.Core.EmptyState
   import PhoenixKitWeb.Components.Core.FormActions, only: [form_actions: 1]

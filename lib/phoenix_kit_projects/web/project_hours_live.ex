@@ -1434,7 +1434,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   # page); this is the report's print rules.
   defp viz_style(assigns) do
     ~H"""
-    <style>
+    <style nonce={PhoenixKitProjects.Web.CSP.nonce(:style)}>
       @media print{
         body *{visibility:hidden !important}
         .pk-hours-report,.pk-hours-report *{visibility:visible !important}
@@ -2326,7 +2326,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           <.icon name="hero-arrow-left" class="w-4 h-4" /> {gettext("Back to hours")}
         </button>
         <span class="flex-1"></span>
-        <button type="button" class="btn btn-sm" onclick="window.print()" id={"#{@dom}-report-print"}>
+        <button type="button" class="btn btn-sm" data-pkp-print id={"#{@dom}-report-print"}>
           <.icon name="hero-printer" class="w-4 h-4" /> {gettext("Print or save as PDF")}
         </button>
         <button

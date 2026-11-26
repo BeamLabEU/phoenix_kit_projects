@@ -389,6 +389,34 @@ Repo-local aliases:
   admin routes 404 after deploying, the route table was not regenerated:
   `mix compile --force`.
 
+### Content-Security-Policy
+
+The module works under a host's nonce policy (`script-src 'self' 'nonce-…'`;
+core's `guides/content-security-policy.md`). Core's `PhoenixKitWeb.CSP` is
+newer than this module's core floor, so nothing here calls it directly:
+
+- **Inline `<style>` / `<script>`** take the nonce from
+  `PhoenixKitProjects.Web.CSP` (feature-detected; `nil` / `""` on an older
+  core): `<style nonce={PhoenixKitProjects.Web.CSP.nonce(:style)}>` in HEEx,
+  `"<style#{PhoenixKitProjects.Web.CSP.attr(:style)}>"` in a string.
+- **No inline event handlers** (`onclick=` …): no nonce covers an attribute.
+  Use a `phx-` binding, a hook, or a `data-pkp-*` attribute with a delegated
+  listener in `priv/static/assets/phoenix_kit_projects.js` (`data-pkp-print`
+  is the report's Print button). Not core's `data-pk-*`: the published core
+  has no listener for them.
+- **A `<style>` the JS creates** is wrapped in the file's `adoptStyle(…)`
+  before it joins the document.
+- **A nested LiveView** gets its session through
+  `PhoenixKitProjects.Web.CSP.nested_session/1` at the `live_render/3` call;
+  a child on bare `Phoenix.LiveView` (`PopupHostLive`, `PortalLive`) adds
+  `on_mount(PhoenixKitProjects.Web.CSP)`.
+
+`test/phoenix_kit_projects/web/csp_inline_tags_test.exs` fails on a tag
+without the nonce, an inline handler in `lib/` or the JS, and an unstamped
+`<style>`; `test/js/csp.test.cjs` runs the print listener and the stamp.
+Inline `style="…"` attributes are not covered (the host keeps
+`style-src-attr 'unsafe-inline'`).
+
 ## Architecture
 
 ```
