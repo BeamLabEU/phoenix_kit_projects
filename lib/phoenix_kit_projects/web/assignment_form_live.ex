@@ -5719,8 +5719,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 <li :for={sub <- @subtasks} class="flex items-center gap-2 text-sm">
                   <%!-- A sub-project row is its own project's to finish: no
                        tick, its status as the badge shows it. The tick posts
-                       to the subtask form, not this one — a click is not an
-                       edit of the task (no "Unsaved changes"). --%>
+                       to the subtask form, not this one, and is held until
+                       Save like every change here (so the form shows
+                       "Unsaved changes"). --%>
                   <input
                     :if={is_nil(sub.child_project_uuid)}
                     type="checkbox"

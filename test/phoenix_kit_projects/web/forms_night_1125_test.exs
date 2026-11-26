@@ -18,7 +18,7 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Utils.TimeZone
-  alias PhoenixKitProjects.L10n
+  alias PhoenixKitProjects.{L10n, Projects}
   alias PhoenixKitProjects.Web.Components.FormParts
 
   setup %{conn: conn} do
@@ -160,6 +160,68 @@ defmodule PhoenixKitProjects.Web.FormsNight1125Test do
 
       render_hook(view, "pkp_restore_stack", %{"frames" => [frame.restore_token]})
       assert stack(view) == [restored]
+    end
+
+    # Opening a task puts it in the address, so on the rejoin the host has
+    # that task's view open again before the browser hands the frames back:
+    # the kept frames replace it when they start on the same task, never a
+    # view of another task (found 2026-11-26 checking the restore in the
+    # browser: an edit form's draft never came back).
+    test "kept frames replace the address's view of the same task only", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, %{assignment: a}} =
+        Projects.create_task_with_assignment(
+          project.uuid,
+          %{"title" => "A", "ad_hoc" => true},
+          %{}
+        )
+
+      {:ok, %{assignment: b}} =
+        Projects.create_task_with_assignment(
+          project.uuid,
+          %{"title" => "B", "ad_hoc" => true},
+          %{}
+        )
+
+      open = fn view, lv, session ->
+        send(view.pid, {:projects, :opened, %{lv: lv, session: session}})
+        render(view)
+      end
+
+      view = host(conn)
+
+      open.(view, PhoenixKitProjects.Web.AssignmentFormLive, %{
+        "live_action" => "edit",
+        "id" => a.uuid,
+        "project_id" => project.uuid
+      })
+
+      [edit] = stack(view)
+      render_click(view, "close_top_modal", %{"frame-ref" => to_string(edit.frame_ref)})
+
+      # The view of ANOTHER task: kept.
+      open.(view, PhoenixKitProjects.Web.AssignmentViewLive, %{
+        "id" => b.uuid,
+        "project_id" => project.uuid
+      })
+
+      [view_b] = stack(view)
+      render_hook(view, "pkp_restore_stack", %{"frames" => [edit.restore_token]})
+      assert stack(view) == [view_b]
+
+      render_click(view, "close_top_modal", %{"frame-ref" => to_string(view_b.frame_ref)})
+
+      # The view of the SAME task: the kept edit form takes its place.
+      open.(view, PhoenixKitProjects.Web.AssignmentViewLive, %{
+        "id" => a.uuid,
+        "project_id" => project.uuid
+      })
+
+      render_hook(view, "pkp_restore_stack", %{"frames" => [edit.restore_token]})
+      assert [restored] = stack(view)
+      assert restored.lv == PhoenixKitProjects.Web.AssignmentFormLive
+      assert restored.session["id"] == a.uuid
     end
 
     test "every frame has its pinned ✕ and the offline notice", %{conn: conn} do

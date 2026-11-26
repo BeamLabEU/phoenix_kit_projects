@@ -646,9 +646,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # passes: an embeddable LV, a session stripped of the host's own keys,
   # the depth cap.
   def handle_event("pkp_restore_stack", %{"frames" => frames}, socket) when is_list(frames) do
-    if socket.assigns.modal_stack == [] and length(frames) <= socket.assigns.max_stack_depth do
+    if restorable?(socket, frames) and length(frames) <= socket.assigns.max_stack_depth do
       restored =
-        Enum.reduce_while(frames, socket, fn token, acc ->
+        Enum.reduce_while(frames, assign(socket, modal_stack: []), fn token, acc ->
           case verify_frame(acc, token) do
             {:ok, {lv, session}} -> {:cont, push_frame(acc, lv, session, token)}
             :error -> {:halt, socket}
@@ -662,6 +662,31 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # A kept stack is handed back over nothing, or over the one task view the
+  # address reopened on the rejoin when the kept stack starts on that same
+  # task: opening a task puts it in the address, so after every reconnect
+  # that view came back first and the frames that were open (an edit form
+  # with what was typed) were never restored (found 2026-11-26 checking the
+  # panel's restore fix in the browser). A view holds nothing typed.
+  defp restorable?(socket, frames) do
+    case socket.assigns.modal_stack do
+      [] ->
+        true
+
+      [%{lv: AssignmentViewLive, task_ref: ref}] when is_binary(ref) ->
+        with [first | _] <- frames,
+             {:ok, {lv, session}} <- verify_frame(socket, first) do
+          # Kept as that same view alone: nothing to hand back.
+          frame_task_ref(lv, session) == ref and (lv != AssignmentViewLive or length(frames) > 1)
+        else
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
 
   # Only reopen frames this host actually issued to this viewer.
   defp verify_frame(socket, token) when is_binary(token) do

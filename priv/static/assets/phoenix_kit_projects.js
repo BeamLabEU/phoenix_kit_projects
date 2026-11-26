@@ -2484,9 +2484,13 @@
       var self = this;
       // The rejoin's own render first: the host may have reopened a task
       // from the address, and then nothing is handed back.
+      // The address's task (one view frame) may be back already: the host
+      // hands the kept frames back over it when they start on that task,
+      // and refuses otherwise (`restorable?/2`).
       setTimeout(function () {
         self.read();
-        if (self.frames.length > 0) return;
+        if (self.frames.length > 1) return;
+        if (JSON.stringify(self.frames) === JSON.stringify(kept.frames)) return;
         self.pushEvent("pkp_restore_stack", { frames: kept.frames });
         self.replay(kept, 0);
       }, 50);
