@@ -558,7 +558,10 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
       case result do
         {:ok, moved} ->
-          audit(socket, "projects.assignment_moved", a, %{"parent" => moved.parent_uuid})
+          audit(socket, "projects.assignment_moved", a, %{
+            "parent" => moved.parent_uuid,
+            "from_parent" => a.parent_uuid
+          })
 
           {:noreply,
            socket

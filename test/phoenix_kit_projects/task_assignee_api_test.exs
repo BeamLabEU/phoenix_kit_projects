@@ -478,7 +478,7 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
         live(conn, "/en/admin/projects/#{project.uuid}?task=#{done.uuid}")
 
       assert html =~ ~s(id="task-#{done.uuid}")
-      assert html =~ "ring-2 ring-primary"
+      assert html =~ "pkp-focus-ring"
 
       # the drawer host opens the task's form once it is up
       host = find_live_child(view, "project-popup-#{project.uuid}")
@@ -488,7 +488,7 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       {:ok, _view, html} =
         live(conn, "/en/admin/projects/#{project.uuid}?task=#{Ecto.UUID.generate()}")
 
-      refute html =~ "ring-2 ring-primary"
+      refute html =~ "pkp-focus-ring"
     end
   end
 

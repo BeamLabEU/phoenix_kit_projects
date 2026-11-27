@@ -65,7 +65,7 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
       "In `:popup` embed mode (a page hosting its own drawer) whether this link opens its target in that drawer (`true`, the shape for forms) or still navigates (`false` — a whole page, e.g. a child project or the Files page, is not drawer material)."
   )
 
-  attr(:rest, :global, include: ~w(title aria-label data-id))
+  attr(:rest, :global, include: ~w(title aria-label data-id data-pkp-open))
 
   slot(:inner_block, required: true)
 
@@ -96,6 +96,7 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
       :if={@opens_popup?}
       type="button"
       phx-click="open_embed"
+      data-pkp-open-url={Map.has_key?(@rest, :"data-pkp-open") && @navigate}
       phx-value-lv={@lv_str}
       phx-value-session={@session_json}
       class={[

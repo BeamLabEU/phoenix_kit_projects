@@ -1019,15 +1019,15 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     <div class="flex flex-col gap-1">
       <span :if={@title} class="text-sm text-base-content/70">{@title}</span>
       <ul class="flex flex-col divide-y divide-base-200 rounded-box border border-base-200">
-        <li :for={row <- @rows}>
+        <li :for={row <- @rows} class="flex items-center gap-2 px-3 hover:bg-base-200/60">
+          <.assignment_status_badge status={row.status} class="shrink-0" />
+          <.ref_chip ref={Refs.task_ref(@project.key, row.number)} />
           <button
             type="button"
             phx-click="open_task"
             phx-value-uuid={row.uuid}
-            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-base-200/60"
+            class="min-w-0 flex-1 flex items-center gap-2 py-2 text-sm text-left"
           >
-            <.assignment_status_badge status={row.status} class="shrink-0" />
-            <.ref_chip ref={Refs.task_ref(@project.key, row.number)} />
             <span class={["min-w-0 truncate", row.status == "done" && "text-base-content/60"]}>
               {Assignment.label(row, @lang)}
             </span>

@@ -162,14 +162,22 @@ defmodule PhoenixKitProjects.Paths do
   row's DOM id (always the uuid).
   """
   @spec task(project_ref(), map()) :: String.t()
-  def task(project, %{uuid: uuid} = assignment) do
+  def task(project, assignment, tab \\ "tasks")
+
+  def task(project, %{uuid: uuid} = assignment, tab) do
     ref =
       case {project, assignment} do
         {%{key: key}, %{number: number}} -> PhoenixKitProjects.Refs.task_ref(key, number)
         _ -> nil
       end
 
-    Routes.path("#{@base}/#{seg(project)}/tasks?task=#{ref || uuid}#task-#{uuid}")
+    # `tab`: the project tab the task opens over (the History tab links
+    # to itself, so opening a task from it does not leave it; Max,
+    # 2026-11-27). Only `tasks` carries the row's anchor.
+    case tab do
+      "tasks" -> Routes.path("#{@base}/#{seg(project)}/tasks?task=#{ref || uuid}#task-#{uuid}")
+      tab -> Routes.path("#{@base}/#{seg(project)}/#{tab}?task=#{ref || uuid}")
+    end
   end
 
   # A project's URL segment: its key when the caller has the project in

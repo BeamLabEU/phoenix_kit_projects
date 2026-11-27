@@ -320,6 +320,153 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       assert html =~ "Member"
     end
 
+    # Max, 2026-11-27: someone tagged in the comment belongs on the list;
+    # "Added by you" read as "you added them to the project".
+    test "a person tagged in the comment joins the list, and leaves with the tag", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+      editor = "pkp-dialog-next-#{ctx.render.uuid}"
+      mention = "please @[user:#{ctx.alice}|Alice] look"
+
+      send(view.pid, {:leaf_changed, %{editor_id: editor, markdown: mention, html: ""}})
+      html = render(view)
+      assert has_element?(view, next_up(ctx.project), "Alice")
+      assert html =~ "Mentioned in the comment"
+      refute html =~ "Added by you"
+
+      send(view.pid, {:leaf_changed, %{editor_id: editor, markdown: "please look", html: ""}})
+      render(view)
+      render(view)
+      refute has_element?(view, next_up(ctx.project), "Alice")
+    end
+
+    test "back-to-back edits use the latest recipient list", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+      editor = "pkp-dialog-next-#{ctx.render.uuid}"
+
+      for text <- ["@[user:#{ctx.alice}|Alice]", ""] do
+        send(view.pid, {:leaf_changed, %{editor_id: editor, markdown: text, html: ""}})
+      end
+
+      render_submit(view, "next_up_confirm", %{"uuid" => ctx.render.uuid})
+      assert notices("projects.assignment_ready", ctx.alice) == []
+
+      refute person_key(ctx.alice) in PhoenixKitProjects.AssigneeSet.keys(
+               Projects.get_assignment(ctx.render.uuid)
+             )
+    end
+
+    # The whole way (kimi's question, 2026-11-27): tagged in the comment,
+    # confirmed — assigned, and told it is their turn once.
+    test "a person tagged in the comment is assigned and told once", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+      note = "please @[user:#{ctx.alice}|Alice] look"
+
+      send(
+        view.pid,
+        {:leaf_changed,
+         %{editor_id: "pkp-dialog-next-#{ctx.render.uuid}", markdown: note, html: ""}}
+      )
+
+      render(view)
+      render(view)
+
+      render_submit(view, "next_up_confirm", %{
+        "uuid" => ctx.render.uuid,
+        "notes" => %{ctx.render.uuid => note}
+      })
+
+      assert person_key(ctx.alice) in PhoenixKitProjects.AssigneeSet.keys(
+               Projects.get_assignment(ctx.render.uuid)
+             )
+
+      assert [_] = notices("projects.assignment_ready", ctx.alice)
+
+      all =
+        Repo.all(
+          from(e in PhoenixKit.Activity.Entry,
+            where: e.target_uuid == ^ctx.alice,
+            select: e.action
+          )
+        )
+
+      # One "your turn", and no second ping from the comment's own mention.
+      assert Enum.count(all, &(&1 == "projects.assignment_ready")) == 1
+      refute Enum.any?(all, &String.contains?(&1, "mention"))
+    end
+
+    # vibe, 2026-11-27: untagging someone who was on the list anyway took
+    # them off it (and they were not told).
+    test "a person on the list anyway stays when their tag is removed", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+      editor = "pkp-dialog-next-#{ctx.measure.uuid}"
+      assert has_element?(view, next_up(ctx.project), "Alice")
+
+      for md <- ["hi @[user:#{ctx.alice}|Alice]", "hi"] do
+        send(view.pid, {:leaf_changed, %{editor_id: editor, markdown: md, html: ""}})
+        render(view)
+        render(view)
+      end
+
+      assert has_element?(view, next_up(ctx.project), "Alice")
+    end
+
+    # codex, 2026-11-27: a sub-project's list takes no additions (its picker
+    # is read-only), and a tag added to it anyway.
+    test "a tag adds nobody to a sub-project's list", ctx do
+      {:ok, %{assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Sub"})
+
+      {:ok, link} = Projects.update_assignment_status(link, %{"status" => "waiting"})
+
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => link.uuid})
+      md = "please @[user:#{ctx.alice}|Alice] look"
+
+      send(
+        view.pid,
+        {:leaf_changed, %{editor_id: "pkp-dialog-next-#{link.uuid}", markdown: md, html: ""}}
+      )
+
+      render(view)
+      render(view)
+      refute has_element?(view, next_up(ctx.project), "Alice")
+    end
+
+    test "a tag written with an escaped bracket (an older Leaf) still adds", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+      md = "please @\\[user:#{ctx.alice}|Alice] look"
+
+      send(
+        view.pid,
+        {:leaf_changed,
+         %{editor_id: "pkp-dialog-next-#{ctx.render.uuid}", markdown: md, html: ""}}
+      )
+
+      render(view)
+      render(view)
+      assert has_element?(view, next_up(ctx.project), "Alice")
+    end
+
+    test "someone added by hand is tagged Added here", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+
+      send(
+        view.pid,
+        {PhoenixKitWeb.Components.PeoplePicker, row_picker(ctx.render),
+         {:changed, [person_key(ctx.bob)]}}
+      )
+
+      html = render(view)
+      assert html =~ "Added here"
+      refute html =~ "Added by you"
+    end
+
     test "a person taken off the list is not told; the comment rides as the quote", ctx do
       {:ok, view, _html} = show(ctx)
 
@@ -367,7 +514,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       )
 
       html = render(view)
-      assert html =~ "Added by you"
+      assert html =~ "Added here"
 
       render_submit(view, "next_up_confirm", %{"uuid" => ctx.measure.uuid})
 

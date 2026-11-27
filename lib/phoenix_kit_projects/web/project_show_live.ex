@@ -55,9 +55,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   use PhoenixKitComments.Embed
 
   alias Phoenix.LiveView.JS
+  alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Routes
+  alias PhoenixKitComments.Web.CommentsComponent
 
   alias PhoenixKitProjects.{
     Activity,
@@ -833,32 +835,54 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         %{assigns: %{next_up: %{} = next_up}} = socket
       )
       when is_binary(id) and is_list(keys) do
-    keys = Enum.filter(keys, &match?({kind, uuid} when is_binary(kind) and is_binary(uuid), &1))
-
-    case next_up_picker(next_up, id) do
-      nil ->
-        {:noreply, socket}
-
-      {defaults, put} ->
-        added = keys -- defaults
-
-        if added != [] and not may_assign_now?(socket, next_up) do
-          # The refused chips go back out: nothing refused stays shown.
-          Phoenix.LiveView.send_update(PeoplePicker, id: id, selected: keys -- added)
-          {:noreply, put_flash(socket, :error, gettext("You may not assign people here."))}
-        else
-          {resolved, socket} = resolve_added_accounts(keys, defaults, socket)
-
-          if resolved != keys,
-            do: Phoenix.LiveView.send_update(PeoplePicker, id: id, selected: resolved)
-
-          next_up = put.(next_up, resolved)
-          {:noreply, assign(socket, next_up: retag(socket, next_up))}
-        end
-    end
+    change_next_up_picker(socket, next_up, id, keys)
   end
 
   def handle_info({PeoplePicker, _id, _msg}, socket), do: {:noreply, socket}
+
+  # A person `@`-tagged in a next-up comment is someone to tell (Max,
+  # 2026-11-27: "when I tag a person in the comment they should show up in
+  # the tagged list"): added to that list through the picker's own path
+  # (the right to assign asked, tags refreshed), and taken off again when
+  # the tag is, if the tag is what put them there. Only people with a staff
+  # record (an account without one asks before one is made), never the
+  # viewer.
+  def handle_info(
+        {:leaf_changed, %{editor_id: "pkp-dialog-" <> editor, markdown: markdown}},
+        %{assigns: %{next_up: %{} = next_up}} = socket
+      )
+      when is_binary(markdown) do
+    case dialog_picker(next_up, editor) do
+      nil ->
+        {:noreply, socket}
+
+      {picker, current} ->
+        now = mentioned_person_keys(markdown, Activity.actor_uuid(socket))
+        # Only what a tag ADDED is the tag's to take off: someone already on
+        # the list (its default people, a hand-added one) stays when the tag
+        # goes (vibe, 2026-11-27: an assignee tagged and untagged was taken
+        # off, and so not told).
+        added = mentioned_keys(next_up, picker)
+        dropped = added -- now
+        # Only where the list itself takes additions: the picker's own rule
+        # (the right to assign, and never a sub-project's row; codex, 2026-11-27).
+        new = if dialog_adds?(socket, next_up, editor), do: now -- current, else: []
+        kept = (added -- dropped) ++ new
+        keys = (current -- dropped) ++ new
+
+        next_up =
+          Map.update(next_up, :mention_keys, %{picker => kept}, &Map.put(&1, picker, kept))
+
+        socket = assign(socket, next_up: next_up)
+
+        if keys != current do
+          Phoenix.LiveView.send_update(PeoplePicker, id: picker, selected: keys)
+          change_next_up_picker(socket, next_up, picker, keys)
+        else
+          {:noreply, socket}
+        end
+    end
+  end
 
   # `@` and `#` in the page's own dialog editors (the reopen reason, the
   # next-up comments); the comments component's editors are its own.
@@ -1649,7 +1673,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         do: %{
           done_picker_id(a.uuid) =>
             people_tags(next_up.done_keys, next_up.done_defaults, a, project, actor, roles,
-              assigned: gettext("Assigned to this task")
+              assigned: gettext("Assigned to this task"),
+              mentioned: mentioned_keys(next_up, done_picker_id(a.uuid))
             )
         },
         else: %{}
@@ -1669,15 +1694,42 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            project,
            actor,
            roles,
-           assigned: label
+           assigned: label,
+           mentioned: mentioned_keys(next_up, row_picker_id(row.uuid))
          )}
       end)
 
     Map.put(next_up, :tags, Map.merge(done_tags, row_tags))
   end
 
+  # Why someone is on the list when nobody suggested them. "Added by you"
+  # read as "you added them to the project" (Max, 2026-11-27).
+  defp why_listed(key, user, defaults, mentioned, actor) do
+    cond do
+      key in defaults -> nil
+      key in mentioned -> %{label: gettext("Mentioned in the comment"), tone: :success}
+      user != actor -> %{label: gettext("Added here"), tone: :success}
+      true -> nil
+    end
+  end
+
+  # Nobody is notified of their own step (core skips an activity whose
+  # target is its actor): on the list, they are assigned only.
+  defp not_told_tag, do: %{label: gettext("Not notified — it is you"), tone: :neutral}
+
+  defp reach_tag(:cannot_open),
+    do: %{label: gettext("Not on this project yet — joins it when you confirm"), tone: :warning}
+
+  defp reach_tag(:no_login), do: %{label: gettext("No login yet"), tone: :warning}
+  defp reach_tag(:inactive), do: %{label: gettext("Account deactivated"), tone: :warning}
+  defp reach_tag(_), do: nil
+
+  defp mentioned_keys(next_up, picker_id),
+    do: next_up |> Map.get(:mention_keys, %{}) |> Map.get(picker_id, [])
+
   defp people_tags(keys, defaults, task, project, actor, roles, opts) do
     reach = keys |> Members.assignee_reach(project) |> Map.new(&{&1.uuid, &1})
+    mentioned = Keyword.get(opts, :mentioned, [])
     direct = task |> assignee_holder() |> AssigneeSet.keys()
     via = via_group(direct)
     commenters = commenter_uuids(task)
@@ -1693,11 +1745,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             user && user == Map.get(task, :created_by_uuid) && gettext("Created this task"),
             assigned_tag(key, direct, via, opts[:assigned]),
             user && Map.has_key?(commenters, user) && gettext("Commented here"),
-            key not in defaults && %{label: gettext("Added by you"), tone: :success},
-            status == :cannot_open &&
-              %{label: gettext("Not on this project — added when you confirm"), tone: :warning},
-            status == :no_login && %{label: gettext("No login yet"), tone: :warning},
-            status == :inactive && %{label: gettext("Account deactivated"), tone: :warning}
+            why_listed(key, user, defaults, mentioned, actor),
+            user && user == actor && not_told_tag(),
+            reach_tag(status)
           ],
           & &1
         )
@@ -1777,6 +1827,82 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # A plain map, not a MapSet: dialyzer reads a MapSet passed on as opaque.
   defp commenter_uuids(_), do: %{}
+
+  defp change_next_up_picker(socket, next_up, id, keys) do
+    keys = Enum.filter(keys, &match?({kind, uuid} when is_binary(kind) and is_binary(uuid), &1))
+
+    case next_up_picker(next_up, id) do
+      nil ->
+        {:noreply, socket}
+
+      {defaults, put} ->
+        added = keys -- defaults
+
+        if added != [] and not may_assign_now?(socket, next_up) do
+          # The refused chips go back out: nothing refused stays shown.
+          Phoenix.LiveView.send_update(PeoplePicker, id: id, selected: keys -- added)
+          {:noreply, put_flash(socket, :error, gettext("You may not assign people here."))}
+        else
+          {resolved, socket} = resolve_added_accounts(keys, defaults, socket)
+
+          if resolved != keys,
+            do: Phoenix.LiveView.send_update(PeoplePicker, id: id, selected: resolved)
+
+          next_up = put.(next_up, resolved)
+          {:noreply, assign(socket, next_up: retag(socket, next_up))}
+        end
+    end
+  end
+
+  # A dialog editor's list: "done-<task>" the Done picker, "next-<row>" a
+  # row's; with the keys it holds now.
+  defp dialog_picker(%{mode: :complete, task_uuid: task} = next_up, "done-" <> task),
+    do: {done_picker_id(task), next_up.done_keys}
+
+  defp dialog_picker(next_up, "next-" <> row) do
+    if row in next_up.uuids,
+      do: {row_picker_id(row), Map.get(next_up.row_keys, row, [])}
+  end
+
+  defp dialog_picker(_next_up, _editor), do: nil
+
+  # An older Leaf's visual mode wrote a token with its `[` escaped. The
+  # comments module's helper restores it; it is newer than the comments
+  # floor (`~> 0.5`, the helper came in 0.7), so it is asked for, not assumed.
+  defp unescape_tokens(markdown) do
+    if Code.ensure_loaded?(CommentsComponent) and
+         function_exported?(CommentsComponent, :unescape_mention_tokens, 1),
+       do: CommentsComponent.unescape_mention_tokens(markdown),
+       else: markdown
+  end
+
+  # Whether a dialog list takes additions, as its picker's `can_edit` says.
+  defp dialog_adds?(_socket, %{can_assign: false}, _editor), do: false
+  defp dialog_adds?(_socket, next_up, "done-" <> _), do: not Map.get(next_up, :subproject?, false)
+
+  defp dialog_adds?(socket, _next_up, "next-" <> row) do
+    case Enum.find(socket.assigns.assignments, &(&1.uuid == row)) do
+      %Assignment{child_project_uuid: nil} -> true
+      _ -> false
+    end
+  end
+
+  defp dialog_adds?(_socket, _next_up, _editor), do: false
+
+  # The staff records of the people `@`-tagged in a text, the viewer left out.
+  defp mentioned_person_keys(markdown, actor) do
+    users =
+      markdown
+      |> unescape_tokens()
+      |> Token.parse()
+      |> Enum.filter(&(&1.kind == :user and &1.uuid != actor))
+      |> Enum.map(& &1.uuid)
+      |> Enum.uniq()
+
+    users
+    |> PhoenixKitProjects.People.person_uuids_for_users()
+    |> then(fn by_user -> for u <- users, p = by_user[u], do: {"person", p} end)
+  end
 
   @doc false
   def done_picker_id(task_uuid), do: "next-up-done-#{task_uuid}"
@@ -2520,7 +2646,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          card's full height, and both rows start at the same edge. Row 1 is
          the title, with the ref, the icons and ⋮ at its end; row 2 the
          status, the deadline and who has it, the time at its far end. --%>
-    <div class="card-body relative py-3 px-4 gap-3 flex-row rounded-[inherit]" data-pkp-card={@a.uuid}>
+    <div
+      class="card-body relative py-3 px-4 gap-3 flex-row rounded-[inherit] cursor-pointer"
+      data-pkp-card={@a.uuid}
+      data-pkp-card-open
+    >
       <%!-- Filled by `PkpLinks` while a connected task is hovered or traced
            ("Waits on", "Unlocks", "Earlier", "Later"): a tab on the card's
            top-left edge, out of the row's flow, so nothing in the row moves
@@ -2588,6 +2718,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 }
                 embed_mode={@embed_mode}
                 class="font-medium truncate min-w-0 link link-hover"
+                data-pkp-open
               >
                 {TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
               </.smart_link>
@@ -2595,17 +2726,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </div>
 
             <div class="flex items-center gap-1 shrink-0">
-              <%!-- The ID opens the task's view, like its title. --%>
-              <.smart_link
+              <%!-- The ID copies itself; the rest of the card opens the task
+                   (Max, 2026-11-26). --%>
+              <.ref_chip
                 :if={not @is_template and Refs.task_ref(@project.key, @a.number)}
-                navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
-                emit={{PhoenixKitProjects.Web.AssignmentViewLive, view_session(@a)}}
-                embed_mode={@embed_mode}
-                class="shrink-0 opacity-70 hover:opacity-100"
-                title={gettext("View the task")}
-              >
-                <.ref_chip ref={Refs.task_ref(@project.key, @a.number)} />
-              </.smart_link>
+                ref={Refs.task_ref(@project.key, @a.number)}
+                class="opacity-70 hover:opacity-100"
+              />
               <%= if not @is_template do %>
                 <%!-- Connections are never written on the card: hovering
                      hints at the direct ones, this traces the whole chain
@@ -2662,6 +2789,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   embed_mode={@embed_mode}
                   icon="hero-pencil"
                   label={gettext("Edit")}
+                />
+                <%!-- The card's trace, from the menu too; it stays on until
+                     pressed again (Max, 2026-11-27). Handled in the browser
+                     by `PkpLinks`, which also swaps the label. --%>
+                <.table_row_menu_button
+                  :if={not @is_template and @fx.dependencies and MapSet.member?(@linked, @a.uuid)}
+                  data-pkp-trace={@a.uuid}
+                  data-trace-start={gettext("Trace connections")}
+                  data-trace-stop={gettext("Stop tracing")}
+                  icon="hero-share"
+                  label={gettext("Trace connections")}
                 />
                 <.table_row_menu_button
                   :if={@fx.ledger and not @is_template}
@@ -4339,7 +4477,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         socket
         |> update_assignment_with_activity(a, attrs, "projects.assignment_reopened",
-          metadata: %{"task" => Assignment.label(a)}
+          # `to`: back to Waiting, which the history words as such
+          metadata: %{"task" => Assignment.label(a), "from" => a.status, "to" => "waiting"}
         )
         |> maybe_sync_and_reload()
 
@@ -4974,7 +5113,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         actor_uuid: Activity.actor_uuid(socket),
         resource_type: "assignment",
         resource_uuid: a.uuid,
-        metadata: %{"parent" => moved.parent_uuid}
+        # `from_parent`: History tells a reorder from a move under another
+        # task (codex, 2026-11-27).
+        metadata: %{"parent" => moved.parent_uuid, "from_parent" => a.parent_uuid}
       )
 
       # The new parent and everything above it unfold: a row moved into a
@@ -7342,7 +7483,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   # as "the same place" and a drop one level in barely moved.
                   "pkp-row-card",
                   if(not @is_template and a.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"),
-                  assigns[:focus_task] == a.uuid && "ring-2 ring-primary"
+                  # A brief highlight of the row a link named, fading by
+                  # itself: as a lasting ring it stayed on the card after
+                  # its popup closed (Max, 2026-11-27).
+                  assigns[:focus_task] == a.uuid && "pkp-focus-ring"
                 ]}>
                   <%= if Assignment.subproject?(a) do %>
                     <%!-- A sub-project row has what a task row has (the boss,
@@ -7817,7 +7961,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 data-id={a.uuid}
                 title={pending_uuid == a.uuid && gettext("Waiting for your answer")}
               >
-                <div class="card-body p-3 gap-2">
+                <div class="card-body p-3 gap-2" data-pkp-card-open>
                   <div class="flex items-start gap-2">
                     <.icon name="hero-bars-2" class="w-3.5 h-3.5 shrink-0 mt-0.5 text-base-content/30" />
                     <.smart_link
@@ -7827,6 +7971,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       }
                       embed_mode={@embed_mode}
                       class="text-sm font-medium link link-hover leading-snug min-w-0 text-left [overflow-wrap:anywhere]"
+                      data-pkp-open
                     >
                       {Assignment.label(a, L10n.current_content_lang())}
                     </.smart_link>
@@ -7837,16 +7982,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                        card truncates rather than being cut off at its
                        right edge (the walk-through, 2026-10-31). --%>
                   <div class="flex flex-wrap items-center gap-1 min-w-0">
-                    <.smart_link
-                      :if={Assignment.ref(a)}
-                      navigate={Paths.view_assignment(a.project_uuid, a.uuid)}
-                      emit={{PhoenixKitProjects.Web.AssignmentViewLive, view_session(a)}}
-                      embed_mode={@embed_mode}
-                      class="shrink-0 hover:underline"
-                      title={gettext("View the task")}
-                    >
-                      <.ref_chip ref={Assignment.ref(a)} />
-                    </.smart_link>
+                    <.ref_chip :if={Assignment.ref(a)} ref={Assignment.ref(a)} />
                     <.deadline_chip
                       :if={@fx[:dates] != false}
                       a={a}
@@ -8153,6 +8289,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <.time_ago datetime={c.inserted_at} />
               <% task = c.resource_type == "assignment" && by_uuid[c.resource_uuid] %>
               <%= if task do %>
+                <.ref_chip ref={Refs.task_ref(@project.key, task.number)} />
                 <.smart_link
                   navigate={Paths.view_assignment(task.project_uuid, task.uuid)}
                   emit={{PhoenixKitProjects.Web.AssignmentViewLive, view_session(task)}}
@@ -8160,7 +8297,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   class="inline-flex items-center gap-1.5 min-w-0 link link-hover"
                   title={gettext("View the task")}
                 >
-                  <.ref_chip :if={Refs.task_ref(@project.key, task.number)} ref={Refs.task_ref(@project.key, task.number)} />
                   <span class="truncate">{Assignment.label(task, L10n.current_content_lang())}</span>
                 </.smart_link>
               <% else %>
@@ -8274,6 +8410,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 can_edit={@next_up.can_assign and not @next_up.subproject?}
                 can_remove={true}
                 tags={Map.get(@next_up.tags, done_picker_id(@next_up.task_uuid), %{})}
+                stacked={true}
                 placeholder={gettext("Add a person, team or department")}
                 me_label={nil}
               />
@@ -8331,6 +8468,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 can_edit={@next_up.can_assign and is_nil(a.child_project_uuid)}
                 can_remove={true}
                 tags={Map.get(@next_up.tags, row_picker_id(a.uuid), %{})}
+                stacked={true}
                 label={gettext("Send a notification to")}
                 placeholder={gettext("Add a person, team or department")}
                 me_label={nil}

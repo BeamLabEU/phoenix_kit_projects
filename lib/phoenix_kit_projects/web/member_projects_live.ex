@@ -133,8 +133,9 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
                   <h2 class="card-title text-base">{Project.localized_name(project, L10n.current_content_lang()) || project.name}</h2>
                   <span class="badge badge-ghost badge-sm shrink-0">{role_label(role)}</span>
                 </div>
-                <p :if={project.description} class="line-clamp-2 text-sm opacity-60">
-                  {Project.localized_description(project, L10n.current_content_lang()) || project.description}
+                <% description = PhoenixKitProjects.Web.Components.RichText.one_line(Project.localized_description(project, L10n.current_content_lang())) %>
+                <p :if={description} class="truncate text-sm opacity-60">
+                  {description}
                 </p>
               </div>
             </.link>

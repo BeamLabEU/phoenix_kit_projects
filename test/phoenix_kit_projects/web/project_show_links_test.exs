@@ -4,7 +4,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLinksTest do
   chain shows on hover and trace (`PkpLinks`,
   `priv/static/assets/phoenix_kit_projects.js`) from the pairs the list
   carries, and only a connected task has a trace button. No rail down the
-  side. A task's ID opens its view.
+  side. A task's ID copies its reference.
   """
 
   use PhoenixKitProjects.LiveCase, async: false
@@ -81,10 +81,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLinksTest do
     refute has_element?(view, "[data-pkp-trace]")
   end
 
-  test "a task's ID opens its view, and the open icon is no share arrow", ctx do
+  # Max, 2026-11-26: the ID copies itself; the card (its title) opens the
+  # task's view.
+  test "a task's ID copies it, the card opens its view, and no share arrow", ctx do
     {:ok, view, html} = show(ctx)
 
-    assert has_element?(view, ~s([title="View the task"] [data-ref]))
+    assert has_element?(view, "button[data-pkp-copy][data-ref]")
+    refute has_element?(view, ~s([title="View the task"] [data-ref]))
+    assert has_element?(view, "[data-pkp-card-open] [data-pkp-open]")
+    assert has_element?(view, ~s(button[data-pkp-open-url$="/assignments/#{ctx.measure.uuid}"]))
     assert html =~ "Elixir.PhoenixKitProjects.Web.AssignmentViewLive"
     refute html =~ "hero-arrow-top-right-on-square"
   end

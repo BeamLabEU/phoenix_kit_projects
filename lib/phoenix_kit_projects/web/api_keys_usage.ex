@@ -238,8 +238,9 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
             <.table_default_body>
               <.table_default_row :for={t <- @u.by_task}>
                 <.table_default_cell class="max-w-72">
+                  <.ref_chip :if={t.href} ref={t.ref} class="mr-1" />
                   <.link :if={t.href} navigate={t.href} class="link link-hover">
-                    <.ref_chip ref={t.ref} class="mr-1" />{t.title}
+                    {t.title}
                   </.link>
                   <span :if={!t.href} class="text-base-content/50">{gettext("(deleted task)")}</span>
                 </.table_default_cell>

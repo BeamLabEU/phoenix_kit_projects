@@ -1240,8 +1240,10 @@
    * it waits on and the ones it unlocks, draws arrows between them in the
    * list's left gutter (into the hovered task from what it waits on, out of
    * it to what it unlocks) and fades every other task to half; its trace
-   * button does the same for the whole chain, before and after, until the
-   * button is pressed again, Escape, or a click outside the list. All here
+   * button (and the card's ⋮ "Trace connections") does the same for the
+   * whole chain, before and after, and it stays until it is turned off: the
+   * button or the menu entry again, or Escape. A click elsewhere no longer
+   * ends it (Max, 2026-11-27: "stay on until the trace is turned off"). All here
    * in the browser from `data-links` ([[before, after], …]); the server is
    * never asked.
    *
@@ -1336,11 +1338,18 @@
           self.apply();
         }
       };
+      // A trace stays until it is turned off (Max, 2026-11-27); a click
+      // elsewhere used to end it. What this listens for now is the card's ⋮
+      // "Trace connections": an open row menu is moved under <body>, out of
+      // the list, so its click never reaches `onClick`. It is taken when it
+      // belongs to this list, even if a second embed shows the same task.
       this.onDoc = function (e) {
-        if (self.pin !== null && !self.el.contains(e.target)) {
-          self.pin = null;
-          self.apply();
-        }
+        var b = e.target.closest && e.target.closest("[data-pkp-trace]");
+        if (!self.traceButtons.has(b) || self.el.contains(b)) return;
+        var id = b.getAttribute("data-pkp-trace");
+        self.pin = self.pin === id ? null : id;
+        self.hover = null;
+        self.apply();
       };
       // Dragging a card: no highlight while it moves.
       this.onDrag = function () {
@@ -1375,6 +1384,15 @@
       if (this.marks) this.marks.remove();
     },
     read: function () {
+      // Keep the actual controls while a row menu is portalled under body.
+      // Each embedded list owns its own controls, even for the same task.
+      this.traceButtons = this.traceButtons || new Set();
+      this.traceButtons.forEach(function (button, _, buttons) {
+        if (!button.isConnected) buttons.delete(button);
+      });
+      this.el.querySelectorAll("[data-pkp-trace]").forEach(function (button) {
+        this.traceButtons.add(button);
+      }, this);
       var pairs = [];
       this.arrows = this.el.querySelector("[data-pkp-arrows]");
       try { pairs = JSON.parse(this.el.dataset.links || "[]"); } catch (_) { pairs = []; }
@@ -1419,10 +1437,15 @@
       var src = this.pin !== null ? this.pin : this.hover;
       var traced = this.pin !== null;
 
-      this.el.querySelectorAll("[data-pkp-trace]").forEach(function (b) {
+      // The list's buttons, and its cards' menu entries wherever an open
+      // menu has been moved.
+      this.traceButtons.forEach(function (b) {
         var on = b.getAttribute("data-pkp-trace") === self.pin;
         b.setAttribute("aria-pressed", on ? "true" : "false");
         if (labels.trace) b.title = on ? labels.stop : labels.trace;
+        // The ⋮ entry names what a press does now.
+        var text = b.hasAttribute("data-trace-start") && b.querySelector("span:last-child");
+        if (text) text.textContent = on ? b.getAttribute("data-trace-stop") : b.getAttribute("data-trace-start");
       });
       var wasOn = this.gutterOn === true;
       this.gutterOn = src !== null;
@@ -2653,7 +2676,21 @@
     ".pkp-list-ghost{opacity:.55}",
     ".pkp-list-ghost .card{outline:2px dashed var(--color-primary,#4f46e5);outline-offset:-2px}",
     ".pkp-list-parent .card{box-shadow:inset 3px 0 0 var(--color-primary,#4f46e5)}",
-    ".pkp-list-dragging .pk-drag-handle{cursor:grabbing}"
+    ".pkp-list-dragging .pk-drag-handle{cursor:grabbing}",
+    // While a card is dragged nothing else on the page answers the pointer
+    // (Max, 2026-11-26: "Add task" above and below the list lit up and
+    // showed a hand, as if a drop there would do something). The drag finds
+    // its rows through what is under the pointer; a control with pointer
+    // events off lets that fall through to its row.
+    "html.pkp-dragging :is(a,button,[role=button],label,summary,input,select,textarea){pointer-events:none}",
+    "html.pkp-dragging, html.pkp-dragging *{cursor:grabbing!important}",
+    // The row a link named (`?task=`) is ringed for a moment, then the ring
+    // fades: it used to stay for good (Max, 2026-11-27).
+    ".pkp-focus-ring{animation:pkp-focus-fade 4s ease-out forwards}",
+    "@keyframes pkp-focus-fade{0%,55%{box-shadow:0 0 0 2px var(--color-primary,#4f46e5)}100%{box-shadow:0 0 0 2px transparent}}",
+    // Reduced motion: the ring is there, then gone, without fading (vibe:
+    // `animation:none` left no ring at all, it lives in the animation).
+    "@media (prefers-reduced-motion:reduce){.pkp-focus-ring{animation-timing-function:step-end}}"
   ].join("\n");
 
   // Where a dropped row lands. `rows`: the list as it stands after the drop,
@@ -2907,6 +2944,7 @@
             from: startIdx >= 0 ? listDropTarget(startRows, startIdx, start.depth, 0, self.indentPx()) : null
           };
           el.classList.add("pkp-list-dragging");
+          document.documentElement.classList.add("pkp-dragging");
           document.addEventListener("pointermove", track, true);
           document.addEventListener("touchmove", track, true);
         },
@@ -2917,6 +2955,7 @@
           document.removeEventListener("pointermove", track, true);
           document.removeEventListener("touchmove", track, true);
           el.classList.remove("pkp-list-dragging");
+          document.documentElement.classList.remove("pkp-dragging");
           self.clearParentMark();
           // Released once the branch is back (below, in this same task), so
           // the page never gets shorter than it was.
@@ -3004,6 +3043,7 @@
         d.lifted.forEach(function (n) { n.classList.remove("pkp-list-lifted"); });
         this.el.style.minHeight = "";
         this.el.classList.remove("pkp-list-dragging");
+        document.documentElement.classList.remove("pkp-dragging");
         // What only Sortable's own drop removes: the floating copy on the
         // body and the classes on the card (grok's re-review).
         d.item.classList.remove("pkp-list-ghost", "sortable-chosen", "sortable-ghost");
@@ -3035,6 +3075,124 @@
     };
     hook.replay({ values: values, rich: rich, versions: versions, frames: hook.frames }, 50);
   };
+
+  // ── A task's ID copies; a task's card opens it ─────────────────────
+  //
+  // Max, 2026-11-26: "clicking on the id of a task anywhere copies its id",
+  // and "the whole task should be clickable to open the task popup". One
+  // listener on the document for both (the chips and the cards come and go
+  // with every patch), installed once however often the bundle loads.
+  //
+  //   [data-pkp-copy]       a click, Enter or Space copies its value; the
+  //                         pill says its `data-copied` word for a moment
+  //   [data-pkp-card-open]  a click on the card opens it, by clicking the
+  //                         card's own `[data-pkp-open]` (its title), so
+  //                         it opens exactly as the title does
+  //
+  // A card's own controls keep their click (buttons, links, menus, fields,
+  // a person chip, the drag handle, the ID), and nothing opens after a
+  // text selection or a drag. Ctrl/Cmd/Shift on a real link opens a tab.
+  var CARD_CONTROLS =
+    "a, button, input, textarea, select, summary, label, details, [contenteditable='true'], " +
+    "[role='button'], [role='menuitem'], [popover], [phx-click], [data-pkp-copy], " +
+    "[data-mention-user], .pk-drag-handle, [data-pkp-no-open]";
+
+  function copyRef(el) {
+    var text = el.getAttribute("data-pkp-copy");
+    if (!text) return;
+    var done = function () {
+      var word = el.getAttribute("data-copied");
+      if (!word || el.__pkpCopied) return;
+      el.__pkpCopied = el.textContent;
+      el.textContent = word;
+      setTimeout(function () {
+        if (el.isConnected) el.textContent = el.__pkpCopied;
+        el.__pkpCopied = null;
+      }, 1200);
+    };
+    if (window.navigator && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () {});
+    } else if (legacyCopy(text)) {
+      // No clipboard API off a secure origin (plain http on a LAN address):
+      // the old way, a selected field and `copy` (vibe, 2026-11-27).
+      done();
+    }
+  }
+
+  function legacyCopy(text) {
+    try {
+      var field = document.createElement("textarea");
+      field.value = text;
+      field.setAttribute("readonly", "");
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.appendChild(field);
+      field.select();
+      var ok = document.execCommand && document.execCommand("copy");
+      field.remove();
+      return !!ok;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  // Did this click begin as a drag or end a text selection? Then it is not
+  // a click on the card.
+  var cardPress = null;
+
+  function cardClickOpens(e, card) {
+    var control = e.target.closest ? e.target.closest(CARD_CONTROLS) : null;
+    if (control && card.contains(control)) return false;
+    if (cardPress && (Math.abs(e.clientX - cardPress.x) > 5 || Math.abs(e.clientY - cardPress.y) > 5)) return false;
+    var sel = window.getSelection ? window.getSelection() : null;
+    if (sel && String(sel).trim() !== "") return false;
+    return true;
+  }
+
+  function openCard(e, card) {
+    var opener = card.querySelector("[data-pkp-open]");
+    if (!opener) return;
+    var url = opener.href || opener.getAttribute("data-pkp-open-url");
+    if ((e.ctrlKey || e.metaKey || e.shiftKey) && url) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    opener.click();
+  }
+
+  if (!window.__pkpCardClicks && typeof document !== "undefined" && document.addEventListener) {
+    window.__pkpCardClicks = true;
+    // Popup titles are buttons. Intercept a modified click before LiveView
+    // dispatches open_embed, and use the same URL as the navigable title.
+    document.addEventListener("click", function (e) {
+      if (!(e.ctrlKey || e.metaKey || e.shiftKey) || e.button !== 0) return;
+      var title = e.target.closest && e.target.closest("button[data-pkp-open-url]");
+      if (!title) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(title.getAttribute("data-pkp-open-url"), "_blank", "noopener");
+    }, true);
+    document.addEventListener("pointerdown", function (e) {
+      cardPress = { x: e.clientX, y: e.clientY };
+    }, true);
+    document.addEventListener("click", function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var chip = t.closest("[data-pkp-copy]");
+      if (chip) {
+        e.preventDefault();
+        e.stopPropagation();
+        copyRef(chip);
+        return;
+      }
+      var card = t.closest("[data-pkp-card-open]");
+      if (card && cardClickOpens(e, card)) openCard(e, card);
+    });
+  }
+
+  window.PhoenixKitProjectsInternals.cardClickOpens = cardClickOpens;
+  window.PhoenixKitProjectsInternals.copyRef = copyRef;
 
   window.PhoenixKitProjectsHooks = {
     PkpWide: Wide,

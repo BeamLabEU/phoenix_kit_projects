@@ -2009,13 +2009,14 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               </.table_default_cell>
               <.table_default_cell>
                 <%= if row.task && row.task.title do %>
+                  <.ref_chip ref={row.task[:ref]} />
                   <.smart_link
                     navigate={Paths.project_tasks(row.project.uuid) <> "?task=#{row.task.uuid}"}
                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => row.project.uuid, "task" => row.task.uuid}}}
                     embed_mode={@embed_mode}
                     class="link link-hover text-left"
                   >
-                    <.ref_chip ref={row.task[:ref]} /> {row.task.title}
+                    {row.task.title}
                   </.smart_link>
                 <% else %>
                   <span class="text-base-content/50">{task_label(row.task)}</span>

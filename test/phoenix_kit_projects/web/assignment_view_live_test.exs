@@ -66,13 +66,19 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
 
   describe "its page" do
     test "shows the task, its connections both ways and its details", ctx do
-      {:ok, _view, html} =
+      {:ok, view, html} =
         live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/#{ctx.measure.uuid}")
 
       assert html =~ "Take kitchen measurements"
       assert html =~ "Bring the long tape."
       assert html =~ "Waits on"
       assert html =~ "Talk to the client"
+
+      assert has_element?(
+               view,
+               "button[data-pkp-copy] + button[phx-value-uuid='#{ctx.model.uuid}']"
+             )
+
       assert html =~ "Unlocks"
       assert html =~ "Create 3D model"
       assert html =~ "Unassigned"

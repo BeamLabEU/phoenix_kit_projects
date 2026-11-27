@@ -1113,7 +1113,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             <span :if={task.ad_hoc} class="badge badge-outline badge-sm ml-1 align-middle">
               {gettext("one-off")}
             </span>
-            <% desc = TaskSchema.localized_description(task, @lang) %>
+            <% desc = PhoenixKitProjects.Web.Components.RichText.one_line(TaskSchema.localized_description(task, @lang)) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md font-normal">{desc}</div>
             <% deps = Map.get(@deps_by_task, task.uuid, []) %>
             <div :if={deps != []} class="flex flex-wrap gap-1 mt-1.5">
