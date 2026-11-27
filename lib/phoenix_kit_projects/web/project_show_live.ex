@@ -55,9 +55,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   use PhoenixKitComments.Embed
 
   alias Phoenix.LiveView.JS
+  alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Routes
+  alias PhoenixKitComments.Web.CommentsComponent
 
   alias PhoenixKitProjects.{
     Activity,
@@ -1720,6 +1722,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Map.put(next_up, :tags, Map.merge(done_tags, row_tags))
   end
 
+  # Why someone is on the list when nobody suggested them. "Added by you"
+  # read as "you added them to the project" (Max, 2026-11-27).
+  defp why_listed(key, user, defaults, mentioned, actor) do
+    cond do
+      key in defaults -> nil
+      key in mentioned -> %{label: gettext("Mentioned in the comment"), tone: :success}
+      user != actor -> %{label: gettext("Added here"), tone: :success}
+      true -> nil
+    end
+  end
+
+  # Nobody is notified of their own step (core skips an activity whose
+  # target is its actor): on the list, they are assigned only.
+  defp not_told_tag, do: %{label: gettext("Not notified — it is you"), tone: :neutral}
+
+  defp reach_tag(:cannot_open),
+    do: %{label: gettext("Not on this project yet — joins it when you confirm"), tone: :warning}
+
+  defp reach_tag(:no_login), do: %{label: gettext("No login yet"), tone: :warning}
+  defp reach_tag(:inactive), do: %{label: gettext("Account deactivated"), tone: :warning}
+  defp reach_tag(_), do: nil
+
   defp mentioned_keys(next_up, picker_id),
     do: next_up |> Map.get(:mention_keys, %{}) |> Map.get(picker_id, [])
 
@@ -1741,23 +1765,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             user && user == Map.get(task, :created_by_uuid) && gettext("Created this task"),
             assigned_tag(key, direct, via, opts[:assigned]),
             user && Map.has_key?(commenters, user) && gettext("Commented here"),
-            # Why they are on the list when nobody suggested them. "Added by
-            # you" read as "you added them to the project" (Max, 2026-11-27).
-            (key not in defaults and key in mentioned) &&
-              %{label: gettext("Mentioned in the comment"), tone: :success},
-            (key not in defaults and key not in mentioned and user != actor) &&
-              %{label: gettext("Added here"), tone: :success},
-            # Nobody is notified of their own step (core skips an activity
-            # whose target is its actor): on the list, they are assigned only.
-            user && user == actor &&
-              %{label: gettext("Not notified — it is you"), tone: :neutral},
-            status == :cannot_open &&
-              %{
-                label: gettext("Not on this project yet — joins it when you confirm"),
-                tone: :warning
-              },
-            status == :no_login && %{label: gettext("No login yet"), tone: :warning},
-            status == :inactive && %{label: gettext("Account deactivated"), tone: :warning}
+            why_listed(key, user, defaults, mentioned, actor),
+            user && user == actor && not_told_tag(),
+            reach_tag(status)
           ],
           & &1
         )
@@ -1855,8 +1865,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     users =
       markdown
       # An older Leaf's visual mode wrote a token with its `[` escaped.
-      |> PhoenixKitComments.Web.CommentsComponent.unescape_mention_tokens()
-      |> PhoenixKit.Mentions.Token.parse()
+      |> CommentsComponent.unescape_mention_tokens()
+      |> Token.parse()
       |> Enum.filter(&(&1.kind == :user and &1.uuid != actor))
       |> Enum.map(& &1.uuid)
       |> Enum.uniq()

@@ -159,7 +159,7 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
 
   def one_line(markdown) when is_binary(markdown) do
     markdown
-    |> PhoenixKit.Mentions.Token.to_plain_text()
+    |> Token.to_plain_text()
     |> String.replace(~r/!\[[^\]]*\]\([^)]*\)/u, "")
     |> String.replace(~r/\[([^\]]*)\]\([^)]*\)/u, "\\1")
     |> String.replace(~r/<[^>]+>/u, " ")
