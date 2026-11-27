@@ -116,7 +116,7 @@ defmodule PhoenixKitProjects.Web.NextUpDoneTest do
       {PeoplePicker, done_picker(ctx), {:changed, [creator_key, {"person", person.uuid}]}}
     )
 
-    assert render(view) =~ "Added by you"
+    assert render(view) =~ "Added here"
 
     render_submit(view, "next_up_confirm", %{"uuid" => ctx.task.uuid})
 

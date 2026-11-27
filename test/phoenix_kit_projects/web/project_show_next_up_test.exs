@@ -320,6 +320,43 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       assert html =~ "Member"
     end
 
+    # Max, 2026-11-27: someone tagged in the comment belongs on the list;
+    # "Added by you" read as "you added them to the project".
+    test "a person tagged in the comment joins the list, and leaves with the tag", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+      editor = "pkp-dialog-next-#{ctx.render.uuid}"
+      mention = "please @[user:#{ctx.alice}|Alice] look"
+
+      send(view.pid, {:leaf_changed, %{editor_id: editor, markdown: mention, html: ""}})
+      # The page hands the change to its picker path as a second message.
+      render(view)
+      html = render(view)
+      assert has_element?(view, next_up(ctx.project), "Alice")
+      assert html =~ "Mentioned in the comment"
+      refute html =~ "Added by you"
+
+      send(view.pid, {:leaf_changed, %{editor_id: editor, markdown: "please look", html: ""}})
+      render(view)
+      render(view)
+      refute has_element?(view, next_up(ctx.project), "Alice")
+    end
+
+    test "someone added by hand is tagged Added here", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+
+      send(
+        view.pid,
+        {PhoenixKitWeb.Components.PeoplePicker, row_picker(ctx.render),
+         {:changed, [person_key(ctx.bob)]}}
+      )
+
+      html = render(view)
+      assert html =~ "Added here"
+      refute html =~ "Added by you"
+    end
+
     test "a person taken off the list is not told; the comment rides as the quote", ctx do
       {:ok, view, _html} = show(ctx)
 
@@ -367,7 +404,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       )
 
       html = render(view)
-      assert html =~ "Added by you"
+      assert html =~ "Added here"
 
       render_submit(view, "next_up_confirm", %{"uuid" => ctx.measure.uuid})
 

@@ -860,6 +860,38 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   def handle_info({PeoplePicker, _id, _msg}, socket), do: {:noreply, socket}
 
+  # A person `@`-tagged in a next-up comment is someone to tell (Max,
+  # 2026-11-27: "when I tag a person in the comment they should show up in
+  # the tagged list"): added to that list through the picker's own path
+  # (the right to assign asked, tags refreshed), and taken off again when
+  # the tag is, if the tag is what put them there. Only people with a staff
+  # record (an account without one asks before one is made), never the
+  # viewer.
+  def handle_info(
+        {:leaf_changed, %{editor_id: "pkp-dialog-" <> editor, markdown: markdown}},
+        %{assigns: %{next_up: %{} = next_up}} = socket
+      )
+      when is_binary(markdown) do
+    case dialog_picker(next_up, editor) do
+      nil ->
+        {:noreply, socket}
+
+      {picker, current} ->
+        now = mentioned_person_keys(markdown, Activity.actor_uuid(socket))
+        before = mentioned_keys(next_up, picker)
+        keys = (current -- (before -- now)) ++ (now -- current)
+        next_up = Map.update(next_up, :mention_keys, %{picker => now}, &Map.put(&1, picker, now))
+        socket = assign(socket, next_up: next_up)
+
+        if keys != current do
+          Phoenix.LiveView.send_update(PeoplePicker, id: picker, selected: keys)
+          send(self(), {PeoplePicker, picker, {:changed, keys}})
+        end
+
+        {:noreply, socket}
+    end
+  end
+
   # `@` and `#` in the page's own dialog editors (the reopen reason, the
   # next-up comments); the comments component's editors are its own.
   def handle_info({:leaf_suggest, %{editor_id: "pkp-dialog-" <> _}} = msg, socket),
@@ -1649,7 +1681,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         do: %{
           done_picker_id(a.uuid) =>
             people_tags(next_up.done_keys, next_up.done_defaults, a, project, actor, roles,
-              assigned: gettext("Assigned to this task")
+              assigned: gettext("Assigned to this task"),
+              mentioned: mentioned_keys(next_up, done_picker_id(a.uuid))
             )
         },
         else: %{}
@@ -1669,15 +1702,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            project,
            actor,
            roles,
-           assigned: label
+           assigned: label,
+           mentioned: mentioned_keys(next_up, row_picker_id(row.uuid))
          )}
       end)
 
     Map.put(next_up, :tags, Map.merge(done_tags, row_tags))
   end
 
+  defp mentioned_keys(next_up, picker_id),
+    do: next_up |> Map.get(:mention_keys, %{}) |> Map.get(picker_id, [])
+
   defp people_tags(keys, defaults, task, project, actor, roles, opts) do
     reach = keys |> Members.assignee_reach(project) |> Map.new(&{&1.uuid, &1})
+    mentioned = Keyword.get(opts, :mentioned, [])
     direct = task |> assignee_holder() |> AssigneeSet.keys()
     via = via_group(direct)
     commenters = commenter_uuids(task)
@@ -1693,9 +1731,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             user && user == Map.get(task, :created_by_uuid) && gettext("Created this task"),
             assigned_tag(key, direct, via, opts[:assigned]),
             user && Map.has_key?(commenters, user) && gettext("Commented here"),
-            key not in defaults && %{label: gettext("Added by you"), tone: :success},
+            # Why they are on the list when nobody suggested them. "Added by
+            # you" read as "you added them to the project" (Max, 2026-11-27).
+            (key not in defaults and key in mentioned) &&
+              %{label: gettext("Mentioned in the comment"), tone: :success},
+            (key not in defaults and key not in mentioned and user != actor) &&
+              %{label: gettext("Added here"), tone: :success},
+            # Nobody is notified of their own step (core skips an activity
+            # whose target is its actor): on the list, they are assigned only.
+            user && user == actor &&
+              %{label: gettext("Not notified — it is you"), tone: :neutral},
             status == :cannot_open &&
-              %{label: gettext("Not on this project — added when you confirm"), tone: :warning},
+              %{
+                label: gettext("Not on this project yet — joins it when you confirm"),
+                tone: :warning
+              },
             status == :no_login && %{label: gettext("No login yet"), tone: :warning},
             status == :inactive && %{label: gettext("Account deactivated"), tone: :warning}
           ],
@@ -1777,6 +1827,32 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # A plain map, not a MapSet: dialyzer reads a MapSet passed on as opaque.
   defp commenter_uuids(_), do: %{}
+
+  # A dialog editor's list: "done-<task>" the Done picker, "next-<row>" a
+  # row's; with the keys it holds now.
+  defp dialog_picker(%{mode: :complete, task_uuid: task} = next_up, "done-" <> task),
+    do: {done_picker_id(task), next_up.done_keys}
+
+  defp dialog_picker(next_up, "next-" <> row) do
+    if row in next_up.uuids,
+      do: {row_picker_id(row), Map.get(next_up.row_keys, row, [])}
+  end
+
+  defp dialog_picker(_next_up, _editor), do: nil
+
+  # The staff records of the people `@`-tagged in a text, the viewer left out.
+  defp mentioned_person_keys(markdown, actor) do
+    users =
+      markdown
+      |> PhoenixKit.Mentions.Token.parse()
+      |> Enum.filter(&(&1.kind == :user and &1.uuid != actor))
+      |> Enum.map(& &1.uuid)
+      |> Enum.uniq()
+
+    users
+    |> PhoenixKitProjects.People.person_uuids_for_users()
+    |> then(fn by_user -> for u <- users, p = by_user[u], do: {"person", p} end)
+  end
 
   @doc false
   def done_picker_id(task_uuid), do: "next-up-done-#{task_uuid}"
@@ -8271,6 +8347,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 can_edit={@next_up.can_assign and not @next_up.subproject?}
                 can_remove={true}
                 tags={Map.get(@next_up.tags, done_picker_id(@next_up.task_uuid), %{})}
+                stacked={true}
                 placeholder={gettext("Add a person, team or department")}
                 me_label={nil}
               />
@@ -8328,6 +8405,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 can_edit={@next_up.can_assign and is_nil(a.child_project_uuid)}
                 can_remove={true}
                 tags={Map.get(@next_up.tags, row_picker_id(a.uuid), %{})}
+                stacked={true}
                 label={gettext("Send a notification to")}
                 placeholder={gettext("Add a person, team or department")}
                 me_label={nil}

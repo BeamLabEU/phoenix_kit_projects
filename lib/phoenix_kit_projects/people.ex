@@ -515,6 +515,27 @@ defmodule PhoenixKitProjects.People do
   def display_name(_), do: gettext("Unnamed")
 
   @doc """
+  The staff record of each user that has one (not trashed), in one read:
+  `%{user_uuid => person_uuid}`. An account with several records keeps
+  one of them.
+  """
+  @spec person_uuids_for_users([String.t()]) :: %{String.t() => String.t()}
+  def person_uuids_for_users([]), do: %{}
+
+  def person_uuids_for_users(user_uuids) when is_list(user_uuids) do
+    from(p in Person,
+      where: p.user_uuid in ^Enum.uniq(user_uuids) and p.status != ^@trashed,
+      order_by: [asc: p.inserted_at],
+      select: {p.user_uuid, p.uuid}
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.reverse()
+    |> Map.new()
+  rescue
+    _ -> %{}
+  end
+
+  @doc """
   How the module names accounts, in one read for many: the account's first
   and last name, else its staff person's name, else its email —
   `%{user_uuid => name}`. A person picked or shown by name
