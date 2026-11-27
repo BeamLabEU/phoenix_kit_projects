@@ -342,6 +342,46 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       refute has_element?(view, next_up(ctx.project), "Alice")
     end
 
+    # The whole way (kimi's question, 2026-11-27): tagged in the comment,
+    # confirmed — assigned, and told it is their turn once.
+    test "a person tagged in the comment is assigned and told once", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+      note = "please @[user:#{ctx.alice}|Alice] look"
+
+      send(
+        view.pid,
+        {:leaf_changed,
+         %{editor_id: "pkp-dialog-next-#{ctx.render.uuid}", markdown: note, html: ""}}
+      )
+
+      render(view)
+      render(view)
+
+      render_submit(view, "next_up_confirm", %{
+        "uuid" => ctx.render.uuid,
+        "notes" => %{ctx.render.uuid => note}
+      })
+
+      assert person_key(ctx.alice) in PhoenixKitProjects.AssigneeSet.keys(
+               Projects.get_assignment(ctx.render.uuid)
+             )
+
+      assert [_] = notices("projects.assignment_ready", ctx.alice)
+
+      all =
+        Repo.all(
+          from(e in PhoenixKit.Activity.Entry,
+            where: e.target_uuid == ^ctx.alice,
+            select: e.action
+          )
+        )
+
+      # One "your turn", and no second ping from the comment's own mention.
+      assert Enum.count(all, &(&1 == "projects.assignment_ready")) == 1
+      refute Enum.any?(all, &String.contains?(&1, "mention"))
+    end
+
     test "someone added by hand is tagged Added here", ctx do
       {:ok, view, _html} = show(ctx)
       render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
