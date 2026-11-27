@@ -1862,6 +1862,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp dialog_picker(_next_up, _editor), do: nil
 
+  # An older Leaf's visual mode wrote a token with its `[` escaped. The
+  # comments module's helper restores it; it is newer than the comments
+  # floor (`~> 0.5`, the helper came in 0.7), so it is asked for, not assumed.
+  defp unescape_tokens(markdown) do
+    if Code.ensure_loaded?(CommentsComponent) and
+         function_exported?(CommentsComponent, :unescape_mention_tokens, 1),
+       do: CommentsComponent.unescape_mention_tokens(markdown),
+       else: markdown
+  end
+
   # Whether a dialog list takes additions, as its picker's `can_edit` says.
   defp dialog_adds?(_socket, %{can_assign: false}, _editor), do: false
   defp dialog_adds?(_socket, next_up, "done-" <> _), do: not Map.get(next_up, :subproject?, false)
@@ -1879,8 +1889,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp mentioned_person_keys(markdown, actor) do
     users =
       markdown
-      # An older Leaf's visual mode wrote a token with its `[` escaped.
-      |> CommentsComponent.unescape_mention_tokens()
+      |> unescape_tokens()
       |> Token.parse()
       |> Enum.filter(&(&1.kind == :user and &1.uuid != actor))
       |> Enum.map(& &1.uuid)

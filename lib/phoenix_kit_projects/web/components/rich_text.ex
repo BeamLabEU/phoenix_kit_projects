@@ -189,26 +189,32 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
   # placeholder of letters and digits (which no rule above matches).
   defp set_aside(markdown) do
     {text, kept} =
-      Regex.split(~r/`[^`\n]+`/u, markdown, include_captures: true)
-      |> Enum.map_reduce([], fn piece, acc ->
-        cond do
-          String.starts_with?(piece, "`") and String.ends_with?(piece, "`") and
-              String.length(piece) > 1 ->
-            hold(String.slice(piece, 1..-2//1), acc)
-
-          true ->
-            piece
-            |> Token.split()
-            |> Enum.map_reduce(acc, fn
-              %Token{kind: :user, label: label}, acc -> hold("@" <> label, acc)
-              %Token{label: label}, acc -> hold(label, acc)
-              text, acc -> {text, acc}
-            end)
-            |> then(fn {pieces, acc} -> {Enum.join(pieces), acc} end)
-        end
-      end)
+      ~r/`[^`\n]+`/u
+      |> Regex.split(markdown, include_captures: true)
+      |> Enum.map_reduce([], &set_aside_piece/2)
 
     {Enum.join(text), kept}
+  end
+
+  defp set_aside_piece("`" <> rest = piece, acc) when byte_size(piece) > 2 do
+    if String.ends_with?(rest, "`"),
+      do: hold(String.slice(rest, 0..-2//1), acc),
+      else: set_aside_mentions(piece, acc)
+  end
+
+  defp set_aside_piece(piece, acc), do: set_aside_mentions(piece, acc)
+
+  defp set_aside_mentions(piece, acc) do
+    {pieces, acc} =
+      piece
+      |> Token.split()
+      |> Enum.map_reduce(acc, fn
+        %Token{kind: :user, label: label}, acc -> hold("@" <> label, acc)
+        %Token{label: label}, acc -> hold(label, acc)
+        text, acc -> {text, acc}
+      end)
+
+    {Enum.join(pieces), acc}
   end
 
   defp hold(text, kept), do: {"PKKEPT#{length(kept)}X", [text | kept]}
