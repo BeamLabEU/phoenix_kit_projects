@@ -81,10 +81,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLinksTest do
     refute has_element?(view, "[data-pkp-trace]")
   end
 
-  test "a task's ID opens its view, and the open icon is no share arrow", ctx do
+  # Max, 2026-11-26: the ID copies itself; the card (its title) opens the
+  # task's view.
+  test "a task's ID copies it, the card opens its view, and no share arrow", ctx do
     {:ok, view, html} = show(ctx)
 
-    assert has_element?(view, ~s([title="View the task"] [data-ref]))
+    assert has_element?(view, "[data-pkp-copy][data-ref][role=button]")
+    refute has_element?(view, ~s([title="View the task"] [data-ref]))
+    assert has_element?(view, "[data-pkp-card-open] [data-pkp-open]")
     assert html =~ "Elixir.PhoenixKitProjects.Web.AssignmentViewLive"
     refute html =~ "hero-arrow-top-right-on-square"
   end

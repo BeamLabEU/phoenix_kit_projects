@@ -273,6 +273,7 @@ defmodule PhoenixKitProjects.History do
        %{
          uuid: a.uuid,
          label: Assignment.label(a, L10n.current_content_lang()) || "",
+         number: a.number,
          subproject: Assignment.subproject?(a)
        }}
     end)

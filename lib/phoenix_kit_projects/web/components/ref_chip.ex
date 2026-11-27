@@ -4,8 +4,10 @@ defmodule PhoenixKitProjects.Web.Components.RefChip do
   `PhoenixKitProjects.Refs`) as a small monospace pill — the same pill
   wherever a ref shows, rows and popups included (the boss, 2026-10-31): the name to say
   aloud, type into a search box or the address bar, or paste into a commit
-  message. Selecting it takes the whole ref (`select-all`); nothing renders
-  for a row that has none yet.
+  message. A click copies it (Max, 2026-11-26: "clicking on the id of a
+  task anywhere copies its id"), the pill saying "Copied" for a moment
+  (`phoenix_kit_projects.js`, `[data-pkp-copy]`); so does Enter or Space
+  on it. Nothing renders for a row that has none yet.
   """
 
   use Phoenix.Component
@@ -21,9 +23,14 @@ defmodule PhoenixKitProjects.Web.Components.RefChip do
     ~H"""
     <span
       data-ref={@ref}
-      title={gettext("%{ref} — works in search, in the address bar and on the API", ref: @ref)}
+      data-pkp-copy={@ref}
+      data-copied={gettext("Copied")}
+      role="button"
+      tabindex="0"
+      title={gettext("Click to copy %{ref} — works in search, in the address bar and on the API", ref: @ref)}
       class={[
         "badge badge-ghost font-mono select-all whitespace-nowrap shrink-0 text-base-content/70",
+        "cursor-copy hover:text-base-content",
         @size == "sm" && "badge-sm",
         @class
       ]}

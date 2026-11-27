@@ -158,6 +158,7 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
             entries={Enum.take(@entries, @shown)}
             project={@project}
             links={@embed_mode != :emit}
+            task_tab={if @dom_scope == "side-", do: "tasks", else: "history"}
           />
           <div :if={length(@entries) > @shown} class="flex justify-center mt-3">
             <button type="button" phx-click="load_more" class="btn btn-ghost btn-sm">

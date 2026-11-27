@@ -11,6 +11,7 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
+  import PhoenixKitProjects.Web.Components.RefChip, only: [ref_chip: 1]
 
   alias PhoenixKit.Mentions.Token
   alias PhoenixKitProjects.{L10n, Paths}
@@ -20,6 +21,7 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   attr(:id, :string, required: true)
   attr(:compact, :boolean, default: false, doc: "one task's lines: no task names, no day headers")
   attr(:links, :boolean, default: true, doc: "task names as links (false in an emit-mode embed)")
+  attr(:task_tab, :string, default: "tasks", doc: "the project tab a task link opens it over")
 
   def history_feed(assigns) do
     assigns = assign(assigns, :days, group_by_day(assigns.entries))
@@ -55,11 +57,18 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
                   <span :if={e.task && not @compact && !e.task[:gone] && not @links} class="font-medium">{e.task.label}</span>
                   <.link
                     :if={e.task && not @compact && !e.task[:gone] && @links}
-                    navigate={Paths.task(@project, %{uuid: e.task.uuid})}
+                    navigate={Paths.task(@project, %{uuid: e.task.uuid, number: e.task[:number]}, @task_tab)}
                     class="link link-hover font-medium"
                   >
                     {e.task.label}
-                  </.link><span :if={e.task && not @compact}>{tail(e)}</span>
+                  </.link>
+                  <%!-- The task's ID beside its name (Max, 2026-11-27); a
+                       click copies it. --%>
+                  <.ref_chip
+                    :if={e.task && not @compact && !e.task[:gone] && is_binary(Map.get(@project, :key)) && e.task[:number]}
+                    ref={PhoenixKitProjects.Refs.task_ref(@project.key, e.task.number)}
+                    class="align-middle"
+                  /><span :if={e.task && not @compact}>{tail(e)}</span>
                 </span>
                 <time
                   class="text-xs text-base-content/50 ml-auto shrink-0"
@@ -321,6 +330,11 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
         else: pgettext("task", "Open again, because work under it was reopened:")
       )
 
+  # Started work set back to Waiting is logged as a reopen with `to`; it is
+  # not "reopened" (Max, 2026-11-27).
+  defp activity_sentence("projects.assignment_reopened", %{meta: %{"to" => "waiting"}}),
+    do: gettext("set back to waiting:")
+
   defp activity_sentence("projects.assignment_reopened", _), do: gettext("reopened")
   defp activity_sentence("projects.assignment_removed", _), do: gettext("removed the task")
   defp activity_sentence("projects.task_file_added", _), do: gettext("added a file to")
@@ -338,7 +352,30 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   defp activity_sentence("projects.assignment_made_ready", _),
     do: gettext("allowed to start:")
 
-  defp activity_sentence("projects.assignment_made_idle", _), do: gettext("kept idle:")
+  # Logged when someone sets a task that could be started back to Waiting;
+  # "kept idle" read as if they had left it alone (Max, 2026-11-27).
+  defp activity_sentence("projects.assignment_made_idle", _), do: gettext("set back to waiting:")
+
+  # These fell to the generic "changed", which says nothing (Max,
+  # 2026-11-27: "the history only says Max Don changed test").
+  defp activity_sentence("projects.assignment_moved", %{meta: %{"parent" => p}})
+       when is_binary(p),
+       do: gettext("moved under another task:")
+
+  defp activity_sentence("projects.assignment_moved", _), do: gettext("moved:")
+
+  defp activity_sentence("projects.assignment_tracking_toggled", %{
+         meta: %{"track_progress" => false}
+       }),
+       do: gettext("stopped tracking the progress of")
+
+  defp activity_sentence("projects.assignment_tracking_toggled", _),
+    do: gettext("started tracking the progress of")
+
+  defp activity_sentence("projects.assignment_redirected", _),
+    do: gettext("changed the direction of")
+
+  defp activity_sentence("projects.assignment_restored", _), do: gettext("restored")
 
   defp activity_sentence("projects.assignment_made_subproject", _),
     do: gettext("made a sub-project:")

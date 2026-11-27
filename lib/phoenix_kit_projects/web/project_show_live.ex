@@ -2520,7 +2520,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          card's full height, and both rows start at the same edge. Row 1 is
          the title, with the ref, the icons and ⋮ at its end; row 2 the
          status, the deadline and who has it, the time at its far end. --%>
-    <div class="card-body relative py-3 px-4 gap-3 flex-row rounded-[inherit]" data-pkp-card={@a.uuid}>
+    <div
+      class="card-body relative py-3 px-4 gap-3 flex-row rounded-[inherit] cursor-pointer"
+      data-pkp-card={@a.uuid}
+      data-pkp-card-open
+    >
       <%!-- Filled by `PkpLinks` while a connected task is hovered or traced
            ("Waits on", "Unlocks", "Earlier", "Later"): a tab on the card's
            top-left edge, out of the row's flow, so nothing in the row moves
@@ -2588,6 +2592,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 }
                 embed_mode={@embed_mode}
                 class="font-medium truncate min-w-0 link link-hover"
+                data-pkp-open
               >
                 {TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
               </.smart_link>
@@ -2595,17 +2600,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </div>
 
             <div class="flex items-center gap-1 shrink-0">
-              <%!-- The ID opens the task's view, like its title. --%>
-              <.smart_link
+              <%!-- The ID copies itself; the rest of the card opens the task
+                   (Max, 2026-11-26). --%>
+              <.ref_chip
                 :if={not @is_template and Refs.task_ref(@project.key, @a.number)}
-                navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
-                emit={{PhoenixKitProjects.Web.AssignmentViewLive, view_session(@a)}}
-                embed_mode={@embed_mode}
-                class="shrink-0 opacity-70 hover:opacity-100"
-                title={gettext("View the task")}
-              >
-                <.ref_chip ref={Refs.task_ref(@project.key, @a.number)} />
-              </.smart_link>
+                ref={Refs.task_ref(@project.key, @a.number)}
+                class="opacity-70 hover:opacity-100"
+              />
               <%= if not @is_template do %>
                 <%!-- Connections are never written on the card: hovering
                      hints at the direct ones, this traces the whole chain
@@ -4339,7 +4340,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         socket
         |> update_assignment_with_activity(a, attrs, "projects.assignment_reopened",
-          metadata: %{"task" => Assignment.label(a)}
+          # `to`: back to Waiting, which the history words as such
+          metadata: %{"task" => Assignment.label(a), "from" => a.status, "to" => "waiting"}
         )
         |> maybe_sync_and_reload()
 
@@ -7342,7 +7344,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   # as "the same place" and a drop one level in barely moved.
                   "pkp-row-card",
                   if(not @is_template and a.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"),
-                  assigns[:focus_task] == a.uuid && "ring-2 ring-primary"
+                  # A brief highlight of the row a link named, fading by
+                  # itself: as a lasting ring it stayed on the card after
+                  # its popup closed (Max, 2026-11-27).
+                  assigns[:focus_task] == a.uuid && "pkp-focus-ring"
                 ]}>
                   <%= if Assignment.subproject?(a) do %>
                     <%!-- A sub-project row has what a task row has (the boss,
@@ -7817,7 +7822,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 data-id={a.uuid}
                 title={pending_uuid == a.uuid && gettext("Waiting for your answer")}
               >
-                <div class="card-body p-3 gap-2">
+                <div class="card-body p-3 gap-2" data-pkp-card-open>
                   <div class="flex items-start gap-2">
                     <.icon name="hero-bars-2" class="w-3.5 h-3.5 shrink-0 mt-0.5 text-base-content/30" />
                     <.smart_link
@@ -7827,6 +7832,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       }
                       embed_mode={@embed_mode}
                       class="text-sm font-medium link link-hover leading-snug min-w-0 text-left [overflow-wrap:anywhere]"
+                      data-pkp-open
                     >
                       {Assignment.label(a, L10n.current_content_lang())}
                     </.smart_link>
@@ -7837,16 +7843,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                        card truncates rather than being cut off at its
                        right edge (the walk-through, 2026-10-31). --%>
                   <div class="flex flex-wrap items-center gap-1 min-w-0">
-                    <.smart_link
-                      :if={Assignment.ref(a)}
-                      navigate={Paths.view_assignment(a.project_uuid, a.uuid)}
-                      emit={{PhoenixKitProjects.Web.AssignmentViewLive, view_session(a)}}
-                      embed_mode={@embed_mode}
-                      class="shrink-0 hover:underline"
-                      title={gettext("View the task")}
-                    >
-                      <.ref_chip ref={Assignment.ref(a)} />
-                    </.smart_link>
+                    <.ref_chip :if={Assignment.ref(a)} ref={Assignment.ref(a)} />
                     <.deadline_chip
                       :if={@fx[:dates] != false}
                       a={a}

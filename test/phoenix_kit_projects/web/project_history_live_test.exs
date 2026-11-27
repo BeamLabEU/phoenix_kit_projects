@@ -130,6 +130,30 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLiveTest do
     assert html =~ "Measure wall A again."
   end
 
+  # Max, 2026-11-27: status changes said "changed" or "kept idle"; a task's
+  # name in History jumped to the Tasks tab; its ID was not shown.
+  test "status changes are worded, the ID is shown, links stay on History", ctx do
+    {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
+
+    # Started work set back to Waiting (the card's status menu).
+    render_click(view, "set_status", %{
+      "uuid" => ctx.model.uuid,
+      "status" => "waiting",
+      "from" => "in_progress"
+    })
+
+    render_click(view, "switch_tab", %{"tab" => "history"})
+    history = find_live_child(view, "project-history-live-#{ctx.project.uuid}")
+    html = render(history)
+
+    assert html =~ "set back to waiting:"
+    refute html =~ "kept idle"
+    model = Projects.get_assignment(ctx.model.uuid)
+    ref = PhoenixKitProjects.Refs.task_ref(ctx.project.key, model.number)
+    assert html =~ ~s(data-pkp-copy="#{ref}")
+    assert html =~ "/history?task=#{ref}"
+  end
+
   # The boss's second list, item 15: a line says what changed, from what
   # to what, and names the file; one visit's saves read as one line.
   test "an edit says what changed, from what to what; saves of one visit are one line", ctx do
