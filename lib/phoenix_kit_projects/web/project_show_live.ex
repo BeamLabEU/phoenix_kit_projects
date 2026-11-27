@@ -2740,6 +2740,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   icon="hero-pencil"
                   label={gettext("Edit")}
                 />
+                <%!-- The card's trace, from the menu too; it stays on until
+                     pressed again (Max, 2026-11-27). Handled in the browser
+                     by `PkpLinks`, which also swaps the label. --%>
+                <.table_row_menu_button
+                  :if={not @is_template and @fx.dependencies and MapSet.member?(@linked, @a.uuid)}
+                  data-pkp-trace={@a.uuid}
+                  data-trace-start={gettext("Trace connections")}
+                  data-trace-stop={gettext("Stop tracing")}
+                  icon="hero-share"
+                  label={gettext("Trace connections")}
+                />
                 <.table_row_menu_button
                   :if={@fx.ledger and not @is_template}
                   phx-click="open_log_time"

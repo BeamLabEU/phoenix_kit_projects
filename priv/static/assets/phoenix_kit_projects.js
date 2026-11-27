@@ -1240,8 +1240,10 @@
    * it waits on and the ones it unlocks, draws arrows between them in the
    * list's left gutter (into the hovered task from what it waits on, out of
    * it to what it unlocks) and fades every other task to half; its trace
-   * button does the same for the whole chain, before and after, until the
-   * button is pressed again, Escape, or a click outside the list. All here
+   * button (and the card's ⋮ "Trace connections") does the same for the
+   * whole chain, before and after, and it stays until it is turned off: the
+   * button or the menu entry again, or Escape. A click elsewhere no longer
+   * ends it (Max, 2026-11-27: "stay on until the trace is turned off"). All here
    * in the browser from `data-links` ([[before, after], …]); the server is
    * never asked.
    *
@@ -1336,11 +1338,19 @@
           self.apply();
         }
       };
+      // A trace stays until it is turned off (Max, 2026-11-27); a click
+      // elsewhere used to end it. What this listens for now is the card's ⋮
+      // "Trace connections": an open row menu is moved under <body>, out of
+      // the list, so its click never reaches `onClick`. It is taken when it
+      // names a task of this list.
       this.onDoc = function (e) {
-        if (self.pin !== null && !self.el.contains(e.target)) {
-          self.pin = null;
-          self.apply();
-        }
+        var b = e.target.closest && e.target.closest("[data-pkp-trace]");
+        if (!b || self.el.contains(b)) return;
+        var id = b.getAttribute("data-pkp-trace");
+        if (!self.card(id)) return;
+        self.pin = self.pin === id ? null : id;
+        self.hover = null;
+        self.apply();
       };
       // Dragging a card: no highlight while it moves.
       this.onDrag = function () {
@@ -1419,10 +1429,17 @@
       var src = this.pin !== null ? this.pin : this.hover;
       var traced = this.pin !== null;
 
-      this.el.querySelectorAll("[data-pkp-trace]").forEach(function (b) {
+      // The list's buttons, and its cards' menu entries wherever an open
+      // menu has been moved.
+      Array.prototype.filter.call(document.querySelectorAll("[data-pkp-trace]"), function (b) {
+        return self.el.contains(b) || !!self.card(b.getAttribute("data-pkp-trace"));
+      }).forEach(function (b) {
         var on = b.getAttribute("data-pkp-trace") === self.pin;
         b.setAttribute("aria-pressed", on ? "true" : "false");
         if (labels.trace) b.title = on ? labels.stop : labels.trace;
+        // The ⋮ entry names what a press does now.
+        var text = b.hasAttribute("data-trace-start") && b.querySelector("span:last-child");
+        if (text) text.textContent = on ? b.getAttribute("data-trace-stop") : b.getAttribute("data-trace-start");
       });
       var wasOn = this.gutterOn === true;
       this.gutterOn = src !== null;
