@@ -886,7 +886,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         # off, and so not told).
         added = mentioned_keys(next_up, picker)
         dropped = added -- now
-        new = now -- current
+        # Only where the list itself takes additions: the picker's own rule
+        # (the right to assign, and never a sub-project's row; codex, 2026-11-27).
+        new = if dialog_adds?(socket, next_up, editor), do: now -- current, else: []
         kept = (added -- dropped) ++ new
         keys = (current -- dropped) ++ new
 
@@ -1859,6 +1861,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp dialog_picker(_next_up, _editor), do: nil
+
+  # Whether a dialog list takes additions, as its picker's `can_edit` says.
+  defp dialog_adds?(_socket, %{can_assign: false}, _editor), do: false
+  defp dialog_adds?(_socket, next_up, "done-" <> _), do: not Map.get(next_up, :subproject?, false)
+
+  defp dialog_adds?(socket, _next_up, "next-" <> row) do
+    case Enum.find(socket.assigns.assignments, &(&1.uuid == row)) do
+      %Assignment{child_project_uuid: nil} -> true
+      _ -> false
+    end
+  end
+
+  defp dialog_adds?(_socket, _next_up, _editor), do: false
 
   # The staff records of the people `@`-tagged in a text, the viewer left out.
   defp mentioned_person_keys(markdown, actor) do
@@ -5085,7 +5100,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         actor_uuid: Activity.actor_uuid(socket),
         resource_type: "assignment",
         resource_uuid: a.uuid,
-        metadata: %{"parent" => moved.parent_uuid}
+        # `from_parent`: History tells a reorder from a move under another
+        # task (codex, 2026-11-27).
+        metadata: %{"parent" => moved.parent_uuid, "from_parent" => a.parent_uuid}
       )
 
       # The new parent and everything above it unfold: a row moved into a

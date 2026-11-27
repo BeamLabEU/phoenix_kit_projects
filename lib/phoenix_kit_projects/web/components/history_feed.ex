@@ -193,12 +193,35 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
        when is_binary(q) and q != "",
        do: gettext("reopened it, because:")
 
+  defp compact_activity("projects.assignment_reopened", %{meta: %{"to" => "waiting"}}),
+    do: gettext("set it back to waiting")
+
   defp compact_activity("projects.assignment_reopened", _), do: gettext("reopened")
 
   defp compact_activity("projects.assignment_made_ready", _),
     do: gettext("allowed it to start")
 
-  defp compact_activity("projects.assignment_made_idle", _), do: gettext("kept it idle")
+  # Someone set it back to Waiting (it read "kept it idle"; Max, 2026-11-27).
+  defp compact_activity("projects.assignment_made_idle", _), do: gettext("set it back to waiting")
+
+  defp compact_activity("projects.assignment_moved", e) do
+    case move_kind(e.meta) do
+      :under -> gettext("moved it under another task")
+      :top -> gettext("moved it to the top level")
+      _ -> gettext("moved it")
+    end
+  end
+
+  defp compact_activity("projects.assignment_tracking_toggled", %{
+         meta: %{"track_progress" => false}
+       }),
+       do: gettext("stopped tracking its progress")
+
+  defp compact_activity("projects.assignment_tracking_toggled", _),
+    do: gettext("started tracking its progress")
+
+  defp compact_activity("projects.assignment_redirected", _), do: gettext("changed its direction")
+  defp compact_activity("projects.assignment_restored", _), do: gettext("restored it")
 
   defp compact_activity("projects.assignment_made_subproject", _),
     do: gettext("made it a sub-project")
@@ -251,6 +274,16 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   defp compact_activity("projects.task_file_added", _), do: gettext("added a file")
   defp compact_activity("projects.task_file_removed", _), do: gettext("removed a file")
   defp compact_activity(_action, _), do: gettext("changed it")
+
+  defp move_kind(%{"from_parent" => from} = meta) do
+    case meta["parent"] do
+      ^from -> :reorder
+      nil -> :top
+      _ -> :under
+    end
+  end
+
+  defp move_kind(_meta), do: :unknown
 
   defp subproject?(%{task: %{subproject: true}}), do: true
   defp subproject?(_), do: false
@@ -358,11 +391,16 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
 
   # These fell to the generic "changed", which says nothing (Max,
   # 2026-11-27: "the history only says Max Don changed test").
-  defp activity_sentence("projects.assignment_moved", %{meta: %{"parent" => p}})
-       when is_binary(p),
-       do: gettext("moved under another task:")
-
-  defp activity_sentence("projects.assignment_moved", _), do: gettext("moved:")
+  # Only an entry that records where it came from (`from_parent`) can say
+  # the parent changed; a reorder, or an older entry, is "moved" (codex,
+  # 2026-11-27: a reorder read "moved under another task").
+  defp activity_sentence("projects.assignment_moved", e) do
+    case move_kind(e.meta) do
+      :under -> gettext("moved under another task:")
+      :top -> gettext("moved to the top level:")
+      _ -> gettext("moved:")
+    end
+  end
 
   defp activity_sentence("projects.assignment_tracking_toggled", %{
          meta: %{"track_progress" => false}

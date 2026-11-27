@@ -22,6 +22,19 @@ defmodule PhoenixKitProjects.Web.RichTextOneLineTest do
              "Title quote em snake_case_name, 2*3*4"
   end
 
+  # codex, 2026-11-27: literal punctuation, code and labels were eaten.
+  test "words, code spans, labels and links keep what is theirs" do
+    assert RichText.one_line("foo__bar and 2**3 and *.ex") == "foo__bar and 2**3 and *.ex"
+    assert RichText.one_line("Run `a < b && c > d`") == "Run a < b && c > d"
+
+    assert RichText.one_line("@[user:019d6837-db2d-74da-be36-f66e905e0872|Alice__Ops] hi") ==
+             "@Alice__Ops hi"
+
+    assert RichText.one_line("<https://example.com/a>") == "https://example.com/a"
+    assert RichText.one_line("[Wiki](https://example.com/Foo_(bar))") == "Wiki"
+    assert RichText.one_line("**bold** and _it_") == "bold and it"
+  end
+
   test "nothing to show is nil" do
     assert RichText.one_line(nil) == nil
     assert RichText.one_line("  \n ") == nil

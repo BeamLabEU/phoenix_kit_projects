@@ -399,6 +399,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       assert has_element?(view, next_up(ctx.project), "Alice")
     end
 
+    # codex, 2026-11-27: a sub-project's list takes no additions (its picker
+    # is read-only), and a tag added to it anyway.
+    test "a tag adds nobody to a sub-project's list", ctx do
+      {:ok, %{assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Sub"})
+
+      {:ok, link} = Projects.update_assignment_status(link, %{"status" => "waiting"})
+
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => link.uuid})
+      md = "please @[user:#{ctx.alice}|Alice] look"
+
+      send(
+        view.pid,
+        {:leaf_changed, %{editor_id: "pkp-dialog-next-#{link.uuid}", markdown: md, html: ""}}
+      )
+
+      render(view)
+      render(view)
+      refute has_element?(view, next_up(ctx.project), "Alice")
+    end
+
     test "a tag written with an escaped bracket (an older Leaf) still adds", ctx do
       {:ok, view, _html} = show(ctx)
       render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})

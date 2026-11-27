@@ -148,6 +148,9 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
   # or ending in white space (indented code, hard breaks), no `1.` list.
   @markup ~r/[\\`*_\[\]()!#<>&~|=+\-:\r]|(?:^|\n)[ \t]|[ \t](?:\n|$)|(?:^|\n)\d+\./
 
+  # A link's target, with one level of parentheses inside (`Foo_(bar)`).
+  @link_target "[^()\\s]*(?:\\([^()\\s]*\\)[^()\\s]*)*"
+
   @doc """
   A description as one line of plain text, for a list's cell or a tooltip:
   a mention reads as its name (`@Anna`), a link as its text, and pictures,
@@ -158,20 +161,63 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
   def one_line(nil), do: nil
 
   def one_line(markdown) when is_binary(markdown) do
-    markdown
-    |> Token.to_plain_text()
-    |> String.replace(~r/!\[[^\]]*\]\([^)]*\)/u, "")
-    |> String.replace(~r/\[([^\]]*)\]\([^)]*\)/u, "\\1")
-    |> String.replace(~r/<[^>]+>/u, " ")
+    # Mentions and code spans are set aside and put back as they are, so no
+    # markdown rule below can touch a label or code (codex, 2026-11-27:
+    # `Alice__Ops` lost its underscores, a code span its comparison).
+    {text, kept} = set_aside(markdown)
+
+    text
+    |> String.replace(~r/!\[[^\]]*\]\(#{@link_target}\)/u, "")
+    |> String.replace(~r/\[([^\]]*)\]\(#{@link_target}\)/u, "\\1")
+    |> String.replace(~r/<((?:https?|mailto):[^>\s]+)>/u, "\\1")
+    |> String.replace(~r/<\/?[a-zA-Z][^>]*>/u, " ")
     |> String.replace(~r/(?m)^\s{0,3}(?:\#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/u, "")
-    |> String.replace(~r/(\*\*|__|~~|`)/u, "")
-    |> String.replace(~r/(?<![\w*])[*_](?=\S)|(?<=\S)[*_](?![\w*])/u, "")
+    # Emphasis only as a pair around text: `foo__bar`, `2**3`, `*.ex` stay.
+    |> String.replace(~r/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/u, "\\2")
+    |> String.replace(~r/(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])/u, "\\1")
+    |> String.replace(~r/(?<!\w)_(?=\S)([^_\n]+?)(?<=\S)_(?!\w)/u, "\\1")
+    |> put_back(kept)
     |> String.replace(~r/\s+/u, " ")
     |> String.trim()
     |> case do
       "" -> nil
       line -> line
     end
+  end
+
+  # Each mention becomes its name, each code span its text, behind a
+  # placeholder of letters and digits (which no rule above matches).
+  defp set_aside(markdown) do
+    {text, kept} =
+      Regex.split(~r/`[^`\n]+`/u, markdown, include_captures: true)
+      |> Enum.map_reduce([], fn piece, acc ->
+        cond do
+          String.starts_with?(piece, "`") and String.ends_with?(piece, "`") and
+              String.length(piece) > 1 ->
+            hold(String.slice(piece, 1..-2//1), acc)
+
+          true ->
+            piece
+            |> Token.split()
+            |> Enum.map_reduce(acc, fn
+              %Token{kind: :user, label: label}, acc -> hold("@" <> label, acc)
+              %Token{label: label}, acc -> hold(label, acc)
+              text, acc -> {text, acc}
+            end)
+            |> then(fn {pieces, acc} -> {Enum.join(pieces), acc} end)
+        end
+      end)
+
+    {Enum.join(text), kept}
+  end
+
+  defp hold(text, kept), do: {"PKKEPT#{length(kept)}X", [text | kept]}
+
+  defp put_back(text, kept) do
+    kept
+    |> Enum.reverse()
+    |> Enum.with_index()
+    |> Enum.reduce(text, fn {piece, n}, acc -> String.replace(acc, "PKKEPT#{n}X", piece) end)
   end
 
   @doc false

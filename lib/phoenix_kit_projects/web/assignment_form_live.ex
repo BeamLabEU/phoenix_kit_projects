@@ -3202,7 +3202,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp move_to(socket, a, parent) do
     case Outline.move(a, parent, :last) do
       {:ok, moved} ->
-        log_subtask_act(socket, "projects.assignment_moved", a.uuid, %{"parent" => parent})
+        log_subtask_act(socket, "projects.assignment_moved", a.uuid, %{
+          "parent" => parent,
+          "from_parent" => a.parent_uuid
+        })
 
         socket
         |> assign(assignment: %{a | parent_uuid: moved.parent_uuid})
