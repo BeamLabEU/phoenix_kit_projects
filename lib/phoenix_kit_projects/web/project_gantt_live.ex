@@ -696,8 +696,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
             show_edge_indicators={false}
             show_today_edge={false}
             enable_hooks={true}
-            class="max-h-[70vh]"
           >
+            <%!-- No height cap: capped, the chart was a second vertical
+                 scroll area inside a page that already scrolls (Max,
+                 2026-11-27). It still scrolls sideways. --%>
             <:toolbar_start>
               <button
                 type="button"
