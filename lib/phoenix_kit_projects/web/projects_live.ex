@@ -1164,7 +1164,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             >
               <span aria-hidden="true">∞</span> {gettext("Ongoing")}
             </span>
-            <% desc = Project.localized_description(p, @lang) %>
+            <% desc = PhoenixKitProjects.Web.Components.RichText.one_line(Project.localized_description(p, @lang)) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md" title={desc}>{desc}</div>
           </.table_default_cell>
           <%= for col <- @visible_columns do %>

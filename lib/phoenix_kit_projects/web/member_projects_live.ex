@@ -134,7 +134,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
                   <span class="badge badge-ghost badge-sm shrink-0">{role_label(role)}</span>
                 </div>
                 <p :if={project.description} class="line-clamp-2 text-sm opacity-60">
-                  {Project.localized_description(project, L10n.current_content_lang()) || project.description}
+                  {PhoenixKitProjects.Web.Components.RichText.one_line(Project.localized_description(project, L10n.current_content_lang()) || project.description)}
                 </p>
               </div>
             </.link>

@@ -148,6 +148,32 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
   # or ending in white space (indented code, hard breaks), no `1.` list.
   @markup ~r/[\\`*_\[\]()!#<>&~|=+\-:\r]|(?:^|\n)[ \t]|[ \t](?:\n|$)|(?:^|\n)\d+\./
 
+  @doc """
+  A description as one line of plain text, for a list's cell or a tooltip:
+  a mention reads as its name (`@Anna`), a link as its text, and pictures,
+  markdown marks and line breaks are gone. Max, 2026-11-27: the projects
+  list showed `@[user:…|maxdon2001]`. Nil for nothing to show.
+  """
+  @spec one_line(String.t() | nil) :: String.t() | nil
+  def one_line(nil), do: nil
+
+  def one_line(markdown) when is_binary(markdown) do
+    markdown
+    |> PhoenixKit.Mentions.Token.to_plain_text()
+    |> String.replace(~r/!\[[^\]]*\]\([^)]*\)/u, "")
+    |> String.replace(~r/\[([^\]]*)\]\([^)]*\)/u, "\\1")
+    |> String.replace(~r/<[^>]+>/u, " ")
+    |> String.replace(~r/(?m)^\s{0,3}(?:\#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/u, "")
+    |> String.replace(~r/(\*\*|__|~~|`)/u, "")
+    |> String.replace(~r/(?<![\w*])[*_](?=\S)|(?<=\S)[*_](?![\w*])/u, "")
+    |> String.replace(~r/\s+/u, " ")
+    |> String.trim()
+    |> case do
+      "" -> nil
+      line -> line
+    end
+  end
+
   @doc false
   @spec plain?(String.t()) :: boolean()
   def plain?(markdown), do: not Regex.match?(@markup, markdown)

@@ -642,7 +642,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             >
               {Project.localized_name(t, @lang)}
             </.smart_link>
-            <% desc = Project.localized_description(t, @lang) %>
+            <% desc = PhoenixKitProjects.Web.Components.RichText.one_line(Project.localized_description(t, @lang)) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
           </.table_default_cell>
           <%= for col <- @visible_columns do %>
