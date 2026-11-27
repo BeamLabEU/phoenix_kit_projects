@@ -382,6 +382,39 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
       refute Enum.any?(all, &String.contains?(&1, "mention"))
     end
 
+    # vibe, 2026-11-27: untagging someone who was on the list anyway took
+    # them off it (and they were not told).
+    test "a person on the list anyway stays when their tag is removed", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+      editor = "pkp-dialog-next-#{ctx.measure.uuid}"
+      assert has_element?(view, next_up(ctx.project), "Alice")
+
+      for md <- ["hi @[user:#{ctx.alice}|Alice]", "hi"] do
+        send(view.pid, {:leaf_changed, %{editor_id: editor, markdown: md, html: ""}})
+        render(view)
+        render(view)
+      end
+
+      assert has_element?(view, next_up(ctx.project), "Alice")
+    end
+
+    test "a tag written with an escaped bracket (an older Leaf) still adds", ctx do
+      {:ok, view, _html} = show(ctx)
+      render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})
+      md = "please @\\[user:#{ctx.alice}|Alice] look"
+
+      send(
+        view.pid,
+        {:leaf_changed,
+         %{editor_id: "pkp-dialog-next-#{ctx.render.uuid}", markdown: md, html: ""}}
+      )
+
+      render(view)
+      render(view)
+      assert has_element?(view, next_up(ctx.project), "Alice")
+    end
+
     test "someone added by hand is tagged Added here", ctx do
       {:ok, view, _html} = show(ctx)
       render_click(view, "ask_ready", %{"uuid" => ctx.render.uuid})

@@ -2682,7 +2682,9 @@
     // fades: it used to stay for good (Max, 2026-11-27).
     ".pkp-focus-ring{animation:pkp-focus-fade 4s ease-out forwards}",
     "@keyframes pkp-focus-fade{0%,55%{box-shadow:0 0 0 2px var(--color-primary,#4f46e5)}100%{box-shadow:0 0 0 2px transparent}}",
-    "@media (prefers-reduced-motion:reduce){.pkp-focus-ring{animation:none}}"
+    // Reduced motion: the ring is there, then gone, without fading (vibe:
+    // `animation:none` left no ring at all, it lives in the animation).
+    "@media (prefers-reduced-motion:reduce){.pkp-focus-ring{animation-timing-function:step-end}}"
   ].join("\n");
 
   // Where a dropped row lands. `rows`: the list as it stands after the drop,
@@ -3104,6 +3106,27 @@
     };
     if (window.navigator && navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, function () {});
+    } else if (legacyCopy(text)) {
+      // No clipboard API off a secure origin (plain http on a LAN address):
+      // the old way, a selected field and `copy` (vibe, 2026-11-27).
+      done();
+    }
+  }
+
+  function legacyCopy(text) {
+    try {
+      var field = document.createElement("textarea");
+      field.value = text;
+      field.setAttribute("readonly", "");
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.appendChild(field);
+      field.select();
+      var ok = document.execCommand && document.execCommand("copy");
+      field.remove();
+      return !!ok;
+    } catch (_e) {
+      return false;
     }
   }
 

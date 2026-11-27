@@ -878,9 +878,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       {picker, current} ->
         now = mentioned_person_keys(markdown, Activity.actor_uuid(socket))
-        before = mentioned_keys(next_up, picker)
-        keys = (current -- (before -- now)) ++ (now -- current)
-        next_up = Map.update(next_up, :mention_keys, %{picker => now}, &Map.put(&1, picker, now))
+        # Only what a tag ADDED is the tag's to take off: someone already on
+        # the list (its default people, a hand-added one) stays when the tag
+        # goes (vibe, 2026-11-27: an assignee tagged and untagged was taken
+        # off, and so not told).
+        added = mentioned_keys(next_up, picker)
+        dropped = added -- now
+        new = now -- current
+        kept = (added -- dropped) ++ new
+        keys = (current -- dropped) ++ new
+
+        next_up =
+          Map.update(next_up, :mention_keys, %{picker => kept}, &Map.put(&1, picker, kept))
+
         socket = assign(socket, next_up: next_up)
 
         if keys != current do
@@ -1844,6 +1854,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp mentioned_person_keys(markdown, actor) do
     users =
       markdown
+      # An older Leaf's visual mode wrote a token with its `[` escaped.
+      |> PhoenixKitComments.Web.CommentsComponent.unescape_mention_tokens()
       |> PhoenixKit.Mentions.Token.parse()
       |> Enum.filter(&(&1.kind == :user and &1.uuid != actor))
       |> Enum.map(& &1.uuid)
